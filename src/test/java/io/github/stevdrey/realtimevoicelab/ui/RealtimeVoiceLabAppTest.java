@@ -1,6 +1,7 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
 import java.net.http.WebSocket;
+import java.util.Base64;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -10,8 +11,10 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 import io.github.stevdrey.realtimevoicelab.audio.FakeMicrophone;
+import io.github.stevdrey.realtimevoicelab.audio.FakeSpeaker;
 import io.github.stevdrey.realtimevoicelab.realtime.FakeTransport;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
+import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.event.Event;
@@ -95,6 +98,9 @@ class RealtimeVoiceLabAppTest {
             assertEquals("gpt-realtime-2.1-mini", model.getValue());
             assertEquals("Model: gpt-realtime-2.1-mini", model.getAccessibleText());
             assertTrue(model.isDisabled());
+            var transcription = (ComboBox<?>) scene.lookup("#transcription-selector");
+            assertEquals(TranscriptionModel.OFF, transcription.getValue());
+            assertFalse(transcription.isDisabled());
             assertDisabledButton(scene, "#settings-button", "Settings");
             assertDisabledButton(scene, "#mic-button", "Microphone");
             assertSession(stage, "Disconnected", "Connect", false);
@@ -115,6 +121,115 @@ class RealtimeVoiceLabAppTest {
             assertSame(conversation, conversationHeading.getLabelFor());
             assertSame(events, inspectorHeading.getLabelFor());
         });
+    }
+
+    @Test
+    void showsVoiceTranscriptsAndStopsPlaybackWithoutBlockingTheWorkspace() throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var speaker = new FakeSpeaker();
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone(), speaker.playback(),
+                        stage.focusedProperty());
+                @SuppressWarnings("unchecked")
+                var transcription = (ComboBox<TranscriptionModel>) stage.getScene().lookup("#transcription-selector");
+                transcription.setValue(TranscriptionModel.TRANSCRIBE);
+                connectButton(stage).fire();
+                assertTrue(transcription.isDisabled());
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.ready(TranscriptionModel.TRANSCRIBE.modelId());
+
+            for (int turn = 1; turn <= 2; turn++) {
+                int number = turn;
+                int previousWrites = socket.writes.size();
+                onFxThread(() -> {
+                    stage.getScene().lookup("#mic-button").requestFocus();
+                    new Robot().keyPress(KeyCode.SPACE);
+                    return null;
+                });
+                microphone.queueBlocks(4);
+                awaitOnFxThread(() -> "Recording · 0.2 s".equals(micStatus(stage)), "Voice take did not fill");
+                onFxThread(() -> {
+                    new Robot().keyRelease(KeyCode.SPACE);
+                    return null;
+                });
+                awaitOnFxThread(() -> socket.writes.size() == previousWrites + 2, "Voice take was not committed");
+                socket.text("""
+                        {"type":"input_audio_buffer.committed","item_id":"input-%d"}
+                        """.formatted(turn), true);
+                socket.text("""
+                        {"type":"response.created","response":{"id":"reply-%1$d","metadata":{"rvl_turn":"rvl-%1$d"}}}
+                        """.formatted(turn), true);
+                var delta = """
+                        {"type":"response.output_audio.delta","response_id":"reply-%d","item_id":"assistant-%d",
+                        "output_index":0,"content_index":0,"delta":"%s"}
+                        """.formatted(turn, turn, Base64.getEncoder().encodeToString(microphone.block(turn)));
+                socket.text(delta, true);
+                awaitOnFxThread(() -> {
+                    var level = (ProgressBar) stage.getScene().lookup("#mic-level");
+                    return speaker.devices.size() == number && micStatus(stage).equals("Speaking…")
+                            && level.isVisible() && level.getProgress() > 0;
+                }, "Synthetic playback did not show a level");
+                var device = speaker.devices.getLast();
+                assertFalse(device.wroteOnFxThread);
+
+                if (turn == 1) {
+                    socket.text("""
+                            {"type":"response.output_audio_transcript.delta","response_id":"reply-1","item_id":"assistant-1",
+                            "output_index":0,"content_index":0,"delta":"Synthetic reply"}
+                            """, true);
+                    awaitOnFxThread(() -> showsTurnText(stage, "Synthetic reply"), "Assistant transcript did not stream");
+                    socket.text("""
+                            {"type":"response.output_audio_transcript.done","response_id":"reply-1","item_id":"assistant-1",
+                            "output_index":0,"content_index":0,"transcript":"Synthetic reply."}
+                            """, true);
+                    socket.text("""
+                            {"type":"response.done","response":{"id":"reply-1","status":"completed","output":[]}}
+                            """, true);
+                    socket.text("""
+                            {"type":"conversation.item.input_audio_transcription.completed","item_id":"input-1",
+                            "content_index":0,"transcript":"Synthetic question."}
+                            """, true);
+                    onFxThread(() -> {
+                        assertTrue(showsTurnText(stage, "You · Approximate transcript"));
+                        assertTrue(showsTurnText(stage, "Synthetic question."));
+                        assertTrue(showsTurnText(stage, "Synthetic reply."));
+                        var stop = (Button) stage.getScene().lookup("#cancel-text");
+                        assertEquals("Stop playback", stop.getAccessibleText());
+                        assertFalse(stop.isDisabled());
+                        stop.fire();
+                        return null;
+                    });
+                } else {
+                    socket.text("""
+                            {"type":"conversation.item.input_audio_transcription.failed","item_id":"input-2",
+                            "content_index":0,"error":{"message":"private synthetic detail"}}
+                            """, true);
+                    onFxThread(() -> {
+                        assertTrue(showsTurnText(stage, "Voice input · Transcription unavailable"));
+                        assertFalse(showsTurnText(stage, "private synthetic detail"));
+                        stage.close();
+                        return null;
+                    });
+                }
+                awaitOnFxThread(() -> device.flushed && device.closed, "Speaker was not flushed and closed");
+            }
+            assertTrue(socket.aborted);
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    private boolean showsTurnText(Stage stage, String expected) {
+        return stage.getScene().lookup("#conversation-turns").lookupAll(".label").stream()
+                .anyMatch(label -> expected.equals(((Label) label).getText()));
     }
 
     @Test
@@ -645,6 +760,9 @@ class RealtimeVoiceLabAppTest {
         var metrics = scene.lookup("#metrics");
         var footerBounds = metrics.localToScene(metrics.getBoundsInLocal());
         assertTrue(footerBounds.getMaxY() <= scene.getHeight());
+        var transcription = scene.lookup("#transcription-selector");
+        var selectorBounds = transcription.localToScene(transcription.getBoundsInLocal());
+        assertTrue(selectorBounds.getMinX() >= 0 && selectorBounds.getMaxX() <= scene.getWidth());
     }
 
     private void assertDisabledButton(Scene scene, String selector, String name) {

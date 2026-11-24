@@ -59,18 +59,27 @@ public final class FakeTransport implements RealtimeTransport {
         }
 
         public void updated() {
+            updated(null);
+        }
+
+        public void updated(String transcriptionModel) {
+            var transcription = transcriptionModel == null ? "null" : "{\"model\":\"" + transcriptionModel + "\"}";
             text("""
                     {"type":"session.updated","session":{"type":"realtime","id":"test-session","max_output_tokens":512,
-                     "audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"turn_detection":null},
+                     "audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"turn_detection":null,"transcription":%s},
                               "output":{"format":{"type":"audio/pcm","rate":24000}}}}}
-                    """, true);
+                    """.formatted(transcription), true);
         }
 
         public void ready() {
+            ready(null);
+        }
+
+        public void ready(String transcriptionModel) {
             opened();
             created();
             textWrite.complete(this);
-            updated();
+            updated(transcriptionModel);
         }
 
         public void peerClose(int code, String detail) {
