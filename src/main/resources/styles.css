@@ -11,6 +11,8 @@
     -rv-heading: #a5b4fc;
     -rv-primary: #6366f1;
     -rv-primary-hover: #5558db;
+    -rv-success: #4ade80;
+    -rv-danger: #f87171;
 
     -fx-background-color: -rv-app;
     -fx-font-family: "System";

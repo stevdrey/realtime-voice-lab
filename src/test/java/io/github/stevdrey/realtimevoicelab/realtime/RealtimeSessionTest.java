@@ -173,6 +173,28 @@ class RealtimeSessionTest {
         assertEquals(new RealtimeSession.Status(State.ERROR, Failure.REMOTE_CLOSE), session.status());
     }
 
+    @ParameterizedTest
+    @ValueSource(ints = {1001, 1005})
+    void operatorDisconnectEndsCleanlyForAnyPeerCloseCode(int statusCode) {
+        var socket = connect();
+        socket.ready();
+        session.disconnect();
+        socket.peerClose(statusCode, "");
+        assertEquals(new RealtimeSession.Status(State.DISCONNECTED, null), session.status());
+        assertFalse(socket.aborted);
+    }
+
+    @Test
+    void ignoresProviderErrorOnceReady() {
+        var socket = connect();
+        socket.ready();
+        socket.text("""
+                {"type":"error","error":{"message":"private synthetic detail"}}
+                """, true);
+        assertEquals(new RealtimeSession.Status(State.READY, null), session.status());
+        assertFalse(socket.aborted);
+    }
+
     @Test
     void waitsForCloseWriteWhenThePeerClosesFirst() {
         var socket = connect();
@@ -210,7 +232,7 @@ class RealtimeSessionTest {
             socket.ready();
             timed.disconnect();
             assertTrue(expired.await(5, TimeUnit.SECONDS));
-            assertEquals(new RealtimeSession.Status(State.ERROR, Failure.TIMEOUT), timed.status());
+            assertEquals(new RealtimeSession.Status(State.DISCONNECTED, null), timed.status());
             assertTrue(socket.aborted);
         }
     }

@@ -25,8 +25,15 @@ public final class RealtimeVoiceLabApp extends Application {
         var loader = new FXMLLoader(getClass().getResource("workspace.fxml"));
         workspace = new WorkspaceController(transport);
         loader.setController(workspace);
-        var scene = new Scene(loader.load(), 1100, 720);
-        scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        Scene scene;
+        try {
+            scene = new Scene(loader.load(), 1100, 720);
+            scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        } catch (IOException | RuntimeException error) {
+            workspace.dispose();
+            workspace = null;
+            throw error;
+        }
 
         stage.setTitle("Realtime Voice Lab");
         stage.setMinWidth(760);

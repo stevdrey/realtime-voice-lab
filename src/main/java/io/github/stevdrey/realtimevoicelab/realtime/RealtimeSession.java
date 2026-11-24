@@ -58,7 +58,7 @@ public final class RealtimeSession implements AutoCloseable {
         var attempt = new Attempt();
         active = attempt;
         publish(State.CONNECTING, null);
-        startDeadline(attempt, setupTimeout);
+        startDeadline(attempt, setupTimeout, Failure.TIMEOUT);
         try {
             attempt.opening = transport.open(model, attempt);
             attempt.opening.whenComplete((socket, error) -> {
@@ -85,7 +85,8 @@ public final class RealtimeSession implements AutoCloseable {
         // READY requires both the session.update write and its acknowledgement.
         // As a result, this close frame cannot overtake a text write.
         publish(State.CLOSING, null);
-        startDeadline(attempt, closeTimeout);
+        // An unanswered close still ends the operator's disconnect cleanly after the abort.
+        startDeadline(attempt, closeTimeout, null);
         try {
             attempt.socket.sendClose(WebSocket.NORMAL_CLOSURE, "")
                     .whenComplete((socket, error) -> closeWritten(attempt, error));
@@ -107,8 +108,9 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private void checkClosed(Attempt attempt) {
+        // The operator started this close, so any peer close code completes it.
         if (attempt.closeSent && attempt.peerCloseCode != null) {
-            finishPeerClose(attempt, attempt.peerCloseCode);
+            finish(attempt, null, false);
         }
     }
 
@@ -133,12 +135,12 @@ public final class RealtimeSession implements AutoCloseable {
         statusChanged.run();
     }
 
-    private void startDeadline(Attempt attempt, Duration timeout) {
+    private void startDeadline(Attempt attempt, Duration timeout, Failure onExpiry) {
         attempt.deadline = new CompletableFuture<>();
         attempt.deadline.orTimeout(timeout.toNanos(), TimeUnit.NANOSECONDS)
                 .whenComplete((ignored, error) -> {
                     if (error != null) {
-                        fail(attempt, Failure.TIMEOUT);
+                        fail(attempt, onExpiry);
                     }
                 });
     }
@@ -184,22 +186,33 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private void receive(Attempt attempt, CharSequence fragment, boolean last) throws IOException {
-        if (attempt.message == null) {
-            attempt.message = new StringBuilder();
-        }
-        if (fragment.length() > SessionProtocol.MAX_MESSAGE_CHARS - attempt.message.length()) {
+        int buffered = attempt.message == null ? 0 : attempt.message.length();
+        if (fragment.length() > SessionProtocol.MAX_MESSAGE_CHARS - buffered) {
             throw new IOException("Realtime message limit exceeded");
         }
-        attempt.message.append(fragment);
-        if (!last) {
-            return;
+        String message;
+        if (last && attempt.message == null) {
+            message = fragment.toString();
+        } else {
+            if (attempt.message == null) {
+                attempt.message = new StringBuilder();
+            }
+            attempt.message.append(fragment);
+            if (!last) {
+                return;
+            }
+            message = attempt.message.toString();
+            attempt.message = null;
         }
 
-        var message = attempt.message.toString();
-        attempt.message = null;
         var event = protocol.parse(message);
         switch (event.type()) {
-            case "error" -> fail(attempt, Failure.PROVIDER);
+            case "error" -> {
+                // Most GA errors are recoverable. Only a setup error ends the attempt.
+                if (status.state() == State.CONNECTING) {
+                    fail(attempt, Failure.PROVIDER);
+                }
+            }
             case "session.created" -> {
                 if (status.state() == State.CONNECTING && attempt.sessionId == null) {
                     attempt.sessionId = event.sessionId();
