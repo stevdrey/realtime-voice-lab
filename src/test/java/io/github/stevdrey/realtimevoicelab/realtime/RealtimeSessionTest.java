@@ -55,6 +55,7 @@ class RealtimeSessionTest {
         assertEquals("session.update", config.path("type").asText());
         assertEquals("realtime", config.at("/session/type").asText());
         assertEquals("audio", config.at("/session/output_modalities/0").asText());
+        assertEquals(512, config.at("/session/max_output_tokens").asInt());
         assertTrue(config.at("/session/audio/input/turn_detection").isNull());
         assertEquals(24000, config.at("/session/audio/input/format/rate").asInt());
         assertEquals("audio/pcm", config.at("/session/audio/output/format/type").asText());
@@ -65,7 +66,7 @@ class RealtimeSessionTest {
         assertEquals(State.CONNECTING, session.status().state());
         socket.text("{\"type\":\"session.updated\",", false);
         assertEquals(State.CONNECTING, session.status().state());
-        socket.text("\"session\":{\"type\":\"realtime\",\"id\":\"test-session\"}}", true);
+        socket.text("\"session\":{\"type\":\"realtime\",\"id\":\"test-session\",\"max_output_tokens\":512}}", true);
         assertEquals(State.CONNECTING, session.status().state());
         socket.textWrite.complete(socket);
         assertEquals(State.READY, session.status().state());

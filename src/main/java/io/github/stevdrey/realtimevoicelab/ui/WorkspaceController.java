@@ -1,5 +1,7 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeTransport;
 import javafx.application.Platform;
@@ -22,6 +24,7 @@ public final class WorkspaceController {
 
     private final RealtimeSession session;
     private final Tooltip connectTooltip = new Tooltip();
+    private final AtomicBoolean renderPending = new AtomicBoolean();
     private RealtimeSession.State renderedState;
     private boolean disposed;
 
@@ -84,11 +87,14 @@ public final class WorkspaceController {
     }
 
     private void scheduleRender() {
-        Platform.runLater(() -> {
-            if (!disposed) {
-                renderSession();
-            }
-        });
+        if (renderPending.compareAndSet(false, true)) {
+            Platform.runLater(() -> {
+                renderPending.set(false);
+                if (!disposed) {
+                    renderSession();
+                }
+            });
+        }
     }
 
     private void renderSession() {
@@ -127,6 +133,10 @@ public final class WorkspaceController {
             case PROTOCOL -> "Invalid Realtime event";
             case PROVIDER -> "Realtime session failed";
             case REMOTE_CLOSE -> "Server closed the session";
+            case SESSION_LIMIT -> "Session time limit reached";
+            case AUDIO_LIMIT -> "Audio turn limit reached";
+            case OUTPUT_LIMIT -> "Response output limit reached";
+            case TOOL_LIMIT -> "Session tool-call limit reached";
         };
     }
 

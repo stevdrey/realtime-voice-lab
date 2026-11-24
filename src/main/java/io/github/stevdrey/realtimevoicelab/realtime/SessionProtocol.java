@@ -1,7 +1,9 @@
 package io.github.stevdrey.realtimevoicelab.realtime;
 
 import java.io.IOException;
+import java.io.OutputStream;
 
+import com.fasterxml.jackson.core.Base64Variants;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
@@ -11,6 +13,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 final class SessionProtocol {
     static final int MAX_MESSAGE_CHARS = 256 * 1024;
+    static final int MAX_OUTPUT_TOKENS = 512;
+    private static final int PCM_SAMPLE_RATE = 24_000;
+    static final int PCM_BYTES_PER_SECOND = PCM_SAMPLE_RATE * Short.BYTES;
+    static final String CANCEL_RESPONSE = "{\"type\":\"response.cancel\"}";
 
     private final JsonFactory factory = JsonFactory.builder()
             .streamReadConstraints(StreamReadConstraints.builder().maxNestingDepth(32).build())
@@ -23,12 +29,13 @@ final class SessionProtocol {
         var update = mapper.createObjectNode().put("type", "session.update");
         var session = update.putObject("session").put("type", "realtime");
         session.put("instructions", "Respond briefly.");
+        session.put("max_output_tokens", MAX_OUTPUT_TOKENS);
         session.putArray("output_modalities").add("audio");
         var audio = session.putObject("audio");
         audio.putObject("input").putNull("turn_detection")
-                .putObject("format").put("type", "audio/pcm").put("rate", 24000);
+                .putObject("format").put("type", "audio/pcm").put("rate", PCM_SAMPLE_RATE);
         audio.putObject("output").put("voice", "marin")
-                .putObject("format").put("type", "audio/pcm").put("rate", 24000);
+                .putObject("format").put("type", "audio/pcm").put("rate", PCM_SAMPLE_RATE);
         return update.toString();
     }
 
@@ -37,6 +44,7 @@ final class SessionProtocol {
         String type = null;
         String sessionType = null;
         String sessionId = null;
+        int outputCap = 0;
         try (var parser = factory.createParser(message)) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new IOException("Invalid Realtime event");
@@ -54,6 +62,8 @@ final class SessionProtocol {
                             sessionType = textValue(parser, sessionValue);
                         } else if ("id".equals(sessionField)) {
                             sessionId = textValue(parser, sessionValue);
+                        } else if ("max_output_tokens".equals(sessionField) && sessionValue == JsonToken.VALUE_NUMBER_INT) {
+                            outputCap = parser.getIntValue();
                         } else {
                             parser.skipChildren();
                         }
@@ -73,10 +83,83 @@ final class SessionProtocol {
                 if (!"realtime".equals(sessionType)) {
                     throw new IOException("Invalid session type");
                 }
-                yield new Event(type, requiredText(sessionId));
+                yield new Event(type, requiredText(sessionId), outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS);
             }
-            default -> new Event(type, null);
+            default -> new Event(type, null, false);
         };
+    }
+
+    AudioDelta audioDelta(String message) throws IOException {
+        String responseId = null;
+        int bytes = -1;
+        try (var parser = factory.createParser(message); var sink = OutputStream.nullOutputStream()) {
+            parser.nextToken();
+            while (parser.nextToken() == JsonToken.FIELD_NAME) {
+                var field = parser.currentName();
+                var value = parser.nextToken();
+                if ("response_id".equals(field)) {
+                    responseId = textValue(parser, value);
+                } else if ("delta".equals(field) && value == JsonToken.VALUE_STRING) {
+                    try {
+                        bytes = parser.readBinaryValue(Base64Variants.getDefaultVariant(), sink);
+                    } catch (IllegalArgumentException invalidBase64) {
+                        throw new IOException("Invalid Realtime audio delta");
+                    }
+                } else {
+                    parser.skipChildren();
+                }
+            }
+        }
+        if (bytes < 0) {
+            throw new IOException("Invalid Realtime audio delta");
+        }
+        return new AudioDelta(requiredText(responseId), bytes);
+    }
+
+    ResponseDone responseDone(String message) throws IOException {
+        try (var parser = factory.createParser(message)) {
+            parser.nextToken();
+            while (parser.nextToken() == JsonToken.FIELD_NAME) {
+                var field = parser.currentName();
+                var value = parser.nextToken();
+                if ("response".equals(field) && value == JsonToken.START_OBJECT) {
+                    return readCompletedResponse(parser);
+                }
+                parser.skipChildren();
+            }
+        }
+        throw new IOException("Missing completed Realtime response");
+    }
+
+    private ResponseDone readCompletedResponse(JsonParser parser) throws IOException {
+        String id = null;
+        String status = null;
+        String reason = null;
+        while (parser.nextToken() == JsonToken.FIELD_NAME) {
+            var field = parser.currentName();
+            var value = parser.nextToken();
+            switch (field) {
+                case "id" -> id = textValue(parser, value);
+                case "status" -> status = textValue(parser, value);
+                case "status_details" -> {
+                    if (value == JsonToken.START_OBJECT) {
+                        while (parser.nextToken() == JsonToken.FIELD_NAME) {
+                            var detail = parser.currentName();
+                            var detailValue = parser.nextToken();
+                            if ("reason".equals(detail)) {
+                                reason = textValue(parser, detailValue);
+                            } else {
+                                parser.skipChildren();
+                            }
+                        }
+                    } else {
+                        parser.skipChildren();
+                    }
+                }
+                default -> parser.skipChildren();
+            }
+        }
+        return new ResponseDone(requiredText(id), "incomplete".equals(status) && "max_output_tokens".equals(reason));
     }
 
     private String textValue(JsonParser parser, JsonToken token) throws IOException {
@@ -94,6 +177,12 @@ final class SessionProtocol {
         return value;
     }
 
-    record Event(String type, String sessionId) {
+    record Event(String type, String sessionId, boolean outputCapConfirmed) {
+    }
+
+    record AudioDelta(String responseId, int bytes) {
+    }
+
+    record ResponseDone(String id, boolean outputLimitReached) {
     }
 }

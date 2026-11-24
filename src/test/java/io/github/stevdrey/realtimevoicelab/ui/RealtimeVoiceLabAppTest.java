@@ -157,6 +157,23 @@ class RealtimeVoiceLabAppTest {
                 connectButton(stage).fire();
                 return null;
             });
+
+            var capped = transport.attempts.getLast();
+            capped.ready();
+            for (int i = 0; i < 11; i++) {
+                capped.text("""
+                        {"type":"response.function_call_arguments.done","call_id":"test_call","arguments":"{}"}
+                        """, true);
+            }
+            assertEquals(1, capped.closeWrites);
+            capped.peerClose(WebSocket.NORMAL_CLOSURE, "private synthetic detail");
+            onFxThread(() -> {
+                assertSession(stage, "Session tool-call limit reached", "Connect", false);
+                assertSame(capped, transport.attempts.getLast());
+                connectButton(stage).fire();
+                assertSession(stage, "Connecting…", "Cancel connection", false);
+                return null;
+            });
         } finally {
             onFxThread(() -> {
                 stage.close();
