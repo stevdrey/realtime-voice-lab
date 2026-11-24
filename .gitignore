@@ -18,7 +18,26 @@
 *.zip
 *.tar.gz
 *.rar
+!gradle/wrapper/gradle-wrapper.jar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# virtual machine crash logs
 hs_err_pid*
 replay_pid*
+
+# Gradle and IDE
+.gradle/
+build/
+out/
+.idea/
+*.iml
+.vscode/
+
+# Local credentials and private artifacts
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+recordings/
+transcripts/
+local-results/
