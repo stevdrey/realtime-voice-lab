@@ -30,14 +30,22 @@ A **Git hook** lives in Git's hook path and runs in a Git process. This project 
 
 [Pull Request Size Guard](../../.github/workflows/pr-size-guard.yml) checks all PR base branches, including draft and documentation-only changes. The **PR file count** job reads GitHub's `changed_files` for the actual PR through a read-only token. It validates the PR head, target and count. It fails when the API fails and runs without checking out or executing PR source. A separate job runs the offline automation tests.
 
-GitHub's count is the authoritative size result. Enforcement on `main` requires GitHub to make that result mandatory:
+The [active ruleset for `main`](https://github.com/stevdrey/realtime-voice-lab/rules/27957959) requires changes to go through a pull request and the **PR file count** check from **GitHub Actions**. The PR branch must be up to date with `main`. The ruleset has no bypass actors.
+
+[`CODEOWNERS`](../../.github/CODEOWNERS) identifies who owns the workflow and ownership files. Owner approval is currently manual. The workflow definition comes from the proposed merge, so review changes to workflow definitions and check names before merging them.
+
+### Recreate or verify the rule
+
+GitHub makes its PR count mandatory by applying a ruleset to the target branch:
 
 1. Land the workflow on `main` and let **PR file count** run successfully on a PR.
-2. As a repository administrator, create an active branch ruleset for `main` under **Settings → Rules → Rulesets**, or configure equivalent classic branch protection. Require a pull request and require the **PR file count** status from **GitHub Actions**. Require an up-to-date branch so the check is refreshed against the current base. Keep direct, force-push and administrator bypasses closed.
-3. Protect workflow and CODEOWNERS changes with a required [code-owner review](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners). The PR workflow definition comes from the proposed merge. A required status name and app alone cannot protect that definition or prohibit another workflow from using the same job name. Ensure there is an eligible, independent owner for sensitive changes. If you later adopt a merge queue, adapt and verify the required check for `merge_group` first.
+2. As a repository administrator, create an active branch ruleset for `main` under **Settings → Rules → Rulesets**, or configure equivalent classic branch protection. Require a pull request and require the **PR file count** status from **GitHub Actions**. Require an up-to-date branch so the check is refreshed against the current base. Leave the bypass list empty.
+3. GitHub can also require [code-owner review](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners). The PR workflow definition comes from the proposed merge. A required status name and app alone cannot protect that definition or prohibit another workflow from using the same job name. Before requiring this approval, ensure a designated owner can approve sensitive changes submitted by another author. If you later adopt a merge queue, adapt and verify the required check for `merge_group` first.
 4. Test with disposable PRs targeting `main` and synthetic changes. Confirm that 40 files pass with a warning and 41 fail with merging blocked. Confirm direct updates to `main` are rejected. A size failure governs merging after a PR opens.
 
-On 2026-11-23 GitHub reported Actions enabled and `main` unprotected for this private repository. The ruleset and classic protection APIs returned HTTP 403 with a plan requirement. Until an eligible GitHub plan and an administrator enable the rules, maintainers must verify **PR file count** on the current revision before merging. See [GitHub ruleset availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository) and [required check behavior](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
+The [disposable verification PR](https://github.com/stevdrey/realtime-voice-lab/pull/23) was closed without merging. GitHub reported its merge as blocked when [41 files failed](https://github.com/stevdrey/realtime-voice-lab/actions/runs/45320788337), and eligible for merge when [40 files passed with a warning](https://github.com/stevdrey/realtime-voice-lab/actions/runs/45320886194).
+
+GitHub enabled branch rules after this repository became public. If its visibility changes, verify that the account plan still supports the ruleset. See [GitHub ruleset availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository) and [required check behavior](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks).
 
 ## Transfer from Dokene
 
