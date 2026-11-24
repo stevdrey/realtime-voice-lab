@@ -7,7 +7,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TurnState;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TurnView;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionProtocol.TextDelta;
 
-final class TextTurn {
+final class ConversationTurn {
     private static final int MAX_TEXT_CHARS = 32 * 1024;
     private static final int MAX_PART_INDEX = 127;
 
@@ -25,7 +25,7 @@ final class TextTurn {
     private int streamedChars;
     private String finishedText;
 
-    TextTurn(long number, String input) {
+    ConversationTurn(long number, String input) {
         this.number = number;
         this.id = "rvl-" + number;
         this.input = input;

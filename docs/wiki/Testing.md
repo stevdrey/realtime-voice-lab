@@ -21,7 +21,17 @@ After giving explicit opt-in for a paid test, use a dedicated restricted key in 
 3. Send `Count from one to one hundred, one number per line.` Select Cancel as soon as Send disables. Verify that the turn terminates, the workspace becomes ready for another message, and any partial reply stays in the same entry. Record if generation wins the race and completes first.
 4. Disconnect and verify that the composer and its buttons are disabled. Record the model, OS/JDK and outcome using synthetic data only.
 
-## Opt-in manual smoke (after limits are implemented)
+## RVL-004 push-to-talk verification
+
+In a ready session, hold the microphone with the primary mouse button, or focus it and hold Space or Enter. The recording label shows elapsed captured audio and the meter shows the current input level. Release to send an in-memory take of up to 30 seconds. Escape or loss of focus during the hold discards the take. The voice turn appears as “Voice input” and receives a text reply. Playback and transcripts are tracked in [RVL-005](../../issues/11).
+
+```sh
+env -u OPENAI_API_KEY -u DISPLAY -u WAYLAND_DISPLAY ./gradlew --offline test --tests '*RealtimeAudioInputTest' --tests '*RealtimeVoiceLabAppTest'
+```
+
+The synthetic checks exercise the audio format and explicit start, device closure on release/cancel/disconnect, the 30-second cap, empty and short takes, and ordered raw PCM appends followed by commit and response creation. The JavaFX journey exercises mouse release outside the button, keyboard capture, Escape, focus loss, window close and recording feedback. No physical input device or live Realtime session is needed.
+
+## Opt-in manual smoke across MVP features
 Use a dedicated restricted API key, headphones and own adult or synthetic speech.
 - Connect mini; verify session acknowledgment and text two-turn exchange.
 - Push-to-talk a short question; confirm incremental audio and transcript.

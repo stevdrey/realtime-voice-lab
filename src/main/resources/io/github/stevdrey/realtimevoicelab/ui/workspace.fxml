@@ -4,6 +4,7 @@
 <?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ListView?>
+<?import javafx.scene.control.ProgressBar?>
 <?import javafx.scene.control.ProgressIndicator?>
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.SplitPane?>
@@ -14,7 +15,7 @@
 <?import javafx.scene.layout.VBox?>
 <?import javafx.scene.shape.SVGPath?>
 
-<VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" styleClass="app-shell">
+<VBox fx:id="root" xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" styleClass="app-shell">
     <HBox spacing="10" styleClass="app-header">
         <SVGPath content="M1 12h3l3-7 4 14 4-16 4 9h4" styleClass="icon"/>
         <Label text="Realtime Voice Lab" styleClass="app-title"/>
@@ -49,7 +50,7 @@
                     <TextField fx:id="composer" id="text-composer" promptText="Type a message…"
                                accessibleText="Message" minWidth="0" HBox.hgrow="ALWAYS"/>
                     <Button fx:id="sendButton" id="send-text" text="Send" styleClass="text-action"/>
-                    <Button fx:id="cancelButton" id="cancel-text" text="Cancel" accessibleText="Cancel response"
+                    <Button fx:id="cancelButton" id="cancel-text" text="Cancel" accessibleText="Cancel turn"
                             styleClass="text-action"/>
                 </HBox>
             </VBox>
@@ -63,8 +64,10 @@
             </VBox>
         </SplitPane>
 
-        <StackPane accessibleText="Idle waveform" styleClass="waveform">
+        <StackPane styleClass="waveform">
             <Region styleClass="waveform-baseline"/>
+            <ProgressBar fx:id="micLevel" id="mic-level" visible="false" progress="0" maxWidth="280"
+                         maxHeight="8" accessibleText="Microphone level" styleClass="mic-level"/>
         </StackPane>
 
         <VBox alignment="CENTER" spacing="6">
@@ -96,6 +99,7 @@
                     </graphic>
                 </Button>
             </HBox>
+            <Label fx:id="micStatus" id="mic-status" styleClass="caption" minHeight="18" wrapText="true"/>
         </VBox>
 
         <HBox id="metrics" spacing="16" styleClass="metrics">

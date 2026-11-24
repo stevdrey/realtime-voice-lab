@@ -246,6 +246,22 @@
     -fx-background-color: -rv-primary-hover;
 }
 
+.mic-button:recording {
+    -fx-background-color: -rv-primary-hover;
+    -fx-border-color: -rv-danger;
+}
+
+.mic-level > .track {
+    -fx-background-color: -rv-divider;
+    -fx-background-insets: 0;
+}
+
+.mic-level > .bar {
+    -fx-background-insets: 0;
+    -fx-background-color: -rv-accent;
+    -fx-padding: 4;
+}
+
 .round-control:focus-visible, .mic-button:focus-visible {
     -fx-border-color: -rv-accent;
 }

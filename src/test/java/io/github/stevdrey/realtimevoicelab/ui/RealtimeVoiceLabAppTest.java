@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
+import io.github.stevdrey.realtimevoicelab.audio.FakeMicrophone;
 import io.github.stevdrey.realtimevoicelab.realtime.FakeTransport;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import javafx.application.Platform;
@@ -17,10 +18,13 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.MouseButton;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
 import javafx.scene.robot.Robot;
@@ -65,7 +69,7 @@ class RealtimeVoiceLabAppTest {
             });
 
             assertHoveredTooltip(stage, "#settings-button", "Settings (unavailable)");
-            assertHoveredTooltip(stage, "#mic-button", "Microphone (unavailable)");
+            assertHoveredTooltip(stage, "#mic-button", "Microphone (connect to record)");
             assertHoveredTooltip(stage, "#connect-button", "Connect");
         } finally {
             onFxThread(() -> {
@@ -250,7 +254,7 @@ class RealtimeVoiceLabAppTest {
             onFxThread(() -> {
                 var scene = stage.getScene();
                 assertTrue(scene.getRoot().lookupAll(".conversation-turn .caption").stream()
-                        .anyMatch(node -> "Text request failed".equals(((Label) node).getText())));
+                        .anyMatch(node -> "Request failed".equals(((Label) node).getText())));
                 assertFalse(scene.getRoot().lookupAll(".label").stream()
                         .anyMatch(node -> ((Label) node).getText().contains("private provider detail")));
                 ((TextField) scene.lookup("#text-composer")).setText("Retry");
@@ -295,7 +299,7 @@ class RealtimeVoiceLabAppTest {
             current.ready();
             onFxThread(() -> {
                 assertSession(stage, "Connected", "Disconnect", false);
-                assertTrue(((Button) stage.getScene().lookup("#mic-button")).isDisabled());
+                assertFalse(stage.getScene().lookup("#mic-button").isDisabled());
                 connectButton(stage).fire();
                 assertSession(stage, "Disconnecting…", "Disconnecting…", true);
                 return null;
@@ -412,6 +416,116 @@ class RealtimeVoiceLabAppTest {
                 return null;
             });
         }
+    }
+
+    @Test
+    void holdsToRecordWithMouseAndKeyboardAndClosesAudioOnCancellationOrWindowClose() throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone());
+                connectButton(stage).fire();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.ready();
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                var mic = scene.lookup("#mic-button");
+                assertFalse(mic.isDisabled());
+                assertEquals(0, microphone.opens.get());
+                var bounds = mic.localToScreen(mic.getBoundsInLocal());
+                var robot = new Robot();
+                robot.mouseMove(bounds.getCenterX(), bounds.getCenterY());
+                robot.mousePress(MouseButton.PRIMARY);
+                return null;
+            });
+            microphone.queueBlocks(4);
+            awaitOnFxThread(() -> hasRecordingLevel(stage), "Mouse press did not show a recording level");
+            assertEquals(1, socket.writes.size());
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                var footer = scene.lookup("#metrics");
+                var bounds = footer.localToScreen(footer.getBoundsInLocal());
+                var robot = new Robot();
+                robot.mouseMove(bounds.getCenterX(), bounds.getCenterY());
+                robot.mouseRelease(MouseButton.PRIMARY);
+                return null;
+            });
+            awaitOnFxThread(() -> socket.writes.size() == 3 && !stage.getScene().lookup("#mic-level").isVisible(),
+                    "Mouse release outside the button did not stop recording and commit");
+            assertEquals(1, microphone.closes.get());
+            socket.text("""
+                    {"type":"input_audio_buffer.committed","item_id":"desktop-voice-item","event_id":"synthetic"}
+                    """, true);
+            socket.text("""
+                    {"type":"response.done","response":{"id":"desktop-voice-reply","status":"completed",
+                     "metadata":{"rvl_turn":"rvl-1"}}}
+                    """, true);
+
+            onFxThread(() -> {
+                stage.getScene().lookup("#mic-button").requestFocus();
+                new Robot().keyPress(KeyCode.SPACE);
+                return null;
+            });
+            microphone.queueBlocks(3);
+            awaitOnFxThread(() -> hasRecordingLevel(stage), "Space did not start recording");
+            onFxThread(() -> {
+                var robot = new Robot();
+                robot.keyType(KeyCode.ESCAPE);
+                robot.keyRelease(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> microphone.closes.get() == 2 && !stage.getScene().lookup("#mic-button").isDisabled(),
+                    "Escape did not close the input line");
+            assertEquals(4, socket.writes.size());
+
+            onFxThread(() -> {
+                stage.getScene().lookup("#mic-button").requestFocus();
+                new Robot().keyPress(KeyCode.SPACE);
+                return null;
+            });
+            microphone.queueBlocks(3);
+            awaitOnFxThread(() -> hasRecordingLevel(stage), "Second Space press did not start recording");
+            onFxThread(() -> {
+                stage.getScene().lookup("#text-composer").requestFocus();
+                new Robot().keyRelease(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> microphone.closes.get() == 3 && !stage.getScene().lookup("#mic-level").isVisible(),
+                    "Focus loss did not close the input line");
+            assertEquals(4, socket.writes.size());
+
+            onFxThread(() -> {
+                stage.getScene().lookup("#mic-button").requestFocus();
+                new Robot().keyPress(KeyCode.ENTER);
+                return null;
+            });
+            microphone.queueBlocks(3);
+            awaitOnFxThread(() -> hasRecordingLevel(stage), "Enter did not start recording");
+            onFxThread(() -> {
+                stage.close();
+                new Robot().keyRelease(KeyCode.ENTER);
+                return null;
+            });
+            awaitOnFxThread(() -> microphone.closes.get() == 4, "Window close did not release the input line");
+            assertTrue(socket.aborted);
+            assertEquals(4, socket.writes.size());
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    private boolean hasRecordingLevel(Stage stage) {
+        var scene = stage.getScene();
+        var status = (Label) scene.lookup("#mic-status");
+        var level = (ProgressBar) scene.lookup("#mic-level");
+        return status.getText().startsWith("Recording") && level.isVisible() && level.getProgress() > 0;
     }
 
     private void assertMinimumSizeLayout(Stage stage) {
