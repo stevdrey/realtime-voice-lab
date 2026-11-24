@@ -2,7 +2,7 @@
 
 A small JavaFX desktop playground for learning OpenAI Realtime API directly from the JVM.
 
-**Status:** the offline desktop shell opens in a disconnected state. Session controls are disabled and metrics are unavailable while the corresponding features are under development. See [RVL-001](../../issues/7).
+**Status:** the desktop opens disconnected. Connect and Disconnect manage a GA Realtime session. Conversation, audio, the event inspector and metrics are under development. See [RVL-002](../../issues/8).
 
 ## Goals
 - Inspect GA WebSocket events and learn the session lifecycle.
@@ -11,7 +11,7 @@ A small JavaFX desktop playground for learning OpenAI Realtime API directly from
 - Measure latency, usage and estimated costs without storing private conversation data.
 
 ## Stack
-The single desktop module uses Java 27, JavaFX, the Gradle wrapper and JUnit. The build selects an installed Java 27 toolchain, and CI uses Eclipse Temurin. Exact versions are pinned in [build.gradle](build.gradle), [gradle-wrapper.properties](gradle/wrapper/gradle-wrapper.properties) and the [build workflow](.github/workflows/build.yml). The planned transport and audio stack uses JDK HttpClient/WebSocket, Jackson and Java Sound.
+The single desktop module uses Java 27, JavaFX, the Gradle wrapper and JUnit. The build selects an installed Java 27 toolchain, and CI uses Eclipse Temurin. Exact versions are pinned in [build.gradle](build.gradle), [gradle-wrapper.properties](gradle/wrapper/gradle-wrapper.properties) and the [build workflow](.github/workflows/build.yml). The Realtime transport uses JDK HttpClient/WebSocket and Jackson. Audio is planned with Java Sound.
 
 ## Documentation
 See the [UI design specification](DESING.md) for the approved dark JavaFX workspace, component behavior and visual acceptance criteria.
@@ -30,7 +30,7 @@ Install a released JDK 27 and point `JAVA_HOME` to it. The first build downloads
 ./gradlew run
 ```
 
-`./gradlew test` runs the JUnit tests with JavaFX's headless backend. The tests check the disconnected window, disabled controls, unknown metrics and layout at the minimum size. The build and app launch require no API key. `run` opens a desktop window, while `test` also works without a display.
+`./gradlew test` runs the JUnit tests with JavaFX's headless backend and a fake Realtime transport. The build, app launch and tests require no API key. `run` opens a desktop window, while `test` also works without a display.
 
 Edit [workspace.fxml](src/main/resources/io/github/stevdrey/realtimevoicelab/ui/workspace.fxml) for layout and [styles.css](src/main/resources/styles.css) for styling.
 

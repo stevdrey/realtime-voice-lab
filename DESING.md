@@ -204,7 +204,8 @@ Metrics: latency is request-to-first-audio (or documented VAD equivalent); not a
 | Issue | UI responsibility |
 |---|---|
 | [RVL-001 / #7](../../issues/7) | Main shell, dark theme, layout, accessible placeholder/disabled controls. No fake live state. |
-| [RVL-003 / #9](../../issues/9) | Conversation text and connection status. |
+| [RVL-002 / #8](../../issues/8) | Connect, cancel and disconnect controls, connection status and sanitized session errors. |
+| [RVL-003 / #9](../../issues/9) | Conversation text. |
 | [RVL-004 / #10](../../issues/10) | Push-to-talk and capture indicator. |
 | [RVL-005 / #11](../../issues/11) | Playback and transcripts. |
 | [RVL-006 / #12](../../issues/12) | Event inspector filters and detail. |
