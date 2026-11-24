@@ -21,6 +21,8 @@ See [roadmap](docs/wiki/Roadmap.md), [architecture](docs/wiki/Architecture.md), 
 
 ## Development
 
+See the [project agent workflow](.agents/README.md) and the [40-file pull request guard](docs/verification/pr-size-guard.md) for development and review guidance.
+
 Install a released JDK 27 and point `JAVA_HOME` to it. The first build downloads Gradle and the pinned dependencies. On Windows, use `gradlew.bat`.
 
 ```sh
@@ -36,6 +38,6 @@ Install a released JDK 27 and point `JAVA_HOME` to it. The first build downloads
 - For future Java Sound capture and playback, use a working ALSA setup with `libasound` (`alsa-lib` on Fedora, `libasound2t64` on Ubuntu 24.04). On PipeWire desktops, use your distribution's ALSA integration, such as `pipewire-alsa` on Fedora.
 - Check the selected input and output in your desktop sound settings. `arecord -l` and `aplay -l` from `alsa-utils` can list ALSA capture and playback hardware. An audio device is unnecessary for the current shell and tests.
 
-Set `OPENAI_API_KEY` in your local process environment only for an explicitly authorized live test after session limits are in place. Keep the key out of commits and prompts.
+Set `OPENAI_API_KEY` in your local process environment only for an explicitly authorized live test after session limits are in place. Keep the key out of commits and prompts. For those tests, use headphones, the lowest-cost model, and short sessions.
 
 [Backlog](../../issues) · [Official Realtime guide](https://developers.openai.com/api/docs/guides/realtime)
