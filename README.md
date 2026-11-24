@@ -14,6 +14,8 @@ A small JavaFX desktop playground for learning OpenAI Realtime API directly from
 Java 27, JavaFX, Gradle wrapper, JDK HttpClient/WebSocket, Java Sound, Jackson and JUnit. Pin compatible released versions during bootstrap. Single desktop module; no web backend, database, authentication or agent framework.
 
 ## Documentation
+See the [UI design specification](DESING.md) for the approved dark JavaFX workspace, component behavior and visual acceptance criteria.
+
 The [documentation home](docs/wiki/Home.md) is the canonical, version-controlled wiki-ready source.
 See [roadmap](docs/wiki/Roadmap.md), [architecture](docs/wiki/Architecture.md), [decisions](docs/wiki/Architecture-Decisions.md), [security](docs/wiki/Security-and-Cost.md) and [testing](docs/wiki/Testing.md).
 

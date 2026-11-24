@@ -1,3 +1,5 @@
 # Agent instructions
 
 This is an intentionally small local JavaFX Realtime API learning lab. Read README.md and docs/wiki/Roadmap.md before implementing an issue. Follow docs/wiki/Architecture-Decisions.md and docs/wiki/Contributing.md. Keep changes issue-scoped and independently testable. No live API calls or paid smoke tests without explicit permission and baseline limits. No secrets, private transcripts, raw audio or unredacted payloads in logs/commits. Prefer offline tests with fake transport/devices. Check GA event schemas against official docs. Report actual tests and limitations; never invent verification. Keep JavaFX mutations on FX thread and handle resource cancellation/cleanup. Do not add a server, database, SDK abstraction or provider migration unless a specific approved issue requires it.
+
+For any JavaFX UI or CSS work, read DESING.md and preserve the approved dark workspace composition, tokens and interaction states. Implement only the UI responsibilities assigned to the current issue; placeholders must be disabled or explicitly labeled demo, never simulated as live data.
