@@ -23,5 +23,6 @@ jobs:
           distribution: temurin
           # Adoptium API SemVer for the jdk-27.0.1.1+4 release.
           java-version: '27.0.1+100000004'
+          cache: gradle
       - name: Build and test without API credentials
         run: env -u OPENAI_API_KEY ./gradlew --no-daemon clean build

@@ -11,7 +11,7 @@ A small JavaFX desktop playground for learning OpenAI Realtime API directly from
 - Measure latency, usage and estimated costs without storing private conversation data.
 
 ## Stack
-The single desktop module uses Java 27, JavaFX 27.0.1, the Gradle 9.9.1 wrapper, and JUnit 6.1.3. The build selects an installed Java 27 toolchain. CI uses Eclipse Temurin 27.0.1.1+4. The planned transport and audio stack uses JDK HttpClient/WebSocket, Jackson and Java Sound.
+The single desktop module uses Java 27, JavaFX, the Gradle wrapper and JUnit. The build selects an installed Java 27 toolchain, and CI uses Eclipse Temurin. Exact versions are pinned in [build.gradle](build.gradle), [gradle-wrapper.properties](gradle/wrapper/gradle-wrapper.properties) and the [build workflow](.github/workflows/build.yml). The planned transport and audio stack uses JDK HttpClient/WebSocket, Jackson and Java Sound.
 
 ## Documentation
 See the [UI design specification](DESING.md) for the approved dark JavaFX workspace, component behavior and visual acceptance criteria.
@@ -34,7 +34,7 @@ Install a released JDK 27 and point `JAVA_HOME` to it. The first build downloads
 
 Edit [workspace.fxml](src/main/resources/io/github/stevdrey/realtimevoicelab/ui/workspace.fxml) for layout and [styles.css](src/main/resources/styles.css) for styling.
 
-### Linux audio prerequisites
+### Linux desktop and audio prerequisites
 
 - For the desktop window, use a graphical session with GTK 3. The package is `gtk3` on Fedora and `libgtk-3-0t64` on Ubuntu 24.04.
 - For future Java Sound capture and playback, use a working ALSA setup with `libasound` (`alsa-lib` on Fedora, `libasound2t64` on Ubuntu 24.04). On PipeWire desktops, use your distribution's ALSA integration, such as `pipewire-alsa` on Fedora.

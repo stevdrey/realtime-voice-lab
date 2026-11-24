@@ -1,23 +1,31 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
+import javafx.beans.binding.Bindings;
 import javafx.fxml.FXML;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Tooltip;
-import javafx.scene.shape.SVGPath;
+import javafx.scene.layout.StackPane;
 
 public final class WorkspaceController {
     @FXML
     private ComboBox<String> modelSelector;
 
     @FXML
-    private SVGPath waveformShape;
+    private StackPane settingsControl;
 
     @FXML
     private Button settingsButton;
 
     @FXML
+    private StackPane micControl;
+
+    @FXML
     private Button micButton;
+
+    @FXML
+    private StackPane connectControl;
 
     @FXML
     private Button connectButton;
@@ -25,22 +33,16 @@ public final class WorkspaceController {
     @FXML
     private void initialize() {
         modelSelector.getSelectionModel().selectFirst();
-        modelSelector.setAccessibleText("Default model: " + modelSelector.getValue());
+        modelSelector.accessibleTextProperty().bind(Bindings.createStringBinding(
+                () -> "Model: " + modelSelector.getValue(), modelSelector.valueProperty()));
 
-        installUnavailableTooltip(settingsButton);
-        installUnavailableTooltip(micButton);
-        installUnavailableTooltip(connectButton);
-
-        // A single static shape draws the flat baseline without sampling audio or scheduling updates.
-        var bars = new StringBuilder();
-        for (int index = 0; index < 72; index++) {
-            bars.append("M").append(index * 10).append(" 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z ");
-        }
-        waveformShape.setContent(bars.toString());
+        installUnavailableTooltip(settingsControl, settingsButton);
+        installUnavailableTooltip(micControl, micButton);
+        installUnavailableTooltip(connectControl, connectButton);
     }
 
-    private void installUnavailableTooltip(Button button) {
-        // Disabled buttons do not receive hover events. Their FXML wrappers remain hoverable.
-        Tooltip.install(button.getParent(), new Tooltip(button.getAccessibleText() + " (unavailable)"));
+    private void installUnavailableTooltip(Node target, Button button) {
+        // Disabled buttons do not receive hover events, so the tooltip goes on the button's hoverable wrapper.
+        Tooltip.install(target, new Tooltip(button.getAccessibleText() + " (unavailable)"));
     }
 }

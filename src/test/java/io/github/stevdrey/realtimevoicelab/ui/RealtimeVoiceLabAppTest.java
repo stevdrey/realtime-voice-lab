@@ -2,8 +2,10 @@ package io.github.stevdrey.realtimevoicelab.ui;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 import javafx.application.Platform;
@@ -21,7 +23,6 @@ import javafx.scene.robot.Robot;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -33,17 +34,18 @@ import static org.junit.jupiter.api.Assertions.fail;
 class RealtimeVoiceLabAppTest {
     @BeforeAll
     static void startToolkit() throws InterruptedException {
+        // The toolkit is shared by every FX test class in this JVM and ends with it, so it is never exited here.
         var ready = new CountDownLatch(1);
-        Platform.startup(() -> {
+        Runnable keepRunning = () -> {
             Platform.setImplicitExit(false);
             ready.countDown();
-        });
+        };
+        try {
+            Platform.startup(keepRunning);
+        } catch (IllegalStateException alreadyStarted) {
+            Platform.runLater(keepRunning);
+        }
         assertTrue(ready.await(10, TimeUnit.SECONDS), "JavaFX toolkit did not start");
-    }
-
-    @AfterAll
-    static void stopToolkit() {
-        Platform.exit();
     }
 
     @Test
@@ -76,7 +78,7 @@ class RealtimeVoiceLabAppTest {
             assertEquals("Disconnected", ((Label) scene.lookup("#session-status")).getText());
             var model = (ComboBox<?>) scene.lookup("#model-selector");
             assertEquals("gpt-realtime-2.1-mini", model.getValue());
-            assertEquals("Default model: gpt-realtime-2.1-mini", model.getAccessibleText());
+            assertEquals("Model: gpt-realtime-2.1-mini", model.getAccessibleText());
             assertTrue(model.isDisabled());
             assertDisabledButton(scene, "#settings-button", "Settings");
             assertDisabledButton(scene, "#mic-button", "Microphone");
@@ -102,36 +104,60 @@ class RealtimeVoiceLabAppTest {
 
     @Test
     void keepsBothDarkPanelsAndControlsVisibleAtMinimumSize() throws Exception {
-        withWindow(stage -> {
-            assertEquals(760, stage.getMinWidth());
-            assertEquals(520, stage.getMinHeight());
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage);
+                assertEquals(760, stage.getMinWidth());
+                assertEquals(520, stage.getMinHeight());
 
-            var scene = stage.getScene();
-            var root = scene.getRoot();
-            assertEquals(1100, scene.getWidth());
-            assertEquals(720, scene.getHeight());
-            var panels = (SplitPane) scene.lookup("#main-panels");
-            assertEquals(0.5, panels.getDividerPositions()[0], 0.01);
+                var scene = stage.getScene();
+                assertEquals(1100, scene.getWidth());
+                assertEquals(720, scene.getHeight());
+                var panels = (SplitPane) scene.lookup("#main-panels");
+                assertEquals(0.5, panels.getDividerPositions()[0], 0.01);
 
-            root.resize(740, 480); // Allow for the window decorations at the minimum stage size.
-            panels.setDividerPositions(0.42);
-            root.layout();
+                stage.setWidth(stage.getMinWidth());
+                stage.setHeight(stage.getMinHeight());
+                return null;
+            });
+            awaitOnFxThread(() -> stage.getScene().getWidth() == 760 && stage.getScene().getHeight() == 520,
+                    "The scene did not shrink to the minimum stage size");
+            onFxThread(() -> {
+                assertMinimumSizeLayout(stage);
+                return null;
+            });
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
 
-            assertEquals(0.42, panels.getDividerPositions()[0], 0.01);
-            var conversation = (Region) panels.getItems().get(0);
-            var inspector = (Region) panels.getItems().get(1);
-            assertTrue(conversation.getWidth() >= 260);
-            assertTrue(inspector.getWidth() >= 260);
-            assertTrue(conversation.getHeight() > 100);
-            assertEquals(Color.web("#1e2430"), conversation.getBackground().getFills().getFirst().getFill());
-            var baseline = (Region) scene.lookup(".waveform-baseline");
-            assertTrue(baseline.getBoundsInParent().getWidth() > 0);
-            assertTrue(baseline.getShape().getBoundsInLocal().getWidth() > 0);
+    private void assertMinimumSizeLayout(Stage stage) {
+        var scene = stage.getScene();
+        var root = scene.getRoot();
+        var panels = (SplitPane) scene.lookup("#main-panels");
+        panels.setDividerPositions(0.42);
+        root.layout();
 
-            var metrics = scene.lookup("#metrics");
-            var footerBounds = metrics.localToScene(metrics.getBoundsInLocal());
-            assertTrue(footerBounds.getMaxY() <= root.getLayoutBounds().getHeight());
-        });
+        assertEquals(0.42, panels.getDividerPositions()[0], 0.01);
+        var conversation = (Region) panels.getItems().get(0);
+        var inspector = (Region) panels.getItems().get(1);
+        assertTrue(conversation.getWidth() >= 260);
+        assertTrue(inspector.getWidth() >= 260);
+        assertTrue(conversation.getHeight() > 100);
+        assertEquals(Color.web("#1e2430"), conversation.getBackground().getFills().getFirst().getFill());
+        var baseline = (Region) scene.lookup(".waveform-baseline");
+        assertTrue(baseline.getBoundsInParent().getWidth() > 0);
+        var dotsWidth = baseline.getShape().getBoundsInLocal().getWidth();
+        assertTrue(dotsWidth > 0);
+        assertTrue(dotsWidth <= baseline.getWidth(), "Unscaled waveform dots overflow the baseline");
+
+        var metrics = scene.lookup("#metrics");
+        var footerBounds = metrics.localToScene(metrics.getBoundsInLocal());
+        assertTrue(footerBounds.getMaxY() <= scene.getHeight());
     }
 
     private void assertDisabledButton(Scene scene, String selector, String name) {
@@ -148,34 +174,54 @@ class RealtimeVoiceLabAppTest {
             return null;
         });
 
+        awaitOnFxThread(() -> Window.getWindows().stream().anyMatch(window ->
+                        window instanceof Tooltip tooltip && expectedText.equals(tooltip.getText())),
+                "Hovering over " + selector + " did not show: " + expectedText);
+    }
+
+    private void awaitOnFxThread(Callable<Boolean> condition, String failureMessage) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadline) {
-            boolean showing = onFxThread(() -> Window.getWindows().stream().anyMatch(window ->
-                    window instanceof Tooltip tooltip && expectedText.equals(tooltip.getText())));
-            if (showing) {
+            if (onFxThread(condition)) {
                 return;
             }
             Thread.sleep(25);
         }
-        fail("Hovering over " + selector + " did not show: " + expectedText);
+        fail(failureMessage);
     }
 
     private void withWindow(Consumer<Stage> checks) throws Exception {
-        onFxThread(() -> {
-            var stage = new Stage();
-            try {
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
                 new RealtimeVoiceLabApp().start(stage);
                 checks.accept(stage);
-            } finally {
+                return null;
+            });
+        } finally {
+            // A separate task still queues the close when the checks fail or time out.
+            onFxThread(() -> {
                 stage.close();
-            }
-            return null;
-        });
+                return null;
+            });
+        }
     }
 
     private <T> T onFxThread(Callable<T> action) throws Exception {
         var run = new FutureTask<>(action);
         Platform.runLater(run);
-        return run.get(10, TimeUnit.SECONDS);
+        try {
+            return run.get(10, TimeUnit.SECONDS);
+        } catch (ExecutionException failure) {
+            // Report assertion failures and exceptions from the FX thread as themselves.
+            switch (failure.getCause()) {
+                case Error error -> throw error;
+                case Exception exception -> throw exception;
+                case null, default -> throw failure;
+            }
+        } catch (TimeoutException timeout) {
+            run.cancel(true);
+            throw timeout;
+        }
     }
 }

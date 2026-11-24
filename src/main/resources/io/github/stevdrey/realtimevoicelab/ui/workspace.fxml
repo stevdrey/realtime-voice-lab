@@ -61,16 +61,12 @@
         </SplitPane>
 
         <StackPane accessibleText="Idle waveform" styleClass="waveform">
-            <Region styleClass="waveform-baseline">
-                <shape>
-                    <SVGPath fx:id="waveformShape"/>
-                </shape>
-            </Region>
+            <Region styleClass="waveform-baseline"/>
         </StackPane>
 
         <VBox alignment="CENTER" spacing="6">
             <HBox alignment="CENTER" spacing="16" fillHeight="false">
-                <StackPane pickOnBounds="true">
+                <StackPane fx:id="settingsControl">
                     <Button fx:id="settingsButton" id="settings-button" accessibleText="Settings"
                             disable="true" styleClass="round-control">
                         <graphic>
@@ -81,7 +77,7 @@
                         </graphic>
                     </Button>
                 </StackPane>
-                <StackPane pickOnBounds="true">
+                <StackPane fx:id="micControl">
                     <Button fx:id="micButton" id="mic-button" accessibleText="Microphone"
                             disable="true" styleClass="mic-button">
                         <graphic>
@@ -90,7 +86,7 @@
                         </graphic>
                     </Button>
                 </StackPane>
-                <StackPane pickOnBounds="true">
+                <StackPane fx:id="connectControl">
                     <Button fx:id="connectButton" id="connect-button" accessibleText="Connect"
                             disable="true" styleClass="round-control">
                         <graphic>
