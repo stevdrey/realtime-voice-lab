@@ -64,6 +64,10 @@ final class SessionProtocol {
         return command("input_audio_buffer.clear", id).toString();
     }
 
+    String deleteItem(String eventId, String itemId) {
+        return command("conversation.item.delete", eventId).put("item_id", itemId).toString();
+    }
+
     String createResponse(ConversationTurn turn) {
         var event = command("response.create", turn.responseEventId());
         var response = event.putObject("response").put("max_output_tokens", MAX_OUTPUT_TOKENS);

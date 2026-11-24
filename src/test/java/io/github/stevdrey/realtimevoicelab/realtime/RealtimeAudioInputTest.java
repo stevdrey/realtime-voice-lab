@@ -1,5 +1,6 @@
 package io.github.stevdrey.realtimevoicelab.realtime;
 
+import java.net.http.WebSocket;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
@@ -178,7 +179,7 @@ class RealtimeAudioInputTest {
         try (var session = newSession(device)) {
             var socket = ready(session);
             record(session, device, 7);
-            var append = new CompletableFuture<java.net.http.WebSocket>();
+            var append = new CompletableFuture<WebSocket>();
             socket.nextTurnWrite = append;
             session.releaseAudio();
             await(() -> socket.writes.size() == 2);
@@ -190,6 +191,72 @@ class RealtimeAudioInputTest {
             assertFalse(session.workspace().canSend());
             socket.text("{\"type\":\"input_audio_buffer.cleared\",\"event_id\":\"synthetic\"}", true);
             assertTrue(session.workspace().canSend());
+            assertTrue(session.workspace().turns().isEmpty());
+        }
+    }
+
+    @Test
+    void cancellationDuringCommitDeletesTheExactItemBeforeEnablingAnotherTurn() throws Exception {
+        var device = new FakeMicrophone();
+        try (var session = newSession(device)) {
+            var socket = ready(session);
+            record(session, device, 3);
+            var append = new CompletableFuture<WebSocket>();
+            socket.nextTurnWrite = append;
+            session.releaseAudio();
+            await(() -> socket.writes.size() == 2 && session.workspace().microphone().state() == SENDING);
+
+            var commitWrite = new CompletableFuture<WebSocket>();
+            socket.nextTurnWrite = commitWrite;
+            append.complete(socket);
+            session.cancelTurn();
+            committed(socket);
+            assertEquals(List.of("session.update", "input_audio_buffer.append", "input_audio_buffer.commit"),
+                    types(socket));
+            assertFalse(session.workspace().canSend());
+
+            var deleteWrite = new CompletableFuture<WebSocket>();
+            socket.nextTurnWrite = deleteWrite;
+            commitWrite.complete(socket);
+            var deletion = json.readTree(socket.writes.getLast());
+            assertEquals("conversation.item.delete", deletion.path("type").asText());
+            assertEquals("voice-item", deletion.path("item_id").asText());
+            socket.text("""
+                    {"type":"input_audio_buffer.cleared","event_id":"synthetic-clear"}
+                    """, true);
+            deleted(socket, "other-item");
+            assertFalse(session.sendText("synthetic text during cancellation"));
+            assertFalse(session.startAudio());
+            deleted(socket, "voice-item");
+            assertFalse(session.workspace().canSend());
+            deleteWrite.complete(socket);
+
+            assertTrue(session.workspace().canSend());
+            assertTrue(session.workspace().microphone().canStart());
+            assertTrue(session.workspace().turns().isEmpty());
+            assertEquals(List.of("session.update", "input_audio_buffer.append", "input_audio_buffer.commit",
+                    "conversation.item.delete"), types(socket));
+        }
+    }
+
+    @Test
+    void rejectedDeleteAbortsTheSessionBeforeAnotherTurnCanUseTheCancelledAudio() throws Exception {
+        var device = new FakeMicrophone();
+        try (var session = newSession(device)) {
+            var socket = ready(session);
+            record(session, device, 3);
+            session.releaseAudio();
+            await(() -> socket.writes.size() == 3);
+            session.cancelTurn();
+            committed(socket);
+            var deletion = json.readTree(socket.writes.getLast());
+            assertEquals("conversation.item.delete", deletion.path("type").asText());
+            socket.text("""
+                    {"type":"error","error":{"event_id":"%s","message":"synthetic provider detail"}}
+                    """.formatted(deletion.path("event_id").asText()), true);
+            assertEquals(RealtimeSession.Failure.PROVIDER, session.status().failure());
+            assertTrue(socket.aborted);
+            assertFalse(session.workspace().canSend());
             assertTrue(session.workspace().turns().isEmpty());
         }
     }
@@ -261,6 +328,12 @@ class RealtimeAudioInputTest {
         socket.text("""
                 {"type":"input_audio_buffer.committed","event_id":"synthetic","item_id":"voice-item"}
                 """, true);
+    }
+
+    private void deleted(FakeTransport.Socket socket, String itemId) {
+        socket.text("""
+                {"type":"conversation.item.deleted","event_id":"synthetic-delete","item_id":"%s"}
+                """.formatted(itemId), true);
     }
 
     private List<String> types(FakeTransport.Socket socket) throws Exception {

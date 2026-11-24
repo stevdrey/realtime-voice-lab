@@ -303,24 +303,16 @@ public final class RealtimeSession implements AutoCloseable {
     private void advanceInput(Attempt attempt) {
         var input = attempt.input;
         if (input == null || attempt.pumpingAudio || attempt.writing || captureWorker == input
-                || input.committing || input.clearing) {
+                || input.committing || input.cleanupSent) {
             return;
         }
         // A WebSocket write may complete inline. Let the outer loop drain it without recursion.
         attempt.pumpingAudio = true;
         try {
             while (active == attempt && attempt.input == input && status.state() == State.READY
-                    && !attempt.writing && !input.committing && !input.clearing && withinSessionTime(attempt)) {
+                    && !attempt.writing && !input.committing && !input.cleanupSent && withinSessionTime(attempt)) {
                 if (input.discard) {
-                    if (input.sentChunks == 0) {
-                        resetInput(attempt, MicState.IDLE);
-                    } else {
-                        input.clearing = true;
-                        startDeadline(attempt, CANCEL_TIMEOUT, Failure.CANCEL_TIMEOUT);
-                        if (active == attempt) {
-                            writeTurnEvent(attempt, protocol.clearAudio(input.eventPrefix + "clear"));
-                        }
-                    }
+                    discardUploadedAudio(attempt, input);
                 } else if (input.pcm.hasRemaining()) {
                     var chunk = new byte[Math.min(input.pcm.remaining(), AUDIO_APPEND_BYTES)];
                     input.pcm.get(chunk);
@@ -333,6 +325,22 @@ public final class RealtimeSession implements AutoCloseable {
             }
         } finally {
             attempt.pumpingAudio = false;
+        }
+    }
+
+    private void discardUploadedAudio(Attempt attempt, AudioInput input) {
+        if (input.sentChunks == 0) {
+            resetInput(attempt, MicState.IDLE);
+            return;
+        }
+        // Acknowledged commits have moved from the input buffer to conversation history.
+        input.cleanupSent = true;
+        startDeadline(attempt, CANCEL_TIMEOUT, Failure.CANCEL_TIMEOUT);
+        if (active == attempt) {
+            var event = input.committedItemId == null
+                    ? protocol.clearAudio(input.eventPrefix + "clear")
+                    : protocol.deleteItem(input.eventPrefix + "delete", input.committedItemId);
+            writeTurnEvent(attempt, event);
         }
     }
 
@@ -652,8 +660,12 @@ public final class RealtimeSession implements AutoCloseable {
                     if (itemId == null || itemId.isBlank()) {
                         throw new IOException("Missing committed Realtime audio item ID");
                     }
-                    resetInput(attempt, MicState.IDLE);
-                    if (!input.discard) {
+                    if (input.discard) {
+                        input.committing = false;
+                        input.committedItemId = itemId;
+                        advanceInput(attempt);
+                    } else {
+                        resetInput(attempt, MicState.IDLE);
                         var turn = new ConversationTurn(input.number, "Voice input");
                         turn.itemAcknowledged = true;
                         addTurn(attempt, turn);
@@ -663,7 +675,16 @@ public final class RealtimeSession implements AutoCloseable {
                 }
             }
             case "input_audio_buffer.cleared" -> {
-                if (attempt.input != null && attempt.input.clearing) {
+                var input = attempt.input;
+                if (input != null && input.cleanupSent && input.committedItemId == null) {
+                    resetInput(attempt, MicState.IDLE);
+                    statusChanged.run();
+                }
+            }
+            case "conversation.item.deleted" -> {
+                var input = attempt.input;
+                if (input != null && input.cleanupSent && input.committedItemId != null
+                        && input.committedItemId.equals(protocol.textEvent(message).path("item_id").textValue())) {
                     resetInput(attempt, MicState.IDLE);
                     statusChanged.run();
                 }
@@ -906,7 +927,8 @@ public final class RealtimeSession implements AutoCloseable {
         private boolean discard;
         private int sentChunks;
         private boolean committing;
-        private boolean clearing;
+        private boolean cleanupSent;
+        private String committedItemId;
 
         AudioInput(long number) {
             this.number = number;
