@@ -1,6 +1,8 @@
 # Contributing and agent workflow
 
-Work on one issue per small PR. Use the issue ID in branch/PR title and link it with Closes #N only when the entire acceptance checklist is fulfilled. Read the roadmap and relevant ADRs before implementation. Avoid expanding scope; if a dependency is missing, document it or open a focused follow-up.
+Work on one issue per small PR. Use the issue ID in the branch and `[Issue-N]` in the PR title. Link the issue with `Closes #N` when the entire acceptance checklist is fulfilled. Read the roadmap and relevant ADRs before implementation.
+
+Aim for 30 changed files or fewer and stay within the 40-file hard limit. See the [PR preflight and GitHub protection guide](../verification/pr-size-guard.md) and the [project skill index](../../.agents/skills/README.md).
 
 For Codex/Claude: implement only requested issue; inspect repository conventions; consult current GA API docs; use synthetic fixtures; run offline tests/build; report exact commands and actual results, including failures or unrun checks. Never invent API responses or claim live verification if not performed. No paid calls unless explicitly requested and limits are active. Review credential handling, thread ownership, bounded resources, cancellation and regression cases before merge.
 
