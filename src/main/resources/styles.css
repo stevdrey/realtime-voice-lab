@@ -1,0 +1,236 @@
+.root {
+    -rv-app: #11151e;
+    -rv-workspace: #151923;
+    -rv-panel: #1e2430;
+    -rv-control: #272d3a;
+    -rv-divider: #343b49;
+    -rv-text: #f3f4f6;
+    -rv-secondary: #d1d5db;
+    -rv-muted: #9ca3af;
+    -rv-accent: #818cf8;
+    -rv-heading: #a5b4fc;
+    -rv-primary: #6366f1;
+    -rv-primary-hover: #5558db;
+
+    -fx-background-color: -rv-app;
+    -fx-font-family: "System";
+    -fx-font-size: 14px;
+    -fx-accent: -rv-accent;
+    -fx-focus-color: -rv-accent;
+    -fx-faint-focus-color: transparent;
+}
+
+.app-shell {
+    -fx-padding: 16;
+    -fx-spacing: 12;
+}
+
+.app-header {
+    -fx-alignment: center-left;
+    -fx-padding: 0 4 0 4;
+}
+
+.workspace {
+    -fx-background-color: -rv-workspace;
+    -fx-background-radius: 12;
+    -fx-padding: 16;
+    -fx-spacing: 12;
+}
+
+.label {
+    -fx-text-fill: -rv-text;
+}
+
+.app-title {
+    -fx-font-size: 20px;
+    -fx-font-weight: 600;
+}
+
+.caption, .empty-message {
+    -fx-text-fill: -rv-muted;
+}
+
+.caption, .session-status {
+    -fx-font-size: 12px;
+}
+
+.status-dot {
+    -fx-background-color: -rv-muted;
+    -fx-background-radius: 999;
+    -fx-pref-width: 8;
+    -fx-pref-height: 8;
+    -fx-max-height: 8;
+}
+
+.session-status {
+    -fx-text-fill: -rv-secondary;
+    -fx-font-weight: 600;
+}
+
+.combo-box {
+    -fx-background-color: -rv-control;
+    -fx-background-radius: 8;
+    -fx-font-size: 12px;
+}
+
+.combo-box > .list-cell, .combo-box-popup .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: -rv-secondary;
+}
+
+.combo-box > .arrow-button > .arrow {
+    -fx-background-color: -rv-secondary;
+}
+
+.combo-box-popup .list-view {
+    -fx-background-color: -rv-control;
+}
+
+.combo-box-popup .list-cell:hover, .combo-box-popup .list-cell:selected {
+    -fx-background-color: -rv-divider;
+}
+
+.split-pane {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.split-pane > .split-pane-divider {
+    -fx-background-color: -rv-divider;
+    -fx-background-insets: 0 5 0 5;
+    -fx-padding: 0 6 0 6;
+}
+
+.lab-panel {
+    -fx-background-color: -rv-panel;
+    -fx-background-radius: 9;
+    -fx-border-color: -rv-divider;
+    -fx-border-radius: 9;
+    -fx-padding: 12;
+}
+
+.panel-title {
+    -fx-text-fill: -rv-heading;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+
+.scroll-pane, .scroll-pane > .viewport, .scroll-pane > .corner,
+.list-view, .lab-panel .list-cell {
+    -fx-background-color: -rv-panel;
+}
+
+.scroll-pane, .list-view {
+    -fx-background-insets: 0;
+    -fx-border-color: transparent;
+    -fx-border-radius: 4;
+}
+
+.combo-box:focus-visible, .scroll-pane:focus-visible, .list-view:focus-visible {
+    -fx-border-color: -rv-accent;
+}
+
+.scroll-bar, .scroll-bar > .increment-button, .scroll-bar > .decrement-button {
+    -fx-background-color: -rv-panel;
+}
+
+.scroll-bar > .thumb {
+    -fx-background-color: -rv-divider;
+}
+
+.scroll-bar .increment-arrow, .scroll-bar .decrement-arrow {
+    -fx-background-color: -rv-muted;
+}
+
+.waveform {
+    -fx-min-height: 52;
+    -fx-pref-height: 52;
+    -fx-padding: 0 12 0 12;
+}
+
+.waveform-baseline {
+    -fx-background-color: -rv-accent;
+    -fx-pref-height: 4;
+    -fx-max-height: 4;
+    /* 64 static 4 px dots at a 10 px pitch. Unscaled, so they stay round and fit the minimum width. */
+    -fx-scale-shape: false;
+    -fx-shape: "M0 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M10 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M20 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M30 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M40 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M50 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M60 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M70 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M80 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M90 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M100 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M110 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M120 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M130 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M140 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M150 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M160 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M170 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M180 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M190 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M200 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M210 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M220 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M230 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M240 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M250 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M260 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M270 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M280 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M290 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M300 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M310 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M320 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M330 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M340 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M350 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M360 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M370 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M380 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M390 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M400 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M410 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M420 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M430 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M440 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M450 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M460 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M470 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M480 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M490 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M500 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M510 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M520 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M530 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M540 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M550 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M560 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M570 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M580 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M590 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M600 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M610 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M620 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z M630 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z";
+}
+
+.icon {
+    -fx-fill: transparent;
+    -fx-stroke: -rv-secondary;
+    -fx-stroke-width: 1.7;
+    -fx-stroke-line-cap: round;
+    -fx-stroke-line-join: round;
+}
+
+.app-header .icon {
+    -fx-stroke: -rv-accent;
+}
+
+.round-control, .mic-button {
+    -fx-background-radius: 999;
+    -fx-background-insets: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 2;
+    -fx-border-radius: 999;
+    -fx-padding: 0;
+}
+
+.round-control {
+    -fx-background-color: -rv-control;
+    -fx-min-width: 40;
+    -fx-min-height: 40;
+    -fx-pref-width: 40;
+    -fx-pref-height: 40;
+}
+
+.mic-button {
+    -fx-background-color: -rv-primary;
+    -fx-min-width: 60;
+    -fx-min-height: 60;
+    -fx-pref-width: 60;
+    -fx-pref-height: 60;
+}
+
+.mic-button .icon {
+    -fx-stroke: white;
+}
+
+.round-control:hover, .round-control:pressed {
+    -fx-background-color: -rv-divider;
+}
+
+.mic-button:hover, .mic-button:pressed {
+    -fx-background-color: -rv-primary-hover;
+}
+
+.round-control:focus-visible, .mic-button:focus-visible {
+    -fx-border-color: -rv-accent;
+}
+
+.round-control:disabled, .combo-box:disabled {
+    -fx-opacity: 0.72;
+    -fx-background-color: -rv-control;
+}
+
+.combo-box:disabled > .list-cell {
+    -fx-text-fill: -rv-text;
+    -fx-opacity: 1;
+}
+
+.mic-button:disabled {
+    -fx-opacity: 0.62;
+    -fx-background-color: -rv-primary-hover;
+}
+
+.metrics {
+    -fx-border-color: -rv-divider transparent transparent transparent;
+    -fx-padding: 8 0 0 0;
+}
+
+.metric-value {
+    -fx-font-size: 19px;
+    -fx-font-weight: 600;
+}

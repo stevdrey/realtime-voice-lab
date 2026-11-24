@@ -1,0 +1,28 @@
+name: Offline build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Java 27 offline build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: gradle/actions/wrapper-validation@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e # v6.1.0
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          # Adoptium API SemVer for the jdk-27.0.1.1+4 release.
+          java-version: '27.0.1+100000004'
+          cache: gradle
+      - name: Build and test without API credentials
+        run: env -u OPENAI_API_KEY ./gradlew --no-daemon clean build
