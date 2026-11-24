@@ -235,7 +235,7 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private synchronized void captureChunk(Attempt attempt, AudioInput input, byte[] pcm, int count) {
-        // A normal release still accepts the buffered frames from a read already in flight.
+        // A normal release still accepts frames from the capture worker's last buffer snapshot.
         if (active != attempt || attempt.input != input || input.discard || !withinSessionTime(attempt)) {
             return;
         }

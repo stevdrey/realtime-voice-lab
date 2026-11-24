@@ -73,10 +73,7 @@ public final class MicrophoneCapture {
                     LockSupport.parkNanos(POLL_NANOS);
                     continue;
                 }
-                if (stopped.getAsBoolean()) {
-                    break;
-                }
-                // Read only complete frames already buffered while the operator was holding the control.
+                // Finish this snapshot even if release races with read. The loop checks stop before polling again.
                 int count = line.read(block, 0, requestBytes);
                 if (count <= 0 || count > requestBytes || count % Short.BYTES != 0) {
                     return Result.UNAVAILABLE;

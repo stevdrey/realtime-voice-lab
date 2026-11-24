@@ -15,6 +15,7 @@ public final class FakeMicrophone {
     private final AtomicInteger read = new AtomicInteger();
     private final AudioFormat format;
     private final Runnable beforeOpen;
+    private final IntConsumer afterAvailable;
     private final IntConsumer beforeRead;
 
     public FakeMicrophone() {
@@ -22,16 +23,22 @@ public final class FakeMicrophone {
     }
 
     public FakeMicrophone(IntConsumer beforeRead) {
-        this(new AudioFormat(24_000, 16, 1, true, false), () -> {}, beforeRead);
+        this(bytes -> {}, beforeRead);
+    }
+
+    public FakeMicrophone(IntConsumer afterAvailable, IntConsumer beforeRead) {
+        this(new AudioFormat(24_000, 16, 1, true, false), () -> {}, afterAvailable, beforeRead);
     }
 
     public FakeMicrophone(AudioFormat format, Runnable beforeOpen) {
-        this(format, beforeOpen, length -> {});
+        this(format, beforeOpen, bytes -> {}, length -> {});
     }
 
-    private FakeMicrophone(AudioFormat format, Runnable beforeOpen, IntConsumer beforeRead) {
+    private FakeMicrophone(AudioFormat format, Runnable beforeOpen, IntConsumer afterAvailable,
+                           IntConsumer beforeRead) {
         this.format = format;
         this.beforeOpen = beforeOpen;
+        this.afterAvailable = afterAvailable;
         this.beforeRead = beforeRead;
     }
 
@@ -52,7 +59,11 @@ public final class FakeMicrophone {
                             closes.incrementAndGet();
                             yield null;
                         }
-                        case "available" -> Math.min(queued.get(), MicrophoneCapture.BLOCK_BYTES);
+                        case "available" -> {
+                            int bytes = Math.min(queued.get(), MicrophoneCapture.BLOCK_BYTES);
+                            afterAvailable.accept(bytes);
+                            yield bytes;
+                        }
                         case "read" -> readBlock((byte[]) args[0], (int) args[1], (int) args[2]);
                         default -> throw new AssertionError("Unexpected audio line operation " + method.getName());
                     });

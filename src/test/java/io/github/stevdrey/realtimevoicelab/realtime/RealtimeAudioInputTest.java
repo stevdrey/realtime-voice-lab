@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 import javax.sound.sampled.AudioFormat;
@@ -109,6 +110,47 @@ class RealtimeAudioInputTest {
             assertEquals(1, device.closes.get());
         } finally {
             finishRead.complete(null);
+        }
+    }
+
+    @Test
+    void releasesBetweenAvailableAndReadAndOnlySendsTheObservedPcm() throws Exception {
+        int fullBytes = 2 * MicrophoneCapture.BLOCK_BYTES;
+        int tailBytes = MicrophoneCapture.BYTES_PER_SECOND * 30 / 1_000;
+        var tailObserved = new CompletableFuture<Void>();
+        var resumeCapture = new CompletableFuture<Void>();
+        var bytesRead = new AtomicInteger();
+        var device = new FakeMicrophone(available -> {
+            if (available == tailBytes) {
+                tailObserved.complete(null);
+                resumeCapture.join();
+            }
+        }, bytesRead::addAndGet);
+
+        try (var session = newSession(device)) {
+            var socket = ready(session);
+            record(session, device, 2);
+            device.queueBytes(tailBytes);
+            await(tailObserved::isDone);
+            session.releaseAudio();
+            assertEquals(fullBytes, bytesRead.get());
+            assertEquals(1, socket.writes.size());
+            // New PCM arrives after release but before the worker can read the previously observed tail.
+            device.queueBlocks(1);
+            resumeCapture.complete(null);
+            await(() -> session.workspace().microphone().state() != STOPPING);
+
+            assertEquals(fullBytes + tailBytes, bytesRead.get());
+            assertEquals(1, device.closes.get());
+            assertEquals(List.of("session.update", "input_audio_buffer.append", "input_audio_buffer.commit"),
+                    types(socket));
+            var pcm = json.readTree(socket.writes.get(1)).path("audio").binaryValue();
+            assertEquals(fullBytes + tailBytes, pcm.length);
+            assertArrayEquals(device.block(0), Arrays.copyOfRange(pcm, 0, MicrophoneCapture.BLOCK_BYTES));
+            assertArrayEquals(device.block(1), Arrays.copyOfRange(pcm, MicrophoneCapture.BLOCK_BYTES, fullBytes));
+            assertArrayEquals(Arrays.copyOf(device.block(2), tailBytes), Arrays.copyOfRange(pcm, fullBytes, pcm.length));
+        } finally {
+            resumeCapture.complete(null);
         }
     }
 
