@@ -1,5 +1,6 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -9,6 +10,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeTransport;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
+import javafx.beans.value.ObservableBooleanValue;
 import javafx.css.PseudoClass;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
@@ -28,9 +30,12 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
-import javafx.stage.Stage;
 
 public final class WorkspaceController {
+    private enum MicGesture {
+        MOUSE, SPACE, ENTER
+    }
+
     private static final PseudoClass CONNECTED = PseudoClass.getPseudoClass("connected");
     private static final PseudoClass ERROR = PseudoClass.getPseudoClass("session-error");
     private static final PseudoClass DISCONNECT = PseudoClass.getPseudoClass("disconnect");
@@ -40,12 +45,12 @@ public final class WorkspaceController {
     private final Tooltip connectTooltip = new Tooltip();
     private final Tooltip micTooltip = new Tooltip();
     private final AtomicBoolean renderPending = new AtomicBoolean();
+    private final EnumSet<KeyCode> heldMicKeys = EnumSet.noneOf(KeyCode.class);
     private RealtimeSession.State renderedState;
     private List<RealtimeSession.TurnView> renderedTurns = List.of();
     private boolean canSendText;
     private boolean mouseHeld;
-    private KeyCode micKeyHeld;
-    private boolean micGesture;
+    private MicGesture activeMicGesture;
     private boolean disposed;
 
     @FXML
@@ -149,15 +154,15 @@ public final class WorkspaceController {
         composer.setOnAction(event -> sendText());
         sendButton.setOnAction(event -> sendText());
         cancelButton.setOnAction(event -> {
-            micGesture = false;
+            activeMicGesture = null;
             session.cancelTurn();
             renderSession();
         });
         renderSession();
     }
 
-    void watchFocus(Stage stage) {
-        stage.focusedProperty().addListener((observable, previous, focused) -> {
+    void watchFocus(ObservableBooleanValue windowFocus) {
+        windowFocus.addListener((observable, previous, focused) -> {
             if (!focused) {
                 finishMicGesture(false);
                 mouseHeld = false;
@@ -172,11 +177,10 @@ public final class WorkspaceController {
         micLevel.managedProperty().bind(micLevel.visibleProperty());
         micButton.addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
             if (event.getButton() == MouseButton.PRIMARY) {
-                if (!mouseHeld && micKeyHeld == null) {
+                if (!mouseHeld && activeMicGesture == null) {
                     micButton.requestFocus();
                     mouseHeld = true;
-                    micGesture = session.startAudio();
-                    renderSession();
+                    startMicGesture(MicGesture.MOUSE);
                 }
                 event.consume();
             }
@@ -184,30 +188,33 @@ public final class WorkspaceController {
         root.addEventFilter(MouseEvent.MOUSE_RELEASED, event -> {
             if (mouseHeld && event.getButton() == MouseButton.PRIMARY) {
                 mouseHeld = false;
-                finishMicGesture(true);
+                if (activeMicGesture == MicGesture.MOUSE) {
+                    finishMicGesture(true);
+                }
                 event.consume();
             }
         });
         micButton.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             var key = event.getCode();
-            if (key == KeyCode.SPACE || key == KeyCode.ENTER) {
-                if (micKeyHeld == null && !mouseHeld) {
-                    micKeyHeld = key;
-                    micGesture = session.startAudio();
-                    renderSession();
+            var gesture = keyboardMicGesture(key);
+            if (gesture != null) {
+                if (heldMicKeys.add(key) && !mouseHeld && activeMicGesture == null) {
+                    startMicGesture(gesture);
                 }
                 event.consume();
             }
         });
         root.addEventFilter(KeyEvent.KEY_RELEASED, event -> {
-            if (event.getCode() == micKeyHeld) {
-                micKeyHeld = null;
-                finishMicGesture(true);
+            var key = event.getCode();
+            if (heldMicKeys.remove(key)) {
+                if (activeMicGesture == keyboardMicGesture(key)) {
+                    finishMicGesture(true);
+                }
                 event.consume();
             }
         });
         root.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-            if (event.getCode() == KeyCode.ESCAPE && micGesture) {
+            if (event.getCode() == KeyCode.ESCAPE && activeMicGesture != null) {
                 finishMicGesture(false);
                 event.consume();
             }
@@ -219,11 +226,26 @@ public final class WorkspaceController {
         });
     }
 
+    private MicGesture keyboardMicGesture(KeyCode key) {
+        return switch (key) {
+            case SPACE -> MicGesture.SPACE;
+            case ENTER -> MicGesture.ENTER;
+            default -> null;
+        };
+    }
+
+    private void startMicGesture(MicGesture gesture) {
+        if (session.startAudio()) {
+            activeMicGesture = gesture;
+        }
+        renderSession();
+    }
+
     private void finishMicGesture(boolean submit) {
-        if (!micGesture || disposed) {
+        if (activeMicGesture == null || disposed) {
             return;
         }
-        micGesture = false;
+        activeMicGesture = null;
         if (submit) {
             session.releaseAudio();
         } else {

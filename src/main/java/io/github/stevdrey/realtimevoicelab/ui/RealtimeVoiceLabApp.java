@@ -6,6 +6,7 @@ import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
 import io.github.stevdrey.realtimevoicelab.realtime.JdkRealtimeTransport;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeTransport;
 import javafx.application.Application;
+import javafx.beans.value.ObservableBooleanValue;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
@@ -27,6 +28,11 @@ public final class RealtimeVoiceLabApp extends Application {
     }
 
     void start(Stage stage, RealtimeTransport transport, MicrophoneCapture microphone) throws IOException {
+        start(stage, transport, microphone, stage.focusedProperty());
+    }
+
+    void start(Stage stage, RealtimeTransport transport, MicrophoneCapture microphone,
+               ObservableBooleanValue windowFocus) throws IOException {
         var loader = new FXMLLoader(getClass().getResource("workspace.fxml"));
         workspace = new WorkspaceController(transport, microphone);
         loader.setController(workspace);
@@ -44,7 +50,7 @@ public final class RealtimeVoiceLabApp extends Application {
         stage.setMinWidth(760);
         stage.setMinHeight(520);
         stage.setScene(scene);
-        workspace.watchFocus(stage);
+        workspace.watchFocus(windowFocus);
         stage.setOnHidden(event -> stop());
         stage.show();
     }

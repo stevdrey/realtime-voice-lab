@@ -13,6 +13,8 @@ import io.github.stevdrey.realtimevoicelab.audio.FakeMicrophone;
 import io.github.stevdrey.realtimevoicelab.realtime.FakeTransport;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import javafx.application.Platform;
+import javafx.beans.property.SimpleBooleanProperty;
+import javafx.event.Event;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
@@ -24,7 +26,9 @@ import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
 import javafx.scene.robot.Robot;
@@ -34,6 +38,7 @@ import javafx.stage.Window;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -522,11 +527,99 @@ class RealtimeVoiceLabAppTest {
         }
     }
 
+    @ParameterizedTest
+    @EnumSource(value = KeyCode.class, names = {"SPACE", "ENTER"})
+    void mouseCanRecordAfterLosingWindowFocusWithAKeyHeld(KeyCode key) throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var stage = onFxThread(Stage::new);
+        // The headless window manager does not send a blur to the previous stage on a focus request.
+        var windowFocus = new SimpleBooleanProperty(true);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone(), windowFocus);
+                connectButton(stage).fire();
+                stage.requestFocus();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.ready();
+            awaitOnFxThread(stage::isFocused, "Workspace never received window focus");
+            onFxThread(() -> {
+                var mic = stage.getScene().lookup("#mic-button");
+                mic.requestFocus();
+                Event.fireEvent(mic, new KeyEvent(KeyEvent.KEY_PRESSED, "", "", key, false, false, false, false));
+                return null;
+            });
+            microphone.queueBlocks(3);
+            awaitOnFxThread(() -> hasRecordingLevel(stage), "Keyboard hold did not start recording");
+
+            onFxThread(() -> {
+                windowFocus.set(false);
+                return null;
+            });
+            awaitOnFxThread(() -> microphone.closes.get() == 1 && "Hold to talk".equals(micStatus(stage)),
+                    "Window blur did not cancel the key take");
+            assertEquals(1, socket.writes.size());
+
+            onFxThread(() -> {
+                windowFocus.set(true);
+                var mic = stage.getScene().lookup("#mic-button");
+                Event.fireEvent(mic, new KeyEvent(KeyEvent.KEY_PRESSED, "", "", key, false, false, false, false));
+                Event.fireEvent(mic, new KeyEvent(KeyEvent.KEY_PRESSED, "", "", key, false, false, false, false));
+                assertEquals("Hold to talk", micStatus(stage));
+                windowFocus.set(false);
+                return null;
+            });
+            assertEquals(1, microphone.opens.get());
+            assertEquals(1, socket.writes.size());
+
+            onFxThread(() -> {
+                var otherScene = new Scene(new Region());
+                Event.fireEvent(otherScene.getRoot(),
+                        new KeyEvent(KeyEvent.KEY_RELEASED, "", "", key, false, false, false, false));
+                windowFocus.set(true);
+                var mic = stage.getScene().lookup("#mic-button");
+                Event.fireEvent(mic, new MouseEvent(MouseEvent.MOUSE_PRESSED, 0, 0, 0, 0, MouseButton.PRIMARY, 1,
+                        false, false, false, false, true, false, false, false, false, true, null));
+                return null;
+            });
+            microphone.queueBlocks(4);
+            awaitOnFxThread(() -> "Recording · 0.2 s".equals(micStatus(stage)),
+                    "Stale key prevented a new mouse capture");
+            assertEquals(2, microphone.opens.get());
+
+            onFxThread(() -> {
+                var mic = stage.getScene().lookup("#mic-button");
+                Event.fireEvent(mic,
+                        new KeyEvent(KeyEvent.KEY_RELEASED, "", "", key, false, false, false, false));
+                assertTrue(hasRecordingLevel(stage), "A delayed key release ended the mouse take");
+                assertEquals(1, socket.writes.size());
+                Event.fireEvent(mic, new MouseEvent(MouseEvent.MOUSE_RELEASED, 0, 0, 0, 0, MouseButton.PRIMARY, 1,
+                        false, false, false, false, false, false, false, false, false, true, null));
+                assertFalse(hasRecordingLevel(stage), "The mouse release did not end the mouse take");
+                return null;
+            });
+            awaitOnFxThread(() -> socket.writes.size() == 3 && microphone.closes.get() == 2,
+                    "Only the mouse release should submit the second take");
+            assertTrue(socket.writes.get(1).contains("input_audio_buffer.append"));
+            assertTrue(socket.writes.get(2).contains("input_audio_buffer.commit"));
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
     private boolean hasRecordingLevel(Stage stage) {
         var scene = stage.getScene();
-        var status = (Label) scene.lookup("#mic-status");
         var level = (ProgressBar) scene.lookup("#mic-level");
-        return status.getText().startsWith("Recording") && level.isVisible() && level.getProgress() > 0;
+        return micStatus(stage).startsWith("Recording") && level.isVisible() && level.getProgress() > 0;
+    }
+
+    private String micStatus(Stage stage) {
+        return ((Label) stage.getScene().lookup("#mic-status")).getText();
     }
 
     private void assertMinimumSizeLayout(Stage stage) {
