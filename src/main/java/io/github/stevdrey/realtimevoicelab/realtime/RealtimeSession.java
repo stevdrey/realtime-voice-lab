@@ -235,7 +235,8 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private synchronized void captureChunk(Attempt attempt, AudioInput input, byte[] pcm, int count) {
-        if (active != attempt || attempt.input != input || input.stop || !withinSessionTime(attempt)) {
+        // A normal release still accepts the buffered frames from a read already in flight.
+        if (active != attempt || attempt.input != input || input.discard || !withinSessionTime(attempt)) {
             return;
         }
         if (input.pcm == null) {
@@ -243,6 +244,7 @@ public final class RealtimeSession implements AutoCloseable {
         }
         int accepted = Math.min(count, input.pcm.remaining());
         input.pcm.put(pcm, 0, accepted);
+        int previousSize = input.size;
         input.size += accepted;
         int peak = 0;
         for (int index = 0; index < accepted; index += Short.BYTES) {
@@ -250,8 +252,13 @@ public final class RealtimeSession implements AutoCloseable {
             peak = Math.max(peak, Math.abs(sample));
         }
         input.level = peak / 32768.0;
-        input.stop = !input.pcm.hasRemaining();
-        statusChanged.run();
+        if (!input.pcm.hasRemaining()) {
+            input.stop = true;
+        }
+        // Small device reads can arrive every poll. Keep meter updates at one per 40 ms of PCM.
+        if (input.size / MicrophoneCapture.BLOCK_BYTES != previousSize / MicrophoneCapture.BLOCK_BYTES) {
+            statusChanged.run();
+        }
     }
 
     private synchronized void captureEnded(Attempt attempt, AudioInput input, MicrophoneCapture.Result result) {
@@ -313,6 +320,8 @@ public final class RealtimeSession implements AutoCloseable {
                     && !attempt.writing && !input.committing && !input.cleanupSent && withinSessionTime(attempt)) {
                 if (input.discard) {
                     discardUploadedAudio(attempt, input);
+                } else if (input.committedItemId != null) {
+                    startAudioResponse(attempt, input);
                 } else if (input.pcm.hasRemaining()) {
                     var chunk = new byte[Math.min(input.pcm.remaining(), AUDIO_APPEND_BYTES)];
                     input.pcm.get(chunk);
@@ -326,6 +335,15 @@ public final class RealtimeSession implements AutoCloseable {
         } finally {
             attempt.pumpingAudio = false;
         }
+    }
+
+    private void startAudioResponse(Attempt attempt, AudioInput input) {
+        resetInput(attempt, MicState.IDLE);
+        var turn = new ConversationTurn(input.number, "Voice input");
+        turn.itemAcknowledged = true;
+        addTurn(attempt, turn);
+        advanceTurn(attempt);
+        statusChanged.run();
     }
 
     private void discardUploadedAudio(Attempt attempt, AudioInput input) {
@@ -660,18 +678,10 @@ public final class RealtimeSession implements AutoCloseable {
                     if (itemId == null || itemId.isBlank()) {
                         throw new IOException("Missing committed Realtime audio item ID");
                     }
-                    if (input.discard) {
-                        input.committing = false;
-                        input.committedItemId = itemId;
-                        advanceInput(attempt);
-                    } else {
-                        resetInput(attempt, MicState.IDLE);
-                        var turn = new ConversationTurn(input.number, "Voice input");
-                        turn.itemAcknowledged = true;
-                        addTurn(attempt, turn);
-                        advanceTurn(attempt);
-                    }
-                    statusChanged.run();
+                    // Keep the item cancellable until the commit write completes and response creation can start.
+                    input.committing = false;
+                    input.committedItemId = itemId;
+                    advanceInput(attempt);
                 }
             }
             case "input_audio_buffer.cleared" -> {

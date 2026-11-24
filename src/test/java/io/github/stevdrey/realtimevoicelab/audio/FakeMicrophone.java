@@ -2,6 +2,7 @@ package io.github.stevdrey.realtimevoicelab.audio;
 
 import java.lang.reflect.Proxy;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntConsumer;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.TargetDataLine;
@@ -14,14 +15,24 @@ public final class FakeMicrophone {
     private final AtomicInteger read = new AtomicInteger();
     private final AudioFormat format;
     private final Runnable beforeOpen;
+    private final IntConsumer beforeRead;
 
     public FakeMicrophone() {
-        this(new AudioFormat(24_000, 16, 1, true, false), () -> {});
+        this(length -> {});
+    }
+
+    public FakeMicrophone(IntConsumer beforeRead) {
+        this(new AudioFormat(24_000, 16, 1, true, false), () -> {}, beforeRead);
     }
 
     public FakeMicrophone(AudioFormat format, Runnable beforeOpen) {
+        this(format, beforeOpen, length -> {});
+    }
+
+    private FakeMicrophone(AudioFormat format, Runnable beforeOpen, IntConsumer beforeRead) {
         this.format = format;
         this.beforeOpen = beforeOpen;
+        this.beforeRead = beforeRead;
     }
 
     public MicrophoneCapture microphone() {
@@ -41,7 +52,7 @@ public final class FakeMicrophone {
                             closes.incrementAndGet();
                             yield null;
                         }
-                        case "available" -> queued.get() > 0 ? MicrophoneCapture.BLOCK_BYTES : 0;
+                        case "available" -> Math.min(queued.get(), MicrophoneCapture.BLOCK_BYTES);
                         case "read" -> readBlock((byte[]) args[0], (int) args[1], (int) args[2]);
                         default -> throw new AssertionError("Unexpected audio line operation " + method.getName());
                     });
@@ -49,15 +60,24 @@ public final class FakeMicrophone {
     }
 
     public void queueBlocks(int count) {
+        queueBytes(count * MicrophoneCapture.BLOCK_BYTES);
+    }
+
+    public void queueBytes(int count) {
         queued.addAndGet(count);
     }
 
     private int readBlock(byte[] target, int offset, int length) {
-        if (queued.getAndDecrement() <= 0 || offset != 0 || length != MicrophoneCapture.BLOCK_BYTES) {
+        if (offset != 0 || length <= 0 || length > MicrophoneCapture.BLOCK_BYTES || length % Short.BYTES != 0
+                || queued.getAndAdd(-length) < length) {
             throw new AssertionError("Unexpected microphone read");
         }
-        var block = block(read.getAndIncrement());
-        System.arraycopy(block, 0, target, offset, length);
+        beforeRead.accept(length);
+        int start = read.getAndAdd(length);
+        for (int index = 0; index < length; index += Short.BYTES) {
+            target[index] = (byte) ((start + index) / MicrophoneCapture.BLOCK_BYTES);
+            target[index + 1] = 32;
+        }
         return length;
     }
 

@@ -79,6 +79,40 @@ class RealtimeAudioInputTest {
     }
 
     @Test
+    void keepsThePartialBlockInFlightAtReleaseAndCommitsTheWholeTake() throws Exception {
+        int tailBytes = MicrophoneCapture.BYTES_PER_SECOND * 30 / 1_000;
+        var tailStarted = new CompletableFuture<Void>();
+        var finishRead = new CompletableFuture<Void>();
+        var device = new FakeMicrophone(length -> {
+            if (length == tailBytes) {
+                tailStarted.complete(null);
+                finishRead.join();
+            }
+        });
+
+        try (var session = newSession(device)) {
+            var socket = ready(session);
+            record(session, device, 2);
+            device.queueBytes(tailBytes);
+            await(tailStarted::isDone);
+            session.releaseAudio();
+            assertEquals(1, socket.writes.size());
+            finishRead.complete(null);
+            await(() -> socket.writes.size() == 3);
+
+            var pcm = json.readTree(socket.writes.get(1)).path("audio").binaryValue();
+            int fullBytes = 2 * MicrophoneCapture.BLOCK_BYTES;
+            assertEquals(fullBytes + tailBytes, pcm.length);
+            assertArrayEquals(Arrays.copyOf(device.block(2), tailBytes), Arrays.copyOfRange(pcm, fullBytes, pcm.length));
+            assertEquals(List.of("session.update", "input_audio_buffer.append", "input_audio_buffer.commit"),
+                    types(socket));
+            assertEquals(1, device.closes.get());
+        } finally {
+            finishRead.complete(null);
+        }
+    }
+
+    @Test
     void emptyAndShortTakesNeverUploadOrCommit() throws Exception {
         var device = new FakeMicrophone();
         try (var session = newSession(device)) {
@@ -233,6 +267,39 @@ class RealtimeAudioInputTest {
 
             assertTrue(session.workspace().canSend());
             assertTrue(session.workspace().microphone().canStart());
+            assertTrue(session.workspace().turns().isEmpty());
+            assertEquals(List.of("session.update", "input_audio_buffer.append", "input_audio_buffer.commit",
+                    "conversation.item.delete"), types(socket));
+        }
+    }
+
+    @Test
+    void cancellingAfterCommitAcknowledgmentButBeforeWriteCompletionDeletesTheAudioItem() throws Exception {
+        var device = new FakeMicrophone();
+        try (var session = newSession(device)) {
+            var socket = ready(session);
+            record(session, device, 3);
+            var append = new CompletableFuture<WebSocket>();
+            socket.nextTurnWrite = append;
+            session.releaseAudio();
+            await(() -> socket.writes.size() == 2 && session.workspace().microphone().state() == SENDING);
+
+            var commitWrite = new CompletableFuture<WebSocket>();
+            socket.nextTurnWrite = commitWrite;
+            append.complete(socket);
+            committed(socket);
+            assertTrue(session.workspace().canCancel());
+            session.cancelTurn();
+            assertFalse(session.workspace().canSend());
+            commitWrite.complete(socket);
+
+            var deletion = json.readTree(socket.writes.getLast());
+            assertEquals("conversation.item.delete", deletion.path("type").asText());
+            assertEquals("voice-item", deletion.path("item_id").asText());
+            assertFalse(session.workspace().canSend());
+            deleted(socket, "voice-item");
+
+            assertTrue(session.workspace().canSend());
             assertTrue(session.workspace().turns().isEmpty());
             assertEquals(List.of("session.update", "input_audio_buffer.append", "input_audio_buffer.commit",
                     "conversation.item.delete"), types(socket));

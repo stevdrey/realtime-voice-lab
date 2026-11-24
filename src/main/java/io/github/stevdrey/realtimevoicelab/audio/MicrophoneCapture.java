@@ -67,16 +67,18 @@ public final class MicrophoneCapture {
                 if (System.nanoTime() - startedAt >= limitNanos) {
                     return Result.LIMIT;
                 }
-                if (line.available() < block.length) {
+                int availableBytes = Math.min(line.available(), block.length);
+                int requestBytes = availableBytes - availableBytes % Short.BYTES;
+                if (requestBytes <= 0) {
                     LockSupport.parkNanos(POLL_NANOS);
                     continue;
                 }
                 if (stopped.getAsBoolean()) {
                     break;
                 }
-                // Java Sound guarantees available bytes can be read without blocking.
-                int count = line.read(block, 0, block.length);
-                if (count <= 0 || count > block.length || count % Short.BYTES != 0) {
+                // Read only complete frames already buffered while the operator was holding the control.
+                int count = line.read(block, 0, requestBytes);
+                if (count <= 0 || count > requestBytes || count % Short.BYTES != 0) {
                     return Result.UNAVAILABLE;
                 }
                 chunk.accept(block, count);
