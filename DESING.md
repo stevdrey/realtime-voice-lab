@@ -87,7 +87,7 @@ Use system sans-serif (e.g. available Inter or Noto Sans, otherwise JavaFX Syste
 
 ## 5. JavaFX implementation guidance
 
-Use BorderPane/VBox/HBox/SplitPane/GridPane and existing JavaFX controls. Use a stylesheet at `src/main/resources/styles.css` as the single source of visual tokens. FXML is optional; do not introduce another UI framework. The following is a starter CSS contract, not a complete stylesheet:
+Define view structure in FXML using JavaFX layout panes and controls such as BorderPane, VBox, HBox, SplitPane, and GridPane. Use Java code for controller behavior and dynamic rendering. Apply visual styles through JavaFX CSS wherever possible and keep shared tokens in `src/main/resources/styles.css`. The stylesheet starts with these tokens.
 
 ```css
 .root {
