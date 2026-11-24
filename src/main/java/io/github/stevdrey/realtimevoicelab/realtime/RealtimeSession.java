@@ -23,6 +23,7 @@ public final class RealtimeSession implements AutoCloseable {
     public static final int MAX_INPUT_CHARS = 4_000;
     private static final int MAX_HISTORY_TURNS = 60;
     static final Duration MAX_SESSION_TIME = Duration.ofMinutes(5);
+    static final Duration RESPONSE_CORRELATION_TIMEOUT = Duration.ofSeconds(15);
     static final Duration MAX_AUDIO_TIME = Duration.ofSeconds(30);
     static final int MAX_TOOL_CALLS = 10;
     static final int MAX_AUDIO_RESPONSES = 4;
@@ -32,7 +33,7 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     public enum Failure {
-        MISSING_CREDENTIAL, AUTHENTICATION, CONNECTION, TIMEOUT, PROTOCOL, PROVIDER, REMOTE_CLOSE,
+        MISSING_CREDENTIAL, AUTHENTICATION, CONNECTION, TIMEOUT, RESPONSE_TIMEOUT, PROTOCOL, PROVIDER, REMOTE_CLOSE,
         SESSION_LIMIT, AUDIO_LIMIT, OUTPUT_LIMIT, TOOL_LIMIT
     }
 
@@ -280,6 +281,14 @@ public final class RealtimeSession implements AutoCloseable {
         }
     }
 
+    private void clearPhaseDeadline(Attempt attempt) {
+        var deadline = attempt.phaseDeadline;
+        attempt.phaseDeadline = null;
+        if (deadline != null) {
+            deadline.complete(null);
+        }
+    }
+
     private synchronized void sessionExpired(Attempt attempt) {
         // The timeout may have completed while its callback was waiting for this monitor.
         if (active == attempt && status.state() != State.CLOSING) {
@@ -312,7 +321,7 @@ public final class RealtimeSession implements AutoCloseable {
 
     private void finish(Attempt attempt, Failure failure, boolean abort) {
         active = null;
-        attempt.phaseDeadline.complete(null);
+        clearPhaseDeadline(attempt);
         attempt.sessionDeadline.complete(null);
         attempt.message = null;
         finishTurn(attempt, TurnState.INTERRUPTED);
@@ -447,7 +456,7 @@ public final class RealtimeSession implements AutoCloseable {
         attempt.audioBytes.remove(id);
         var outcome = response.path("status").asText();
         var turn = attempt.turn;
-        boolean matchesTurn = turn != null && id.equals(turn.responseId);
+        boolean matchesTurn = turn != null && (id.equals(turn.responseId) || matchesUnboundResponse(turn, response));
         if (matchesTurn) {
             if (turn.state != TurnState.CANCELLING || "completed".equals(outcome)) {
                 turn.reconcile(protocol.terminalText(response));
@@ -480,18 +489,23 @@ public final class RealtimeSession implements AutoCloseable {
             }
             case "response.created" -> {
                 var response = event.path("response");
-                if (turn.responseRequested && turn.responseId == null
-                        && turn.id.equals(response.path("metadata").path(SessionProtocol.TURN_METADATA).textValue())) {
+                if (matchesUnboundResponse(turn, response)) {
                     var id = response.path("id").textValue();
                     if (id == null || id.isBlank()) {
                         throw new IOException("Missing Realtime response ID");
                     }
                     turn.responseId = id;
+                    clearPhaseDeadline(attempt);
                     advanceTurn(attempt);
                 }
             }
             default -> throw new IllegalArgumentException("Unexpected text conversation event");
         }
+    }
+
+    private boolean matchesUnboundResponse(TextTurn turn, JsonNode response) {
+        return turn.responseRequested && turn.responseId == null
+                && turn.id.equals(response.path("metadata").path(SessionProtocol.TURN_METADATA).textValue());
     }
 
     private void turnError(Attempt attempt, JsonNode error) {
@@ -518,6 +532,7 @@ public final class RealtimeSession implements AutoCloseable {
 
     private void finishTurn(Attempt attempt, TurnState outcome) {
         if (attempt.turn != null) {
+            clearPhaseDeadline(attempt);
             attempt.turn.finish(outcome);
             attempt.turn = null;
         }
@@ -533,7 +548,11 @@ public final class RealtimeSession implements AutoCloseable {
             statusChanged.run();
         } else if (turn.itemAcknowledged && !turn.responseRequested) {
             turn.responseRequested = true;
-            writeTurnEvent(attempt, protocol.createResponse(turn));
+            // An unidentified response may still be running. Abort on timeout before allowing a new session.
+            startDeadline(attempt, RESPONSE_CORRELATION_TIMEOUT, Failure.RESPONSE_TIMEOUT);
+            if (active == attempt) {
+                writeTurnEvent(attempt, protocol.createResponse(turn));
+            }
         } else if (turn.responseId != null && turn.state == TurnState.CANCELLING && !turn.cancelSent) {
             turn.cancelSent = true;
             turn.cancelRequests++;

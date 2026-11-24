@@ -72,16 +72,18 @@ final class SessionProtocol {
 
     String terminalText(JsonNode response) {
         var text = new StringJoiner("\n");
+        boolean hasText = false;
         for (var item : response.path("output")) {
             if ("message".equals(item.path("type").textValue()) && "assistant".equals(item.path("role").textValue())) {
                 for (var part : item.path("content")) {
                     if ("output_text".equals(part.path("type").textValue()) && part.path("text").isTextual()) {
                         text.add(part.path("text").textValue());
+                        hasText = true;
                     }
                 }
             }
         }
-        return text.length() > 0 ? text.toString() : null;
+        return hasText ? text.toString() : null;
     }
 
     // Read lifecycle fields and stream payloads without building a tree for every event.

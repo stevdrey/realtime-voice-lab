@@ -15,7 +15,9 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.DEFAULT_MODEL;
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.Failure;
+import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.RESPONSE_CORRELATION_TIMEOUT;
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.State;
+import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TurnState;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -118,6 +120,54 @@ class RealtimeSafetyTest {
         retry.ready();
         assertEquals(State.READY, session.status().state());
         assertEquals(stallCancelWrite ? 0 : 1, socket.closeWrites);
+    }
+
+    @Test
+    void abortsTheUnknownResponseAfterTheCorrelationDeadlineAndAllowsReconnect() {
+        var socket = connect();
+        socket.ready();
+        requestTextResponse(socket);
+        socket.text("""
+                {"type":"response.created","response":{"id":"unknown"}}
+                """, true);
+        responseDone(socket, "unknown");
+        session.cancelText();
+
+        clock.advance(RESPONSE_CORRELATION_TIMEOUT.minusNanos(1));
+        assertEquals(State.READY, session.status().state());
+        assertEquals(TurnState.CANCELLING, session.workspace().turns().getLast().state());
+        assertEquals(3, socket.writes.size());
+        clock.advance(Duration.ofNanos(1));
+
+        assertLimit(Failure.RESPONSE_TIMEOUT);
+        assertTrue(socket.aborted);
+        assertEquals(TurnState.INTERRUPTED, session.workspace().turns().getLast().state());
+        assertEquals(0, clock.pendingTimers());
+        connect().ready();
+        socket.text("""
+                {"type":"response.done","response":{"id":"unknown","status":"completed",
+                 "metadata":{"rvl_turn":"rvl-1"}}}
+                """, true);
+        assertTrue(session.workspace().canSend());
+        assertTrue(session.workspace().turns().isEmpty());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"response.created", "response.done"})
+    void clearsTheCorrelationDeadlineWhenTheResponseIsIdentified(String eventType) {
+        var socket = connect();
+        socket.ready();
+        requestTextResponse(socket);
+        assertEquals(2, clock.pendingTimers());
+
+        var responseStatus = "response.created".equals(eventType) ? "in_progress" : "completed";
+        socket.text("""
+                {"type":"%s","response":{"id":"reply","status":"%s","metadata":{"rvl_turn":"rvl-1"}}}
+                """.formatted(eventType, responseStatus), true);
+        assertEquals(1, clock.pendingTimers());
+        clock.advance(RESPONSE_CORRELATION_TIMEOUT);
+        assertEquals(State.READY, session.status().state());
+        assertFalse(socket.aborted);
     }
 
     @Test
@@ -276,6 +326,13 @@ class RealtimeSafetyTest {
 
     private void assertLimit(Failure expected) {
         assertEquals(new RealtimeSession.Status(State.ERROR, expected), session.status());
+    }
+
+    private void requestTextResponse(FakeTransport.Socket socket) {
+        assertTrue(session.sendText("Synthetic input"));
+        socket.text("""
+                {"type":"conversation.item.added","item":{"id":"rvl-1","type":"message","role":"user"}}
+                """, true);
     }
 
     private void responseDone(FakeTransport.Socket socket, String id) {

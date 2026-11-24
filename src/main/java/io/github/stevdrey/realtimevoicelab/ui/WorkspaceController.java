@@ -259,6 +259,7 @@ public final class WorkspaceController {
             case AUTHENTICATION -> "Authentication rejected";
             case CONNECTION -> "Connection failed";
             case TIMEOUT -> "Connection timed out";
+            case RESPONSE_TIMEOUT -> "Response could not be identified. Reconnect to try again.";
             case PROTOCOL -> "Invalid Realtime event";
             case PROVIDER -> "Realtime session failed";
             case REMOTE_CLOSE -> "Server closed the session";

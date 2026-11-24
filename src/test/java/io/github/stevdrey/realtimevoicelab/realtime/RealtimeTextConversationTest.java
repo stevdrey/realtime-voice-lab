@@ -89,6 +89,55 @@ class RealtimeTextConversationTest {
     }
 
     @Test
+    void finishesFromMatchingTerminalMetadataWhenCreationDidNotIdentifyTheResponse() {
+        var socket = ready();
+        session.sendText("Synthetic input");
+        itemAdded(socket, "rvl-1");
+        socket.text("""
+                {"type":"response.created","response":{"id":"reply","metadata":null}}
+                """, true);
+        textDelta(socket, "reply", 0, "Unidentified text");
+        socket.text("""
+                {"type":"response.done","response":{"id":"unrelated","status":"completed",
+                 "metadata":{"rvl_turn":"another-turn"}}}
+                """, true);
+        assertEquals("", last().output());
+        assertFalse(session.workspace().canSend());
+        session.cancelText();
+        assertEquals(TurnState.CANCELLING, last().state());
+        assertEquals(3, socket.writes.size());
+
+        socket.text("""
+                {"type":"response.done","response":{"id":"reply","status":"completed",
+                 "metadata":{"rvl_turn":"rvl-1"},"output":[
+                 {"type":"message","role":"assistant","content":[{"type":"output_text","text":"Final reply"}]}]}}
+                """, true);
+        assertEquals(TurnState.COMPLETED, last().state());
+        assertEquals("Final reply", last().output());
+        assertTrue(session.workspace().canSend());
+    }
+
+    @Test
+    void replacesStreamedTextWithAnExplicitlyEmptyTerminalPart() {
+        var socket = ready();
+        session.sendText("Synthetic input");
+        itemAdded(socket, "rvl-1");
+        responseCreated(socket, "rvl-1", "reply");
+        textDelta(socket, "reply", 0, "Partial reply");
+        socket.text("""
+                {"type":"response.done","response":{"id":"unrelated","status":"completed",
+                 "metadata":{"rvl_turn":"rvl-1"}}}
+                """, true);
+        assertEquals(TurnState.RESPONDING, last().state());
+        assertEquals("Partial reply", last().output());
+
+        doneWithText(socket, "reply", "completed", "");
+        assertEquals(TurnState.COMPLETED, last().state());
+        assertEquals("", last().output());
+        assertTrue(session.workspace().canSend());
+    }
+
+    @Test
     void cancelsBeforeGenerationWhileTheItemWriteIsPending() {
         var socket = ready();
         var itemWrite = new CompletableFuture<WebSocket>();
