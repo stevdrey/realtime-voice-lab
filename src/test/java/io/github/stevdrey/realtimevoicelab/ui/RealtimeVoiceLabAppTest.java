@@ -1,5 +1,6 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
@@ -13,18 +14,21 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
+import javafx.scene.robot.Robot;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class RealtimeVoiceLabAppTest {
     @BeforeAll
@@ -40,6 +44,26 @@ class RealtimeVoiceLabAppTest {
     @AfterAll
     static void stopToolkit() {
         Platform.exit();
+    }
+
+    @Test
+    void showsTooltipsWhenHoveringDisabledSessionButtons() throws Exception {
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage);
+                return null;
+            });
+
+            assertHoveredTooltip(stage, "#settings-button", "Settings (unavailable)");
+            assertHoveredTooltip(stage, "#mic-button", "Microphone (unavailable)");
+            assertHoveredTooltip(stage, "#connect-button", "Connect (unavailable)");
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
     }
 
     @Test
@@ -114,11 +138,30 @@ class RealtimeVoiceLabAppTest {
         var button = (Button) scene.lookup(selector);
         assertTrue(button.isDisabled());
         assertEquals(name, button.getAccessibleText());
-        assertFalse(button.getTooltip().getText().isBlank());
+    }
+
+    private void assertHoveredTooltip(Stage stage, String selector, String expectedText) throws Exception {
+        onFxThread(() -> {
+            var button = stage.getScene().lookup(selector);
+            var bounds = button.localToScreen(button.getBoundsInLocal());
+            new Robot().mouseMove(bounds.getCenterX(), bounds.getCenterY());
+            return null;
+        });
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            boolean showing = onFxThread(() -> Window.getWindows().stream().anyMatch(window ->
+                    window instanceof Tooltip tooltip && expectedText.equals(tooltip.getText())));
+            if (showing) {
+                return;
+            }
+            Thread.sleep(25);
+        }
+        fail("Hovering over " + selector + " did not show: " + expectedText);
     }
 
     private void withWindow(Consumer<Stage> checks) throws Exception {
-        var run = new FutureTask<Void>(() -> {
+        onFxThread(() -> {
             var stage = new Stage();
             try {
                 new RealtimeVoiceLabApp().start(stage);
@@ -128,7 +171,11 @@ class RealtimeVoiceLabAppTest {
             }
             return null;
         });
+    }
+
+    private <T> T onFxThread(Callable<T> action) throws Exception {
+        var run = new FutureTask<>(action);
         Platform.runLater(run);
-        run.get(10, TimeUnit.SECONDS);
+        return run.get(10, TimeUnit.SECONDS);
     }
 }

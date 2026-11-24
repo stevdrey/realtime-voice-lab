@@ -8,7 +8,6 @@
 <?import javafx.scene.control.ListView?>
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.SplitPane?>
-<?import javafx.scene.control.Tooltip?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
@@ -70,35 +69,35 @@
         </StackPane>
 
         <VBox alignment="CENTER" spacing="6">
-            <HBox alignment="CENTER" spacing="16">
-                <Button id="settings-button" accessibleText="Settings" disable="true" styleClass="round-control">
-                    <graphic>
-                        <SVGPath styleClass="icon"
-                                 content="M10 2h4l.7 3 2 .9 2.7-1.5 2 3.5-2.2 2.1v3l2.2 2.1-2 3.5
-                                          -2.7-1.5-2 .9-.7 3h-4l-.7-3-2-.9-2.7 1.5-2-3.5L4.8 13v-3L2.6 7.9l2-3.5 2.7 1.5 2-.9z
-                                          M15 11.5a3 3 0 1 1-6 0 3 3 0 1 1 6 0z"/>
-                    </graphic>
-                    <tooltip>
-                        <Tooltip text="Settings (unavailable)"/>
-                    </tooltip>
-                </Button>
-                <Button id="mic-button" accessibleText="Microphone" disable="true" styleClass="mic-button">
-                    <graphic>
-                        <SVGPath styleClass="icon"
-                                 content="M12 2a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V6a4 4 0 0 0-4-4z M5 11v1a7 7 0 0 0 14 0v-1 M12 19v4 M8 23h8"/>
-                    </graphic>
-                    <tooltip>
-                        <Tooltip text="Microphone (unavailable)"/>
-                    </tooltip>
-                </Button>
-                <Button id="connect-button" accessibleText="Connect" disable="true" styleClass="round-control">
-                    <graphic>
-                        <SVGPath content="M12 2v10 M6.4 5.4a8 8 0 1 0 11.2 0" styleClass="icon"/>
-                    </graphic>
-                    <tooltip>
-                        <Tooltip text="Connect (unavailable)"/>
-                    </tooltip>
-                </Button>
+            <HBox alignment="CENTER" spacing="16" fillHeight="false">
+                <StackPane pickOnBounds="true">
+                    <Button fx:id="settingsButton" id="settings-button" accessibleText="Settings"
+                            disable="true" styleClass="round-control">
+                        <graphic>
+                            <SVGPath styleClass="icon"
+                                     content="M10 2h4l.7 3 2 .9 2.7-1.5 2 3.5-2.2 2.1v3l2.2 2.1-2 3.5
+                                              -2.7-1.5-2 .9-.7 3h-4l-.7-3-2-.9-2.7 1.5-2-3.5L4.8 13v-3L2.6 7.9l2-3.5 2.7 1.5 2-.9z
+                                              M15 11.5a3 3 0 1 1-6 0 3 3 0 1 1 6 0z"/>
+                        </graphic>
+                    </Button>
+                </StackPane>
+                <StackPane pickOnBounds="true">
+                    <Button fx:id="micButton" id="mic-button" accessibleText="Microphone"
+                            disable="true" styleClass="mic-button">
+                        <graphic>
+                            <SVGPath styleClass="icon"
+                                     content="M12 2a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V6a4 4 0 0 0-4-4z M5 11v1a7 7 0 0 0 14 0v-1 M12 19v4 M8 23h8"/>
+                        </graphic>
+                    </Button>
+                </StackPane>
+                <StackPane pickOnBounds="true">
+                    <Button fx:id="connectButton" id="connect-button" accessibleText="Connect"
+                            disable="true" styleClass="round-control">
+                        <graphic>
+                            <SVGPath content="M12 2v10 M6.4 5.4a8 8 0 1 0 11.2 0" styleClass="icon"/>
+                        </graphic>
+                    </Button>
+                </StackPane>
             </HBox>
             <Label text="Session controls unavailable" styleClass="caption"/>
         </VBox>

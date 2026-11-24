@@ -1,7 +1,9 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
 import javafx.fxml.FXML;
+import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Tooltip;
 import javafx.scene.shape.SVGPath;
 
 public final class WorkspaceController {
@@ -12,9 +14,22 @@ public final class WorkspaceController {
     private SVGPath waveformShape;
 
     @FXML
+    private Button settingsButton;
+
+    @FXML
+    private Button micButton;
+
+    @FXML
+    private Button connectButton;
+
+    @FXML
     private void initialize() {
         modelSelector.getSelectionModel().selectFirst();
         modelSelector.setAccessibleText("Default model: " + modelSelector.getValue());
+
+        installUnavailableTooltip(settingsButton);
+        installUnavailableTooltip(micButton);
+        installUnavailableTooltip(connectButton);
 
         // A single static shape draws the flat baseline without sampling audio or scheduling updates.
         var bars = new StringBuilder();
@@ -22,5 +37,10 @@ public final class WorkspaceController {
             bars.append("M").append(index * 10).append(" 2a2 2 0 1 0 4 0 2 2 0 1 0-4 0z ");
         }
         waveformShape.setContent(bars.toString());
+    }
+
+    private void installUnavailableTooltip(Button button) {
+        // Disabled buttons do not receive hover events. Their FXML wrappers remain hoverable.
+        Tooltip.install(button.getParent(), new Tooltip(button.getAccessibleText() + " (unavailable)"));
     }
 }
