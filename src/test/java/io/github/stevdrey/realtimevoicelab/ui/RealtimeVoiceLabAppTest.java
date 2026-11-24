@@ -27,6 +27,8 @@ import javafx.stage.Window;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -163,6 +165,40 @@ class RealtimeVoiceLabAppTest {
         }
         assertTrue(transport.closed);
         assertTrue(transport.attempts.getLast().opening.isCancelled());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void staleCancelOrDisconnectCannotStartANewSession(boolean ready) throws Exception {
+        var transport = new FakeTransport();
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport);
+                connectButton(stage).fire();
+                return null;
+            });
+
+            var socket = transport.attempts.getFirst();
+            if (ready) {
+                socket.ready();
+            }
+            onFxThread(() -> {
+                var action = ready ? "Disconnect" : "Cancel connection";
+                // Deliver the remote close before the queued FX render can update the button.
+                socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+                assertEquals(action, connectButton(stage).getAccessibleText());
+                connectButton(stage).fire();
+                assertEquals(1, transport.attempts.size());
+                assertEquals("Connect", connectButton(stage).getAccessibleText());
+                return null;
+            });
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
     }
 
     @Test

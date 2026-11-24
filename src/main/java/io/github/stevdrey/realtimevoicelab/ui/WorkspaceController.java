@@ -22,6 +22,7 @@ public final class WorkspaceController {
 
     private final RealtimeSession session;
     private final Tooltip connectTooltip = new Tooltip();
+    private RealtimeSession.State renderedState;
     private boolean disposed;
 
     @FXML
@@ -67,7 +68,7 @@ public final class WorkspaceController {
         installUnavailableTooltip(micControl, micButton);
         connectButton.setTooltip(connectTooltip);
         connectButton.setOnAction(event -> {
-            switch (session.status().state()) {
+            switch (renderedState) {
                 case DISCONNECTED, ERROR -> session.connect(modelSelector.getValue());
                 case CONNECTING, READY -> session.disconnect();
                 case CLOSING -> { }
@@ -93,6 +94,7 @@ public final class WorkspaceController {
     private void renderSession() {
         var status = session.status();
         var state = status.state();
+        renderedState = state;
         sessionStatus.setText(switch (state) {
             case DISCONNECTED -> "Disconnected";
             case CONNECTING -> "Connecting…";
