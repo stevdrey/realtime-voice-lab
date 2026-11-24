@@ -6,19 +6,28 @@ import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongFunction;
+import java.util.function.LongSupplier;
 
 public final class RealtimeSession implements AutoCloseable {
     public static final String DEFAULT_MODEL = "gpt-realtime-2.1-mini";
+    static final Duration MAX_SESSION_TIME = Duration.ofMinutes(5);
+    static final Duration MAX_AUDIO_TIME = Duration.ofSeconds(30);
+    static final int MAX_TOOL_CALLS = 10;
+    static final int MAX_AUDIO_RESPONSES = 4;
 
     public enum State {
         DISCONNECTED, CONNECTING, READY, CLOSING, ERROR
     }
 
     public enum Failure {
-        MISSING_CREDENTIAL, AUTHENTICATION, CONNECTION, TIMEOUT, PROTOCOL, PROVIDER, REMOTE_CLOSE
+        MISSING_CREDENTIAL, AUTHENTICATION, CONNECTION, TIMEOUT, PROTOCOL, PROVIDER, REMOTE_CLOSE,
+        SESSION_LIMIT, AUDIO_LIMIT, OUTPUT_LIMIT, TOOL_LIMIT
     }
 
     public record Status(State state, Failure failure) {
@@ -28,6 +37,9 @@ public final class RealtimeSession implements AutoCloseable {
     private final Runnable statusChanged;
     private final Duration setupTimeout;
     private final Duration closeTimeout;
+    private final LongSupplier nanoTime;
+    // The timer completes exceptionally on expiry. Normal completion cancels the timeout.
+    private final LongFunction<CompletableFuture<Void>> scheduleTimeout;
     private final SessionProtocol protocol = new SessionProtocol();
 
     // Commands, listener callbacks, write completions and deadlines share this monitor.
@@ -40,10 +52,17 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     RealtimeSession(RealtimeTransport transport, Runnable statusChanged, Duration setupTimeout, Duration closeTimeout) {
+        this(transport, statusChanged, setupTimeout, closeTimeout, System::nanoTime, RealtimeSession::timeoutAfter);
+    }
+
+    RealtimeSession(RealtimeTransport transport, Runnable statusChanged, Duration setupTimeout, Duration closeTimeout,
+                    LongSupplier nanoTime, LongFunction<CompletableFuture<Void>> scheduleTimeout) {
         this.transport = transport;
         this.statusChanged = statusChanged;
         this.setupTimeout = setupTimeout;
         this.closeTimeout = closeTimeout;
+        this.nanoTime = nanoTime;
+        this.scheduleTimeout = scheduleTimeout;
     }
 
     public synchronized Status status() {
@@ -57,8 +76,20 @@ public final class RealtimeSession implements AutoCloseable {
 
         var attempt = new Attempt();
         active = attempt;
-        publish(State.CONNECTING, null);
+        attempt.sessionDeadline = scheduleTimeout.apply(MAX_SESSION_TIME.toNanos());
         startDeadline(attempt, setupTimeout, Failure.TIMEOUT);
+        if (active != attempt) {
+            return;
+        }
+        attempt.sessionDeadline.whenComplete((ignored, error) -> {
+            if (error != null) {
+                sessionExpired(attempt);
+            }
+        });
+        publish(State.CONNECTING, null);
+        if (active != attempt || !withinSessionTime(attempt)) {
+            return;
+        }
         try {
             attempt.opening = transport.open(model, attempt);
             attempt.opening.whenComplete((socket, error) -> {
@@ -73,7 +104,7 @@ public final class RealtimeSession implements AutoCloseable {
 
     public synchronized void disconnect() {
         var attempt = active;
-        if (attempt == null || status.state() == State.CLOSING) {
+        if (attempt == null || status.state() == State.CLOSING || !withinSessionTime(attempt)) {
             return;
         }
 
@@ -82,11 +113,47 @@ public final class RealtimeSession implements AutoCloseable {
             return;
         }
 
-        // READY requires both the session.update write and its acknowledgement.
-        // As a result, this close frame cannot overtake a text write.
+        beginClose(attempt, null);
+    }
+
+    private void beginClose(Attempt attempt, Failure limit) {
+        attempt.sessionDeadline.complete(null);
+        attempt.closeFailure = limit;
+        attempt.message = null;
+        startDeadline(attempt, closeTimeout, limit);
+        if (active != attempt) {
+            return;
+        }
         publish(State.CLOSING, null);
-        // An unanswered close still ends the operator's disconnect cleanly after the abort.
-        startDeadline(attempt, closeTimeout, null);
+        if (active != attempt) {
+            return;
+        }
+        if (limit == null || limit == Failure.OUTPUT_LIMIT) {
+            // In the current workspace only a limit can interrupt an in-flight response.
+            // OUTPUT_LIMIT arrives via response.done, after the provider has stopped generation.
+            sendClose(attempt);
+            return;
+        }
+        try {
+            attempt.socket.sendText(SessionProtocol.CANCEL_RESPONSE, true)
+                    .whenComplete((socket, error) -> cancelWritten(attempt, error));
+        } catch (RuntimeException error) {
+            fail(attempt, limit);
+        }
+    }
+
+    private synchronized void cancelWritten(Attempt attempt, Throwable error) {
+        if (active != attempt) {
+            return;
+        }
+        if (error != null) {
+            fail(attempt, attempt.closeFailure);
+            return;
+        }
+        sendClose(attempt);
+    }
+
+    private void sendClose(Attempt attempt) {
         try {
             attempt.socket.sendClose(WebSocket.NORMAL_CLOSURE, "")
                     .whenComplete((socket, error) -> closeWritten(attempt, error));
@@ -108,9 +175,9 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private void checkClosed(Attempt attempt) {
-        // The operator started this close, so any peer close code completes it.
+        // Any response to a client-initiated close completes it.
         if (attempt.closeSent && attempt.peerCloseCode != null) {
-            finish(attempt, null, false);
+            finish(attempt, attempt.closeFailure, false);
         }
     }
 
@@ -135,25 +202,60 @@ public final class RealtimeSession implements AutoCloseable {
         statusChanged.run();
     }
 
+    private static CompletableFuture<Void> timeoutAfter(long nanos) {
+        return new CompletableFuture<Void>().orTimeout(nanos, TimeUnit.NANOSECONDS);
+    }
+
     private void startDeadline(Attempt attempt, Duration timeout, Failure onExpiry) {
-        attempt.deadline = new CompletableFuture<>();
-        attempt.deadline.orTimeout(timeout.toNanos(), TimeUnit.NANOSECONDS)
-                .whenComplete((ignored, error) -> {
-                    if (error != null) {
-                        fail(attempt, onExpiry);
-                    }
-                });
+        var deadline = scheduleTimeout.apply(timeout.toNanos());
+        attempt.phaseDeadline = deadline;
+        deadline.whenComplete((ignored, error) -> {
+            if (error != null) {
+                phaseExpired(attempt, deadline, onExpiry);
+            }
+        });
+    }
+
+    private synchronized void phaseExpired(Attempt attempt, CompletableFuture<Void> deadline, Failure failure) {
+        if (active == attempt && attempt.phaseDeadline == deadline) {
+            fail(attempt, failure);
+        }
+    }
+
+    private synchronized void sessionExpired(Attempt attempt) {
+        // The timeout may have completed while its callback was waiting for this monitor.
+        if (active == attempt && status.state() != State.CLOSING) {
+            stopAtLimit(attempt, Failure.SESSION_LIMIT);
+        }
+    }
+
+    // Also enforce the time at the point of use if the scheduled callback has not run yet.
+    private boolean withinSessionTime(Attempt attempt) {
+        if (nanoTime.getAsLong() - attempt.startedAt < MAX_SESSION_TIME.toNanos()) {
+            return true;
+        }
+        stopAtLimit(attempt, Failure.SESSION_LIMIT);
+        return false;
+    }
+
+    private void stopAtLimit(Attempt attempt, Failure limit) {
+        if (status.state() == State.READY) {
+            beginClose(attempt, limit);
+        } else {
+            fail(attempt, limit);
+        }
     }
 
     private synchronized void fail(Attempt attempt, Failure failure) {
         if (active == attempt) {
-            finish(attempt, failure, true);
+            finish(attempt, attempt.closeFailure != null ? attempt.closeFailure : failure, true);
         }
     }
 
     private void finish(Attempt attempt, Failure failure, boolean abort) {
         active = null;
-        attempt.deadline.complete(null);
+        attempt.phaseDeadline.complete(null);
+        attempt.sessionDeadline.complete(null);
         attempt.message = null;
         if (abort) {
             if (attempt.socket != null) {
@@ -188,6 +290,7 @@ public final class RealtimeSession implements AutoCloseable {
     private void receive(Attempt attempt, CharSequence fragment, boolean last) throws IOException {
         int buffered = attempt.message == null ? 0 : attempt.message.length();
         if (fragment.length() > SessionProtocol.MAX_MESSAGE_CHARS - buffered) {
+            // There may be an active response, so abort immediately if a frame exceeds the buffer.
             throw new IOException("Realtime message limit exceeded");
         }
         String message;
@@ -221,8 +324,28 @@ public final class RealtimeSession implements AutoCloseable {
             }
             case "session.updated" -> {
                 if (status.state() == State.CONNECTING && event.sessionId().equals(attempt.sessionId)) {
+                    if (!event.outputConfigurationConfirmed()) {
+                        fail(attempt, Failure.PROTOCOL);
+                        return;
+                    }
                     attempt.updateAcknowledged = true;
                     checkReady(attempt);
+                }
+            }
+            case "response.function_call_arguments.done" -> {
+                // Replays and rejected requests also consume budget. Dispatch remains a separate check.
+                if (status.state() == State.READY && ++attempt.toolCalls > MAX_TOOL_CALLS) {
+                    stopAtLimit(attempt, Failure.TOOL_LIMIT);
+                }
+            }
+            case "response.output_audio.delta" -> {
+                if (status.state() == State.READY) {
+                    accountForAudio(attempt, event.responseId(), event.audioBytes());
+                }
+            }
+            case "response.done" -> {
+                if (status.state() == State.READY) {
+                    responseDone(attempt, protocol.responseDone(message));
                 }
             }
             default -> {
@@ -231,7 +354,28 @@ public final class RealtimeSession implements AutoCloseable {
         }
     }
 
+    private void accountForAudio(Attempt attempt, String responseId, int bytes) throws IOException {
+        // Each response has its own budget. The number tracked at once stays bounded.
+        if (!attempt.audioBytes.containsKey(responseId) && attempt.audioBytes.size() >= MAX_AUDIO_RESPONSES) {
+            throw new IOException("Too many concurrent audio responses");
+        }
+        long total = attempt.audioBytes.merge(responseId, (long) bytes, Long::sum);
+        if (total > SessionProtocol.PCM_BYTES_PER_SECOND * MAX_AUDIO_TIME.toSeconds()) {
+            stopAtLimit(attempt, Failure.AUDIO_LIMIT);
+        }
+    }
+
+    private void responseDone(Attempt attempt, SessionProtocol.ResponseDone response) {
+        attempt.audioBytes.remove(response.id());
+        if (response.outputLimitReached()) {
+            stopAtLimit(attempt, Failure.OUTPUT_LIMIT);
+        }
+    }
+
     private void sendConfiguration(Attempt attempt) {
+        if (!withinSessionTime(attempt)) {
+            return;
+        }
         try {
             attempt.socket.sendText(protocol.configuration(), true).whenComplete((socket, error) -> {
                 synchronized (RealtimeSession.this) {
@@ -252,17 +396,23 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private void checkReady(Attempt attempt) {
-        if (attempt.updateSent && attempt.updateAcknowledged && attempt.deadline.complete(null)) {
+        if (attempt.updateSent && attempt.updateAcknowledged && withinSessionTime(attempt)
+                && attempt.phaseDeadline.complete(null)) {
             publish(State.READY, null);
         }
     }
 
     private final class Attempt implements WebSocket.Listener {
+        private final long startedAt = nanoTime.getAsLong();
         private CompletableFuture<WebSocket> opening;
-        private CompletableFuture<Void> deadline;
+        private CompletableFuture<Void> phaseDeadline;
+        private CompletableFuture<Void> sessionDeadline;
         private WebSocket socket;
         private StringBuilder message;
         private String sessionId;
+        private final Map<String, Long> audioBytes = new HashMap<>();
+        private int toolCalls;
+        private Failure closeFailure;
         private boolean updateSent;
         private boolean updateAcknowledged;
         private boolean closeSent;
@@ -276,14 +426,16 @@ public final class RealtimeSession implements AutoCloseable {
                     return;
                 }
                 socket = webSocket;
-                socket.request(1);
+                if (withinSessionTime(this)) {
+                    socket.request(1);
+                }
             }
         }
 
         @Override
         public CompletableFuture<Void> onText(WebSocket webSocket, CharSequence fragment, boolean last) {
             synchronized (RealtimeSession.this) {
-                if (active == this && status.state() != State.CLOSING) {
+                if (active == this && status.state() != State.CLOSING && withinSessionTime(this)) {
                     try {
                         receive(this, fragment, last);
                     } catch (IOException error) {
