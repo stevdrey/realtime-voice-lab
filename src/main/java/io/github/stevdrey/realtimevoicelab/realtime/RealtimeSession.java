@@ -114,6 +114,7 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private void beginClose(Attempt attempt, Failure limit) {
+        attempt.sessionDeadline.complete(null);
         attempt.closeFailure = limit;
         attempt.message = null;
         startDeadline(attempt, closeTimeout, limit);
@@ -219,7 +220,8 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private synchronized void sessionExpired(Attempt attempt) {
-        if (active == attempt) {
+        // The timeout may have completed while its callback was waiting for this monitor.
+        if (active == attempt && status.state() != State.CLOSING) {
             stopAtLimit(attempt, Failure.SESSION_LIMIT);
         }
     }
@@ -235,7 +237,6 @@ public final class RealtimeSession implements AutoCloseable {
 
     private void stopAtLimit(Attempt attempt, Failure limit) {
         if (status.state() == State.READY) {
-            attempt.sessionDeadline.complete(null);
             beginClose(attempt, limit);
         } else {
             fail(attempt, limit);
@@ -320,7 +321,7 @@ public final class RealtimeSession implements AutoCloseable {
             }
             case "session.updated" -> {
                 if (status.state() == State.CONNECTING && event.sessionId().equals(attempt.sessionId)) {
-                    if (!event.outputCapConfirmed()) {
+                    if (!event.outputConfigurationConfirmed()) {
                         fail(attempt, Failure.PROTOCOL);
                         return;
                     }

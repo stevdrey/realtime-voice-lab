@@ -9,11 +9,13 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 final class SessionProtocol {
     static final int MAX_MESSAGE_CHARS = 256 * 1024;
     static final int MAX_OUTPUT_TOKENS = 512;
+    private static final String PCM_AUDIO_TYPE = "audio/pcm";
     private static final int PCM_SAMPLE_RATE = 24_000;
     static final int PCM_BYTES_PER_SECOND = PCM_SAMPLE_RATE * Short.BYTES;
     static final String CANCEL_RESPONSE = "{\"type\":\"response.cancel\"}";
@@ -33,9 +35,9 @@ final class SessionProtocol {
         session.putArray("output_modalities").add("audio");
         var audio = session.putObject("audio");
         audio.putObject("input").putNull("turn_detection")
-                .putObject("format").put("type", "audio/pcm").put("rate", PCM_SAMPLE_RATE);
+                .putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
         audio.putObject("output").put("voice", "marin")
-                .putObject("format").put("type", "audio/pcm").put("rate", PCM_SAMPLE_RATE);
+                .putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
         return update.toString();
     }
 
@@ -45,6 +47,7 @@ final class SessionProtocol {
         String sessionType = null;
         String sessionId = null;
         int outputCap = 0;
+        boolean pcmOutput = false;
         try (var parser = factory.createParser(message)) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new IOException("Invalid Realtime event");
@@ -64,6 +67,8 @@ final class SessionProtocol {
                             sessionId = textValue(parser, sessionValue);
                         } else if ("max_output_tokens".equals(sessionField) && sessionValue == JsonToken.VALUE_NUMBER_INT) {
                             outputCap = parser.getIntValue();
+                        } else if ("audio".equals(sessionField) && sessionValue == JsonToken.START_OBJECT) {
+                            pcmOutput = readSupportedOutputFormat(parser);
                         } else {
                             parser.skipChildren();
                         }
@@ -83,10 +88,23 @@ final class SessionProtocol {
                 if (!"realtime".equals(sessionType)) {
                     throw new IOException("Invalid session type");
                 }
-                yield new Event(type, requiredText(sessionId), outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS);
+                yield new Event(type, requiredText(sessionId),
+                        pcmOutput && outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS);
             }
             default -> new Event(type, null, false);
         };
+    }
+
+    private boolean readSupportedOutputFormat(JsonParser parser) throws IOException {
+        JsonNode audio = mapper.readTree(parser);
+        var format = audio.path("output").path("format");
+        if (!PCM_AUDIO_TYPE.equals(format.path("type").textValue())) {
+            return false;
+        }
+        var rate = format.path("rate");
+        // GA permits omitting the PCM rate. 24 kHz is the only supported PCM rate.
+        return rate.isMissingNode()
+                || (rate.isIntegralNumber() && rate.canConvertToInt() && rate.intValue() == PCM_SAMPLE_RATE);
     }
 
     AudioDelta audioDelta(String message) throws IOException {
@@ -177,7 +195,7 @@ final class SessionProtocol {
         return value;
     }
 
-    record Event(String type, String sessionId, boolean outputCapConfirmed) {
+    record Event(String type, String sessionId, boolean outputConfigurationConfirmed) {
     }
 
     record AudioDelta(String responseId, int bytes) {

@@ -56,7 +56,8 @@ public final class FakeTransport implements RealtimeTransport {
 
         public void updated() {
             text("""
-                    {"type":"session.updated","session":{"type":"realtime","id":"test-session","max_output_tokens":512}}
+                    {"type":"session.updated","session":{"type":"realtime","id":"test-session","max_output_tokens":512,
+                     "audio":{"output":{"format":{"type":"audio/pcm","rate":24000}}}}}
                     """, true);
         }
 

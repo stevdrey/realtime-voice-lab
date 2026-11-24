@@ -66,7 +66,10 @@ class RealtimeSessionTest {
         assertEquals(State.CONNECTING, session.status().state());
         socket.text("{\"type\":\"session.updated\",", false);
         assertEquals(State.CONNECTING, session.status().state());
-        socket.text("\"session\":{\"type\":\"realtime\",\"id\":\"test-session\",\"max_output_tokens\":512}}", true);
+        socket.text("""
+                "session":{"type":"realtime","id":"test-session","max_output_tokens":512,
+                 "audio":{"output":{"format":{"type":"audio/pcm","rate":24000}}}}}
+                """, true);
         assertEquals(State.CONNECTING, session.status().state());
         socket.textWrite.complete(socket);
         assertEquals(State.READY, session.status().state());

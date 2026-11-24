@@ -72,6 +72,29 @@ class RealtimeSafetyTest {
     }
 
     @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void manualCloseKeepsItsOwnDeadlineAcrossSessionExpiry(boolean peerReplies) {
+        var socket = connect();
+        socket.ready();
+        clock.advance(Duration.ofMinutes(5).minusSeconds(1));
+        session.disconnect();
+        assertEquals(1, socket.closeWrites);
+
+        clock.advance(Duration.ofSeconds(1));
+        assertEquals(new RealtimeSession.Status(State.CLOSING, null), session.status());
+        assertFalse(socket.aborted);
+
+        if (peerReplies) {
+            socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        } else {
+            clock.advance(Duration.ofSeconds(2));
+        }
+        assertEquals(new RealtimeSession.Status(State.DISCONNECTED, null), session.status());
+        assertEquals(!peerReplies, socket.aborted);
+        assertEquals(0, clock.pendingTimers());
+    }
+
+    @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void abortsWhenCancellationOrPeerCloseStalls(boolean stallCancelWrite) {
         var socket = connect();
@@ -155,15 +178,37 @@ class RealtimeSafetyTest {
     @ParameterizedTest
     @ValueSource(strings = {"", ",\"max_output_tokens\":\"inf\"", ",\"max_output_tokens\":513"})
     void refusesReadinessWithoutAnEffectiveOutputCap(String cap) {
-        var socket = connect();
-        socket.opened();
-        socket.created();
-        socket.textWrite.complete(socket);
-        socket.text("""
-                {"type":"session.updated","session":{"type":"realtime","id":"test-session"%s}}
-                """.formatted(cap), true);
+        var socket = acknowledgeConfiguration("""
+                ,"audio":{"output":{"format":{"type":"audio/pcm","rate":24000}}}%s
+                """.formatted(cap));
         assertLimit(Failure.PROTOCOL);
         assertTrue(socket.aborted);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"null", "{}", "{\"type\":\"audio/pcmu\"}", "{\"type\":\"audio/pcma\"}",
+            "{\"type\":\"audio/pcm\",\"rate\":16000}", "{\"type\":\"audio/pcm\",\"rate\":\"24000\"}"})
+    void refusesReadinessWithoutSupportedPcmOutput(String format) {
+        var socket = acknowledgeConfiguration("""
+                ,"max_output_tokens":512,"audio":{"output":{"format":%s}}
+                """.formatted(format));
+        assertLimit(Failure.PROTOCOL);
+        assertTrue(socket.aborted);
+    }
+
+    @Test
+    void refusesReadinessWhenTheOutputFormatIsMissing() {
+        var socket = acknowledgeConfiguration(",\"max_output_tokens\":512");
+        assertLimit(Failure.PROTOCOL);
+        assertTrue(socket.aborted);
+    }
+
+    @Test
+    void acceptsPcmWithTheImplicitGaSampleRate() {
+        acknowledgeConfiguration("""
+                ,"max_output_tokens":512,"audio":{"output":{"format":{"type":"audio/pcm"}}}
+                """);
+        assertEquals(new RealtimeSession.Status(State.READY, null), session.status());
     }
 
     @Test
@@ -185,6 +230,17 @@ class RealtimeSafetyTest {
     private FakeTransport.Socket connect() {
         session.connect(DEFAULT_MODEL);
         return transport.attempts.getLast();
+    }
+
+    private FakeTransport.Socket acknowledgeConfiguration(String fields) {
+        var socket = connect();
+        socket.opened();
+        socket.created();
+        socket.textWrite.complete(socket);
+        socket.text("""
+                {"type":"session.updated","session":{"type":"realtime","id":"test-session"%s}}
+                """.formatted(fields), true);
+        return socket;
     }
 
     private void assertLimit(Failure expected) {
