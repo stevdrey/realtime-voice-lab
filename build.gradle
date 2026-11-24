@@ -13,9 +13,11 @@ java {
     }
 }
 
+def javafxModules = ['javafx.controls', 'javafx.fxml']
+
 javafx {
     version = '27.0.1'
-    modules = ['javafx.controls']
+    modules = javafxModules
 }
 
 application {
@@ -39,7 +41,7 @@ tasks.named('test', Test) {
     classpath = sourceSets.test.runtimeClasspath.minus(javafxTestModules)
     inputs.files(javafxTestModules).withNormalizer(ClasspathNormalizer)
     jvmArgumentProviders.add({
-        ['--module-path', javafxTestModules.asPath, '--add-modules=javafx.controls',
+        ['--module-path', javafxTestModules.asPath, '--add-modules', javafxModules.join(','),
          '--enable-native-access=javafx.graphics']
     } as CommandLineArgumentProvider)
 }

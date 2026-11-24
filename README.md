@@ -32,6 +32,8 @@ Install a released JDK 27 and point `JAVA_HOME` to it. The first build downloads
 
 `./gradlew test` runs the JUnit tests with JavaFX's headless backend. The tests check the disconnected window, disabled controls, unknown metrics and layout at the minimum size. The build and app launch require no API key. `run` opens a desktop window, while `test` also works without a display.
 
+Edit [workspace.fxml](src/main/resources/io/github/stevdrey/realtimevoicelab/ui/workspace.fxml) for layout and [styles.css](src/main/resources/styles.css) for styling.
+
 ### Linux audio prerequisites
 
 - For the desktop window, use a graphical session with GTK 3. The package is `gtk3` on Fedora and `libgtk-3-0t64` on Ubuntu 24.04.

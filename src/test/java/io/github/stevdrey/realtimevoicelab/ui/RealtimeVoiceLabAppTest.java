@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RealtimeVoiceLabAppTest {
@@ -51,6 +52,7 @@ class RealtimeVoiceLabAppTest {
             assertEquals("Disconnected", ((Label) scene.lookup("#session-status")).getText());
             var model = (ComboBox<?>) scene.lookup("#model-selector");
             assertEquals("gpt-realtime-2.1-mini", model.getValue());
+            assertEquals("Default model: gpt-realtime-2.1-mini", model.getAccessibleText());
             assertTrue(model.isDisabled());
             assertDisabledButton(scene, "#settings-button", "Settings");
             assertDisabledButton(scene, "#mic-button", "Microphone");
@@ -61,9 +63,16 @@ class RealtimeVoiceLabAppTest {
             for (var metric : metrics) {
                 assertEquals("—", ((Label) metric).getText());
             }
-            assertTrue(((ListView<?>) scene.lookup("#event-list")).getItems().isEmpty());
+            var events = (ListView<?>) scene.lookup("#event-list");
+            assertTrue(events.getItems().isEmpty());
             var conversation = (ScrollPane) scene.lookup("#conversation-content");
             assertTrue(conversation.isFocusTraversable());
+
+            var panels = (SplitPane) scene.lookup("#main-panels");
+            var conversationHeading = (Label) panels.getItems().get(0).lookup(".panel-title");
+            var inspectorHeading = (Label) panels.getItems().get(1).lookup(".panel-title");
+            assertSame(conversation, conversationHeading.getLabelFor());
+            assertSame(events, inspectorHeading.getLabelFor());
         });
     }
 
@@ -91,7 +100,9 @@ class RealtimeVoiceLabAppTest {
             assertTrue(inspector.getWidth() >= 260);
             assertTrue(conversation.getHeight() > 100);
             assertEquals(Color.web("#1e2430"), conversation.getBackground().getFills().getFirst().getFill());
-            assertTrue(scene.lookup(".waveform-baseline").getBoundsInParent().getWidth() > 0);
+            var baseline = (Region) scene.lookup(".waveform-baseline");
+            assertTrue(baseline.getBoundsInParent().getWidth() > 0);
+            assertTrue(baseline.getShape().getBoundsInLocal().getWidth() > 0);
 
             var metrics = scene.lookup("#metrics");
             var footerBounds = metrics.localToScene(metrics.getBoundsInLocal());
