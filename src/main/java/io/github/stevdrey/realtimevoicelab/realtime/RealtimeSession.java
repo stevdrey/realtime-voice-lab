@@ -6,6 +6,8 @@ import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
@@ -17,6 +19,7 @@ public final class RealtimeSession implements AutoCloseable {
     static final Duration MAX_SESSION_TIME = Duration.ofMinutes(5);
     static final Duration MAX_AUDIO_TIME = Duration.ofSeconds(30);
     static final int MAX_TOOL_CALLS = 10;
+    static final int MAX_AUDIO_RESPONSES = 4;
 
     public enum State {
         DISCONNECTED, CONNECTING, READY, CLOSING, ERROR
@@ -337,7 +340,7 @@ public final class RealtimeSession implements AutoCloseable {
             }
             case "response.output_audio.delta" -> {
                 if (status.state() == State.READY) {
-                    accountForAudio(attempt, protocol.audioDelta(message));
+                    accountForAudio(attempt, event.responseId(), event.audioBytes());
                 }
             }
             case "response.done" -> {
@@ -351,23 +354,19 @@ public final class RealtimeSession implements AutoCloseable {
         }
     }
 
-    private void accountForAudio(Attempt attempt, SessionProtocol.AudioDelta audio) throws IOException {
-        if (attempt.audioResponseId == null) {
-            attempt.audioResponseId = audio.responseId();
-        } else if (!attempt.audioResponseId.equals(audio.responseId())) {
-            throw new IOException("Overlapping audio responses");
+    private void accountForAudio(Attempt attempt, String responseId, int bytes) throws IOException {
+        // Each response has its own budget. The number tracked at once stays bounded.
+        if (!attempt.audioBytes.containsKey(responseId) && attempt.audioBytes.size() >= MAX_AUDIO_RESPONSES) {
+            throw new IOException("Too many concurrent audio responses");
         }
-        attempt.audioBytes += audio.bytes();
-        if (attempt.audioBytes > SessionProtocol.PCM_BYTES_PER_SECOND * MAX_AUDIO_TIME.toSeconds()) {
+        long total = attempt.audioBytes.merge(responseId, (long) bytes, Long::sum);
+        if (total > SessionProtocol.PCM_BYTES_PER_SECOND * MAX_AUDIO_TIME.toSeconds()) {
             stopAtLimit(attempt, Failure.AUDIO_LIMIT);
         }
     }
 
     private void responseDone(Attempt attempt, SessionProtocol.ResponseDone response) {
-        if (response.id().equals(attempt.audioResponseId)) {
-            attempt.audioResponseId = null;
-            attempt.audioBytes = 0;
-        }
+        attempt.audioBytes.remove(response.id());
         if (response.outputLimitReached()) {
             stopAtLimit(attempt, Failure.OUTPUT_LIMIT);
         }
@@ -411,8 +410,7 @@ public final class RealtimeSession implements AutoCloseable {
         private WebSocket socket;
         private StringBuilder message;
         private String sessionId;
-        private String audioResponseId;
-        private long audioBytes;
+        private final Map<String, Long> audioBytes = new HashMap<>();
         private int toolCalls;
         private Failure closeFailure;
         private boolean updateSent;

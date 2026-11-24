@@ -175,6 +175,37 @@ class RealtimeSafetyTest {
         assertTrue(socket.aborted);
     }
 
+    @Test
+    void budgetsInterleavedAudioResponsesSeparately() {
+        var socket = connect();
+        socket.ready();
+        var secondOfPcm = Base64.getEncoder().encodeToString(new byte[48_000]);
+        for (int i = 0; i < 30; i++) {
+            socket.text(audioDelta("response_A", secondOfPcm), true);
+            socket.text(audioDelta("response_B", secondOfPcm), true);
+        }
+        assertEquals(State.READY, session.status().state());
+
+        socket.text(audioDelta("response_A", "AAA="), true);
+        assertEquals("{\"type\":\"response.cancel\"}", socket.writes.getLast());
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        assertLimit(Failure.AUDIO_LIMIT);
+    }
+
+    @Test
+    void failsClosedWhenTooManyAudioResponsesOverlap() {
+        var socket = connect();
+        socket.ready();
+        for (int i = 0; i < RealtimeSession.MAX_AUDIO_RESPONSES; i++) {
+            socket.text(audioDelta("response_" + i, "AAA="), true);
+        }
+        assertEquals(State.READY, session.status().state());
+
+        socket.text(audioDelta("response_extra", "AAA="), true);
+        assertLimit(Failure.PROTOCOL);
+        assertTrue(socket.aborted);
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"", ",\"max_output_tokens\":\"inf\"", ",\"max_output_tokens\":513"})
     void refusesReadinessWithoutAnEffectiveOutputCap(String cap) {

@@ -1,7 +1,6 @@
 package io.github.stevdrey.realtimevoicelab.realtime;
 
 import java.io.IOException;
-import java.io.OutputStream;
 
 import com.fasterxml.jackson.core.Base64Variants;
 import com.fasterxml.jackson.core.JsonFactory;
@@ -48,6 +47,8 @@ final class SessionProtocol {
         String sessionId = null;
         int outputCap = 0;
         boolean pcmOutput = false;
+        String responseId = null;
+        String delta = null;
         try (var parser = factory.createParser(message)) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new IOException("Invalid Realtime event");
@@ -57,6 +58,11 @@ final class SessionProtocol {
                 var value = parser.nextToken();
                 if ("type".equals(field)) {
                     type = textValue(parser, value);
+                } else if ("response_id".equals(field)) {
+                    responseId = textValue(parser, value);
+                } else if ("delta".equals(field) && value == JsonToken.VALUE_STRING) {
+                    // The type may follow the delta, so decoding waits until the event is known.
+                    delta = parser.getText();
                 } else if ("session".equals(field) && value == JsonToken.START_OBJECT) {
                     while (parser.nextToken() == JsonToken.FIELD_NAME) {
                         var sessionField = parser.currentName();
@@ -89,9 +95,11 @@ final class SessionProtocol {
                     throw new IOException("Invalid session type");
                 }
                 yield new Event(type, requiredText(sessionId),
-                        pcmOutput && outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS);
+                        pcmOutput && outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS, null, -1);
             }
-            default -> new Event(type, null, false);
+            case "response.output_audio.delta" ->
+                    new Event(type, null, false, requiredText(responseId), decodedLength(delta));
+            default -> new Event(type, null, false, null, -1);
         };
     }
 
@@ -107,31 +115,16 @@ final class SessionProtocol {
                 || (rate.isIntegralNumber() && rate.canConvertToInt() && rate.intValue() == PCM_SAMPLE_RATE);
     }
 
-    AudioDelta audioDelta(String message) throws IOException {
-        String responseId = null;
-        int bytes = -1;
-        try (var parser = factory.createParser(message); var sink = OutputStream.nullOutputStream()) {
-            parser.nextToken();
-            while (parser.nextToken() == JsonToken.FIELD_NAME) {
-                var field = parser.currentName();
-                var value = parser.nextToken();
-                if ("response_id".equals(field)) {
-                    responseId = textValue(parser, value);
-                } else if ("delta".equals(field) && value == JsonToken.VALUE_STRING) {
-                    try {
-                        bytes = parser.readBinaryValue(Base64Variants.getDefaultVariant(), sink);
-                    } catch (IllegalArgumentException invalidBase64) {
-                        throw new IOException("Invalid Realtime audio delta");
-                    }
-                } else {
-                    parser.skipChildren();
-                }
-            }
-        }
-        if (bytes < 0) {
+    private int decodedLength(String delta) throws IOException {
+        if (delta == null) {
             throw new IOException("Invalid Realtime audio delta");
         }
-        return new AudioDelta(requiredText(responseId), bytes);
+        try {
+            // Only the length is used. The decoded PCM is discarded immediately.
+            return Base64Variants.getDefaultVariant().decode(delta).length;
+        } catch (IllegalArgumentException invalidBase64) {
+            throw new IOException("Invalid Realtime audio delta");
+        }
     }
 
     ResponseDone responseDone(String message) throws IOException {
@@ -195,10 +188,8 @@ final class SessionProtocol {
         return value;
     }
 
-    record Event(String type, String sessionId, boolean outputConfigurationConfirmed) {
-    }
-
-    record AudioDelta(String responseId, int bytes) {
+    record Event(String type, String sessionId, boolean outputConfigurationConfirmed, String responseId,
+                 int audioBytes) {
     }
 
     record ResponseDone(String id, boolean outputLimitReached) {
