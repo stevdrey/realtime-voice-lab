@@ -7,6 +7,7 @@
 <?import javafx.scene.control.ProgressIndicator?>
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.SplitPane?>
+<?import javafx.scene.control.TextField?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
@@ -34,15 +35,23 @@
         <SplitPane id="main-panels" dividerPositions="0.5" VBox.vgrow="ALWAYS">
             <VBox spacing="8" minWidth="260" styleClass="lab-panel">
                 <Label text="CONVERSATION" styleClass="panel-title" labelFor="${conversation}"/>
-                <ScrollPane fx:id="conversation" id="conversation-content" accessibleText="Conversation"
-                            focusTraversable="true" fitToWidth="true" fitToHeight="true" hbarPolicy="NEVER"
-                            VBox.vgrow="ALWAYS">
-                    <content>
-                        <StackPane>
-                            <Label text="Conversation unavailable." styleClass="empty-message"/>
-                        </StackPane>
-                    </content>
-                </ScrollPane>
+                <StackPane VBox.vgrow="ALWAYS">
+                    <ScrollPane fx:id="conversation" id="conversation-content" accessibleText="Conversation"
+                                focusTraversable="true" fitToWidth="true" hbarPolicy="NEVER">
+                        <content>
+                            <VBox fx:id="turnRows" id="conversation-turns"/>
+                        </content>
+                    </ScrollPane>
+                    <Label fx:id="conversationEmpty" text="Connect to start a conversation."
+                           styleClass="empty-message" wrapText="true" mouseTransparent="true"/>
+                </StackPane>
+                <HBox spacing="8" alignment="CENTER_LEFT">
+                    <TextField fx:id="composer" id="text-composer" promptText="Type a message…"
+                               accessibleText="Message" minWidth="0" HBox.hgrow="ALWAYS"/>
+                    <Button fx:id="sendButton" id="send-text" text="Send" styleClass="text-action"/>
+                    <Button fx:id="cancelButton" id="cancel-text" text="Cancel" accessibleText="Cancel response"
+                            styleClass="text-action"/>
+                </HBox>
             </VBox>
             <VBox spacing="8" minWidth="260" styleClass="lab-panel">
                 <Label text="EVENT INSPECTOR" styleClass="panel-title" labelFor="${eventList}"/>

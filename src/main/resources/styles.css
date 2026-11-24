@@ -140,6 +140,28 @@
     -fx-border-color: -rv-accent;
 }
 
+.conversation-turn {
+    -fx-spacing: 4;
+    -fx-padding: 8;
+    -fx-border-color: transparent transparent -rv-divider transparent;
+}
+
+.text-field, .text-action {
+    -fx-background-color: -rv-control;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-border-color: transparent;
+    -fx-text-fill: -rv-text;
+}
+
+.text-field {
+    -fx-prompt-text-fill: -rv-muted;
+}
+
+.text-field:focus-visible, .text-action:focus-visible {
+    -fx-border-color: -rv-accent;
+}
+
 .scroll-bar, .scroll-bar > .increment-button, .scroll-bar > .decrement-button {
     -fx-background-color: -rv-panel;
 }

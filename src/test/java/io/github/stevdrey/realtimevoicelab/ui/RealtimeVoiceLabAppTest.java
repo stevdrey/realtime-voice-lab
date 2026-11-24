@@ -18,6 +18,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
@@ -104,6 +105,145 @@ class RealtimeVoiceLabAppTest {
             assertSame(conversation, conversationHeading.getLabelFor());
             assertSame(events, inspectorHeading.getLabelFor());
         });
+    }
+
+    @Test
+    void sendsStreamsFinalizesAndCancelsFromTheDesktopControls() throws Exception {
+        var transport = new FakeTransport();
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport);
+                var scene = stage.getScene();
+                assertTrue(scene.lookup("#text-composer").isDisabled());
+                assertTrue(scene.lookup("#send-text").isDisabled());
+                assertTrue(scene.lookup("#cancel-text").isDisabled());
+                connectButton(stage).fire();
+                assertTrue(scene.lookup("#send-text").isDisabled());
+                return null;
+            });
+            var socket = transport.attempts.getLast();
+            socket.ready();
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                var composer = (TextField) scene.lookup("#text-composer");
+                var send = (Button) scene.lookup("#send-text");
+                var cancel = (Button) scene.lookup("#cancel-text");
+                assertFalse(composer.isDisabled());
+                assertTrue(send.isDisabled());
+                composer.setText("Offline greeting");
+                assertFalse(send.isDisabled());
+                send.fire();
+                assertEquals("", composer.getText());
+                assertTrue(send.isDisabled());
+                assertFalse(cancel.isDisabled());
+                composer.setText("Offline follow-up");
+                assertTrue(send.isDisabled());
+                return null;
+            });
+            socket.text("""
+                    {"type":"conversation.item.added","item":{"id":"rvl-1","type":"message","role":"user"}}
+                    """, true);
+            socket.text("""
+                    {"type":"response.created","response":{"id":"reply-1","metadata":{"rvl_turn":"rvl-1"}}}
+                    """, true);
+            socket.text("""
+                    {"type":"response.output_text.delta","response_id":"reply-1","item_id":"assistant-1",
+                     "output_index":0,"content_index":0,"delta":"Partial"}
+                    """, true);
+            onFxThread(() -> {
+                assertEquals("Partial", ((Label) stage.getScene().lookup(".assistant-text")).getText());
+                return null;
+            });
+            socket.text("""
+                    {"type":"response.output_text.delta","response_id":"reply-1","item_id":"assistant-1",
+                     "output_index":0,"content_index":0,"delta":"%s"}
+                    """.formatted(" A long synthetic answer for the scrolling check.".repeat(160)), true);
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                scene.getRoot().applyCss();
+                scene.getRoot().layout();
+                var conversation = (ScrollPane) scene.lookup("#conversation-content");
+                assertTrue(conversation.getContent().getLayoutBounds().getHeight()
+                        > conversation.getViewportBounds().getHeight());
+                assertEquals(conversation.getVmax(), conversation.getVvalue(), 0.01);
+                conversation.setVvalue(conversation.getVmin());
+                return null;
+            });
+            socket.text("""
+                    {"type":"response.output_text.delta","response_id":"reply-1","item_id":"assistant-1",
+                     "output_index":0,"content_index":0,"delta":"%s"}
+                    """.formatted(" More synthetic text.".repeat(40)), true);
+            onFxThread(() -> {
+                var conversation = (ScrollPane) stage.getScene().lookup("#conversation-content");
+                assertEquals(conversation.getVmin(), conversation.getVvalue(), 0.01);
+                return null;
+            });
+            socket.text("""
+                    {"type":"response.done","response":{"id":"reply-1","status":"completed","output":[
+                     {"type":"message","role":"assistant","content":[{"type":"output_text","text":"Final reply"}]}]}}
+                    """, true);
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                var send = (Button) scene.lookup("#send-text");
+                var cancel = (Button) scene.lookup("#cancel-text");
+                assertEquals("Final reply", ((Label) scene.lookup(".assistant-text")).getText());
+                assertEquals(1, scene.getRoot().lookupAll(".conversation-turn").size());
+                assertFalse(send.isDisabled());
+                assertTrue(cancel.isDisabled());
+                send.fire();
+                return null;
+            });
+            socket.text("""
+                    {"type":"conversation.item.added","item":{"id":"rvl-2","type":"message","role":"user"}}
+                    """, true);
+            socket.text("""
+                    {"type":"response.created","response":{"id":"reply-2","metadata":{"rvl_turn":"rvl-2"}}}
+                    """, true);
+            onFxThread(() -> {
+                var cancel = (Button) stage.getScene().lookup("#cancel-text");
+                assertFalse(cancel.isDisabled());
+                cancel.fire();
+                assertTrue(cancel.isDisabled());
+                return null;
+            });
+            assertTrue(socket.writes.getLast().contains("\"type\":\"response.cancel\""));
+            socket.text("""
+                    {"type":"response.done","response":{"id":"reply-2","status":"cancelled","output":[]}}
+                    """, true);
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                assertEquals(2, scene.getRoot().lookupAll(".conversation-turn").size());
+                assertTrue(scene.getRoot().lookupAll(".conversation-turn .caption").stream()
+                        .anyMatch(node -> "Response cancelled".equals(((Label) node).getText())));
+                ((TextField) scene.lookup("#text-composer")).setText("Offline rejected turn");
+                assertFalse(scene.lookup("#send-text").isDisabled());
+                ((Button) scene.lookup("#send-text")).fire();
+                return null;
+            });
+            socket.text("""
+                    {"type":"error","error":{"event_id":"rvl-3-item","message":"private provider detail"}}
+                    """, true);
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                assertTrue(scene.getRoot().lookupAll(".conversation-turn .caption").stream()
+                        .anyMatch(node -> "Text request failed".equals(((Label) node).getText())));
+                assertFalse(scene.getRoot().lookupAll(".label").stream()
+                        .anyMatch(node -> ((Label) node).getText().contains("private provider detail")));
+                ((TextField) scene.lookup("#text-composer")).setText("Retry");
+                assertFalse(scene.lookup("#send-text").isDisabled());
+                connectButton(stage).fire();
+                assertTrue(scene.lookup("#text-composer").isDisabled());
+                return null;
+            });
+            socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+        assertTrue(transport.closed);
     }
 
     @Test

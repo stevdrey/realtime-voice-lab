@@ -6,7 +6,9 @@ import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -14,8 +16,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 public final class RealtimeSession implements AutoCloseable {
     public static final String DEFAULT_MODEL = "gpt-realtime-2.1-mini";
+    public static final int MAX_INPUT_CHARS = 4_000;
+    private static final int MAX_HISTORY_TURNS = 60;
     static final Duration MAX_SESSION_TIME = Duration.ofMinutes(5);
     static final Duration MAX_AUDIO_TIME = Duration.ofSeconds(30);
     static final int MAX_TOOL_CALLS = 10;
@@ -33,6 +39,16 @@ public final class RealtimeSession implements AutoCloseable {
     public record Status(State state, Failure failure) {
     }
 
+    public enum TurnState {
+        WAITING, RESPONDING, CANCELLING, COMPLETED, CANCELLED, FAILED, INCOMPLETE, INTERRUPTED, CANCEL_REJECTED
+    }
+
+    public record TurnView(long number, String input, String output, TurnState state) {
+    }
+
+    public record Workspace(Status status, List<TurnView> turns, boolean canSend, boolean canCancel) {
+    }
+
     private final RealtimeTransport transport;
     private final Runnable statusChanged;
     private final Duration setupTimeout;
@@ -44,6 +60,8 @@ public final class RealtimeSession implements AutoCloseable {
 
     // Commands, listener callbacks, write completions and deadlines share this monitor.
     private Status status = new Status(State.DISCONNECTED, null);
+    private final ArrayDeque<TextTurn> history = new ArrayDeque<>();
+    private long turnNumber;
     private Attempt active;
     private boolean disposed;
 
@@ -69,12 +87,48 @@ public final class RealtimeSession implements AutoCloseable {
         return status;
     }
 
+    public synchronized Workspace workspace() {
+        boolean ready = status.state() == State.READY;
+        return new Workspace(status, history.stream().map(TextTurn::view).toList(),
+                ready && active.turn == null && !active.writing,
+                ready && active.turn != null && active.turn.state != TurnState.CANCELLING);
+    }
+
+    public synchronized boolean sendText(String input) {
+        var attempt = active;
+        if (status.state() != State.READY || attempt.turn != null || attempt.writing
+                || input == null || input.isBlank() || input.length() > MAX_INPUT_CHARS || !withinSessionTime(attempt)) {
+            return false;
+        }
+        var turn = new TextTurn(++turnNumber, input);
+        attempt.turn = turn;
+        if (history.size() == MAX_HISTORY_TURNS) {
+            history.removeFirst();
+        }
+        history.addLast(turn);
+        writeTurnEvent(attempt, protocol.createItem(turn));
+        statusChanged.run();
+        return true;
+    }
+
+    public synchronized void cancelText() {
+        var attempt = active;
+        if (status.state() != State.READY || attempt.turn == null || attempt.turn.state == TurnState.CANCELLING
+                || !withinSessionTime(attempt)) {
+            return;
+        }
+        attempt.turn.state = TurnState.CANCELLING;
+        advanceTurn(attempt);
+        statusChanged.run();
+    }
+
     public synchronized void connect(String model) {
         if (disposed || active != null) {
             return;
         }
 
         var attempt = new Attempt();
+        history.clear();
         active = attempt;
         attempt.sessionDeadline = scheduleTimeout.apply(MAX_SESSION_TIME.toNanos());
         startDeadline(attempt, setupTimeout, Failure.TIMEOUT);
@@ -120,17 +174,20 @@ public final class RealtimeSession implements AutoCloseable {
         attempt.sessionDeadline.complete(null);
         attempt.closeFailure = limit;
         attempt.message = null;
+        finishTurn(attempt, TurnState.INTERRUPTED);
         startDeadline(attempt, closeTimeout, limit);
         if (active != attempt) {
             return;
         }
         publish(State.CLOSING, null);
-        if (active != attempt) {
-            return;
+        if (active == attempt && !attempt.writing) {
+            closeSocket(attempt);
         }
-        if (limit == null || limit == Failure.OUTPUT_LIMIT) {
-            // In the current workspace only a limit can interrupt an in-flight response.
-            // OUTPUT_LIMIT arrives via response.done, after the provider has stopped generation.
+    }
+
+    private void closeSocket(Attempt attempt) {
+        if (attempt.closeFailure == null || attempt.closeFailure == Failure.OUTPUT_LIMIT) {
+            // OUTPUT_LIMIT arrives after the provider has already stopped generation.
             sendClose(attempt);
             return;
         }
@@ -138,7 +195,7 @@ public final class RealtimeSession implements AutoCloseable {
             attempt.socket.sendText(SessionProtocol.CANCEL_RESPONSE, true)
                     .whenComplete((socket, error) -> cancelWritten(attempt, error));
         } catch (RuntimeException error) {
-            fail(attempt, limit);
+            fail(attempt, attempt.closeFailure);
         }
     }
 
@@ -191,6 +248,7 @@ public final class RealtimeSession implements AutoCloseable {
             return;
         }
         disposed = true;
+        history.clear();
         if (active != null) {
             finish(active, null, true);
         }
@@ -257,6 +315,7 @@ public final class RealtimeSession implements AutoCloseable {
         attempt.phaseDeadline.complete(null);
         attempt.sessionDeadline.complete(null);
         attempt.message = null;
+        finishTurn(attempt, TurnState.INTERRUPTED);
         if (abort) {
             if (attempt.socket != null) {
                 attempt.socket.abort();
@@ -311,9 +370,11 @@ public final class RealtimeSession implements AutoCloseable {
         var event = protocol.parse(message);
         switch (event.type()) {
             case "error" -> {
-                // Most GA errors are recoverable. Only a setup error ends the attempt.
+                // Setup cannot complete after a rejected configuration.
                 if (status.state() == State.CONNECTING) {
                     fail(attempt, Failure.PROVIDER);
+                } else if (attempt.turn != null) {
+                    turnError(attempt, protocol.textEvent(message).path("error"));
                 }
             }
             case "session.created" -> {
@@ -345,7 +406,20 @@ public final class RealtimeSession implements AutoCloseable {
             }
             case "response.done" -> {
                 if (status.state() == State.READY) {
-                    responseDone(attempt, protocol.responseDone(message));
+                    responseDone(attempt, protocol.textEvent(message).path("response"));
+                }
+            }
+            case "conversation.item.added", "response.created" -> {
+                if (status.state() == State.READY && attempt.turn != null) {
+                    receiveTurnEvent(attempt, event.type(), protocol.textEvent(message));
+                }
+            }
+            case "response.output_text.delta" -> {
+                var turn = attempt.turn;
+                if (status.state() == State.READY && turn != null && event.responseId().equals(turn.responseId)
+                        && turn.state != TurnState.CANCELLING) {
+                    turn.append(event.textDelta());
+                    statusChanged.run();
                 }
             }
             default -> {
@@ -365,10 +439,129 @@ public final class RealtimeSession implements AutoCloseable {
         }
     }
 
-    private void responseDone(Attempt attempt, SessionProtocol.ResponseDone response) {
-        attempt.audioBytes.remove(response.id());
-        if (response.outputLimitReached()) {
+    private void responseDone(Attempt attempt, JsonNode response) throws IOException {
+        var id = response.path("id").textValue();
+        if (id == null || id.isBlank()) {
+            throw new IOException("Missing completed Realtime response ID");
+        }
+        attempt.audioBytes.remove(id);
+        var outcome = response.path("status").asText();
+        var turn = attempt.turn;
+        boolean matchesTurn = turn != null && id.equals(turn.responseId);
+        if (matchesTurn) {
+            if (turn.state != TurnState.CANCELLING || "completed".equals(outcome)) {
+                turn.reconcile(protocol.terminalText(response));
+            }
+            finishTurn(attempt, switch (outcome) {
+                case "completed" -> TurnState.COMPLETED;
+                case "cancelled" -> TurnState.CANCELLED;
+                case "incomplete" -> TurnState.INCOMPLETE;
+                default -> TurnState.FAILED;
+            });
+        }
+        if ("incomplete".equals(outcome)
+                && "max_output_tokens".equals(response.path("status_details").path("reason").textValue())) {
             stopAtLimit(attempt, Failure.OUTPUT_LIMIT);
+        } else if (matchesTurn) {
+            statusChanged.run();
+        }
+    }
+
+    private void receiveTurnEvent(Attempt attempt, String type, JsonNode event) throws IOException {
+        var turn = attempt.turn;
+        switch (type) {
+            case "conversation.item.added" -> {
+                var item = event.path("item");
+                if (turn.id.equals(item.path("id").textValue()) && "message".equals(item.path("type").textValue())
+                        && "user".equals(item.path("role").textValue())) {
+                    turn.itemAcknowledged = true;
+                    advanceTurn(attempt);
+                }
+            }
+            case "response.created" -> {
+                var response = event.path("response");
+                if (turn.responseRequested && turn.responseId == null
+                        && turn.id.equals(response.path("metadata").path(SessionProtocol.TURN_METADATA).textValue())) {
+                    var id = response.path("id").textValue();
+                    if (id == null || id.isBlank()) {
+                        throw new IOException("Missing Realtime response ID");
+                    }
+                    turn.responseId = id;
+                    advanceTurn(attempt);
+                }
+            }
+            default -> throw new IllegalArgumentException("Unexpected text conversation event");
+        }
+    }
+
+    private void turnError(Attempt attempt, JsonNode error) {
+        var turn = attempt.turn;
+        var eventId = error.path("event_id").textValue();
+        if (eventId == null) {
+            // With no correlation, the provider may still be generating. Reconnect before sending again.
+            fail(attempt, Failure.PROVIDER);
+            return;
+        }
+        boolean itemRejected = !turn.itemAcknowledged && turn.itemEventId().equals(eventId);
+        boolean responseRejected = turn.responseRequested && turn.responseId == null
+                && turn.responseEventId().equals(eventId);
+        if (itemRejected || responseRejected) {
+            finishTurn(attempt, TurnState.FAILED);
+        } else if (turn.cancelSent && turn.cancelEventId().equals(eventId)) {
+            turn.cancelSent = false;
+            turn.state = TurnState.CANCEL_REJECTED;
+        } else {
+            return;
+        }
+        statusChanged.run();
+    }
+
+    private void finishTurn(Attempt attempt, TurnState outcome) {
+        if (attempt.turn != null) {
+            attempt.turn.finish(outcome);
+            attempt.turn = null;
+        }
+    }
+
+    private void advanceTurn(Attempt attempt) {
+        var turn = attempt.turn;
+        if (turn == null || attempt.writing || !withinSessionTime(attempt)) {
+            return;
+        }
+        if (!turn.responseRequested && turn.state == TurnState.CANCELLING) {
+            finishTurn(attempt, TurnState.CANCELLED);
+            statusChanged.run();
+        } else if (turn.itemAcknowledged && !turn.responseRequested) {
+            turn.responseRequested = true;
+            writeTurnEvent(attempt, protocol.createResponse(turn));
+        } else if (turn.responseId != null && turn.state == TurnState.CANCELLING && !turn.cancelSent) {
+            turn.cancelSent = true;
+            turn.cancelRequests++;
+            writeTurnEvent(attempt, protocol.cancelResponse(turn));
+        }
+    }
+
+    private void writeTurnEvent(Attempt attempt, String event) {
+        attempt.writing = true;
+        try {
+            attempt.socket.sendText(event, true).whenComplete((socket, error) -> turnEventWritten(attempt, error));
+        } catch (RuntimeException error) {
+            fail(attempt, Failure.CONNECTION);
+        }
+    }
+
+    private synchronized void turnEventWritten(Attempt attempt, Throwable error) {
+        if (active != attempt) {
+            return;
+        }
+        attempt.writing = false;
+        if (error != null) {
+            fail(attempt, Failure.CONNECTION);
+        } else if (status.state() == State.CLOSING) {
+            closeSocket(attempt);
+        } else {
+            advanceTurn(attempt);
+            statusChanged.run();
         }
     }
 
@@ -410,6 +603,8 @@ public final class RealtimeSession implements AutoCloseable {
         private WebSocket socket;
         private StringBuilder message;
         private String sessionId;
+        private TextTurn turn;
+        private boolean writing;
         private final Map<String, Long> audioBytes = new HashMap<>();
         private int toolCalls;
         private Failure closeFailure;
