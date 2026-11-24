@@ -3,6 +3,8 @@ package io.github.stevdrey.realtimevoicelab.realtime;
 import java.io.IOException;
 import java.util.StringJoiner;
 
+import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
+
 import com.fasterxml.jackson.core.Base64Variants;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
@@ -17,8 +19,8 @@ final class SessionProtocol {
     static final int MAX_MESSAGE_CHARS = 256 * 1024;
     static final int MAX_OUTPUT_TOKENS = 512;
     private static final String PCM_AUDIO_TYPE = "audio/pcm";
-    private static final int PCM_SAMPLE_RATE = 24_000;
-    static final int PCM_BYTES_PER_SECOND = PCM_SAMPLE_RATE * Short.BYTES;
+    private static final int PCM_SAMPLE_RATE = MicrophoneCapture.SAMPLE_RATE;
+    static final int PCM_BYTES_PER_SECOND = MicrophoneCapture.BYTES_PER_SECOND;
     static final String CANCEL_RESPONSE = "{\"type\":\"response.cancel\"}";
     static final String TURN_METADATA = "rvl_turn";
 
@@ -43,14 +45,30 @@ final class SessionProtocol {
         return update.toString();
     }
 
-    String createItem(TextTurn turn) {
+    String createItem(ConversationTurn turn) {
         var event = command("conversation.item.create", turn.itemEventId());
         event.putObject("item").put("id", turn.id).put("type", "message").put("role", "user")
                 .putArray("content").addObject().put("type", "input_text").put("text", turn.input);
         return event.toString();
     }
 
-    String createResponse(TextTurn turn) {
+    String appendAudio(String id, byte[] pcm) {
+        return command("input_audio_buffer.append", id).put("audio", pcm).toString();
+    }
+
+    String commitAudio(String id) {
+        return command("input_audio_buffer.commit", id).toString();
+    }
+
+    String clearAudio(String id) {
+        return command("input_audio_buffer.clear", id).toString();
+    }
+
+    String deleteItem(String eventId, String itemId) {
+        return command("conversation.item.delete", eventId).put("item_id", itemId).toString();
+    }
+
+    String createResponse(ConversationTurn turn) {
         var event = command("response.create", turn.responseEventId());
         var response = event.putObject("response").put("max_output_tokens", MAX_OUTPUT_TOKENS);
         response.putArray("output_modalities").add("text");
@@ -58,7 +76,7 @@ final class SessionProtocol {
         return event.toString();
     }
 
-    String cancelResponse(TextTurn turn) {
+    String cancelResponse(ConversationTurn turn) {
         return command("response.cancel", turn.cancelEventId()).put("response_id", turn.responseId).toString();
     }
 
@@ -93,6 +111,7 @@ final class SessionProtocol {
         String sessionId = null;
         int outputCap = 0;
         boolean pcmOutput = false;
+        boolean manualPcmInput = false;
         String responseId = null;
         String delta = null;
         int outputIndex = -1;
@@ -126,7 +145,10 @@ final class SessionProtocol {
                         } else if ("max_output_tokens".equals(sessionField) && sessionValue == JsonToken.VALUE_NUMBER_INT) {
                             outputCap = parser.getIntValue();
                         } else if ("audio".equals(sessionField) && sessionValue == JsonToken.START_OBJECT) {
-                            pcmOutput = readSupportedOutputFormat(parser);
+                            JsonNode audio = mapper.readTree(parser);
+                            pcmOutput = isPcmFormat(audio.path("output").path("format"));
+                            var input = audio.path("input");
+                            manualPcmInput = input.path("turn_detection").isNull() && isPcmFormat(input.path("format"));
                         } else {
                             parser.skipChildren();
                         }
@@ -147,13 +169,13 @@ final class SessionProtocol {
                     throw new IOException("Invalid session type");
                 }
                 yield new Event(type, requiredText(sessionId),
-                        pcmOutput && outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS, null, -1, null);
+                        pcmOutput && outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS, manualPcmInput, null, -1, null);
             }
             case "response.output_audio.delta" ->
-                    new Event(type, null, false, requiredText(responseId), decodedLength(delta), null);
-            case "response.output_text.delta" -> new Event(type, null, false, requiredText(responseId), -1,
+                    new Event(type, null, false, false, requiredText(responseId), decodedLength(delta), null);
+            case "response.output_text.delta" -> new Event(type, null, false, false, requiredText(responseId), -1,
                     new TextDelta(outputIndex, contentIndex, delta));
-            default -> new Event(type, null, false, null, -1, null);
+            default -> new Event(type, null, false, false, null, -1, null);
         };
     }
 
@@ -161,9 +183,7 @@ final class SessionProtocol {
         return parser.getNumberType() == JsonParser.NumberType.INT ? parser.getIntValue() : -1;
     }
 
-    private boolean readSupportedOutputFormat(JsonParser parser) throws IOException {
-        JsonNode audio = mapper.readTree(parser);
-        var format = audio.path("output").path("format");
+    private boolean isPcmFormat(JsonNode format) {
         if (!PCM_AUDIO_TYPE.equals(format.path("type").textValue())) {
             return false;
         }
@@ -200,8 +220,8 @@ final class SessionProtocol {
         return value;
     }
 
-    record Event(String type, String sessionId, boolean outputConfigurationConfirmed, String responseId,
-                 int audioBytes, TextDelta textDelta) {
+    record Event(String type, String sessionId, boolean outputConfigurationConfirmed,
+                 boolean inputConfigurationConfirmed, String responseId, int audioBytes, TextDelta textDelta) {
     }
 
     record TextDelta(int outputIndex, int contentIndex, String text) {

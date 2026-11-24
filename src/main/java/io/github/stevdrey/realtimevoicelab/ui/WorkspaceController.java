@@ -1,39 +1,60 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeTransport;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
+import javafx.beans.value.ObservableBooleanValue;
 import javafx.css.PseudoClass;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
 public final class WorkspaceController {
+    private enum MicGesture {
+        MOUSE, SPACE, ENTER
+    }
+
     private static final PseudoClass CONNECTED = PseudoClass.getPseudoClass("connected");
     private static final PseudoClass ERROR = PseudoClass.getPseudoClass("session-error");
     private static final PseudoClass DISCONNECT = PseudoClass.getPseudoClass("disconnect");
+    private static final PseudoClass RECORDING = PseudoClass.getPseudoClass("recording");
 
     private final RealtimeSession session;
     private final Tooltip connectTooltip = new Tooltip();
+    private final Tooltip micTooltip = new Tooltip();
     private final AtomicBoolean renderPending = new AtomicBoolean();
+    private final EnumSet<KeyCode> heldMicKeys = EnumSet.noneOf(KeyCode.class);
     private RealtimeSession.State renderedState;
     private List<RealtimeSession.TurnView> renderedTurns = List.of();
     private boolean canSendText;
+    private boolean mouseHeld;
+    private MicGesture activeMicGesture;
     private boolean disposed;
+
+    @FXML
+    private VBox root;
 
     @FXML
     private ComboBox<String> modelSelector;
@@ -60,6 +81,12 @@ public final class WorkspaceController {
     private Button micButton;
 
     @FXML
+    private Label micStatus;
+
+    @FXML
+    private ProgressBar micLevel;
+
+    @FXML
     private Button connectButton;
 
     @FXML
@@ -80,8 +107,8 @@ public final class WorkspaceController {
     @FXML
     private Button cancelButton;
 
-    WorkspaceController(RealtimeTransport transport) {
-        session = new RealtimeSession(transport, this::scheduleRender);
+    WorkspaceController(RealtimeTransport transport, MicrophoneCapture microphone) {
+        session = new RealtimeSession(transport, this::scheduleRender, microphone);
     }
 
     @FXML
@@ -93,7 +120,7 @@ public final class WorkspaceController {
                 () -> "Model: " + modelSelector.getValue(), modelSelector.valueProperty()));
 
         installUnavailableTooltip(settingsControl, settingsButton);
-        installUnavailableTooltip(micControl, micButton);
+        installMicControls();
         connectButton.setTooltip(connectTooltip);
         connectButton.setOnAction(event -> {
             switch (renderedState) {
@@ -127,9 +154,103 @@ public final class WorkspaceController {
         composer.setOnAction(event -> sendText());
         sendButton.setOnAction(event -> sendText());
         cancelButton.setOnAction(event -> {
-            session.cancelText();
+            activeMicGesture = null;
+            session.cancelTurn();
             renderSession();
         });
+        renderSession();
+    }
+
+    void watchFocus(ObservableBooleanValue windowFocus) {
+        windowFocus.addListener((observable, previous, focused) -> {
+            if (!focused) {
+                finishMicGesture(false);
+                mouseHeld = false;
+                // Keep a held key latched so auto-repeat after refocus does not start a new take.
+            }
+        });
+    }
+
+    private void installMicControls() {
+        Tooltip.install(micControl, micTooltip);
+        micButton.accessibleHelpProperty().bind(micTooltip.textProperty());
+        micLevel.managedProperty().bind(micLevel.visibleProperty());
+        micButton.addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
+            if (event.getButton() == MouseButton.PRIMARY) {
+                if (!mouseHeld && activeMicGesture == null) {
+                    micButton.requestFocus();
+                    mouseHeld = true;
+                    startMicGesture(MicGesture.MOUSE);
+                }
+                event.consume();
+            }
+        });
+        root.addEventFilter(MouseEvent.MOUSE_RELEASED, event -> {
+            if (mouseHeld && event.getButton() == MouseButton.PRIMARY) {
+                mouseHeld = false;
+                if (activeMicGesture == MicGesture.MOUSE) {
+                    finishMicGesture(true);
+                }
+                event.consume();
+            }
+        });
+        micButton.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            var key = event.getCode();
+            var gesture = keyboardMicGesture(key);
+            if (gesture != null) {
+                if (heldMicKeys.add(key) && !mouseHeld && activeMicGesture == null) {
+                    startMicGesture(gesture);
+                }
+                event.consume();
+            }
+        });
+        root.addEventFilter(KeyEvent.KEY_RELEASED, event -> {
+            var key = event.getCode();
+            if (heldMicKeys.remove(key)) {
+                if (activeMicGesture == keyboardMicGesture(key)) {
+                    finishMicGesture(true);
+                }
+                event.consume();
+            }
+        });
+        root.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.ESCAPE && activeMicGesture != null) {
+                finishMicGesture(false);
+                event.consume();
+            }
+        });
+        micButton.focusedProperty().addListener((observable, previous, focused) -> {
+            if (!focused) {
+                finishMicGesture(false);
+            }
+        });
+    }
+
+    private MicGesture keyboardMicGesture(KeyCode key) {
+        return switch (key) {
+            case SPACE -> MicGesture.SPACE;
+            case ENTER -> MicGesture.ENTER;
+            default -> null;
+        };
+    }
+
+    private void startMicGesture(MicGesture gesture) {
+        if (session.startAudio()) {
+            activeMicGesture = gesture;
+        }
+        renderSession();
+    }
+
+    private void finishMicGesture(boolean submit) {
+        if (activeMicGesture == null || disposed) {
+            return;
+        }
+        activeMicGesture = null;
+        if (submit) {
+            session.releaseAudio();
+        } else {
+            session.cancelAudio();
+        }
         renderSession();
     }
 
@@ -189,7 +310,35 @@ public final class WorkspaceController {
         canSendText = workspace.canSend();
         updateSendButton();
         cancelButton.setDisable(!workspace.canCancel());
+        renderMicrophone(workspace.microphone());
         renderConversation(workspace.turns());
+    }
+
+    private void renderMicrophone(RealtimeSession.MicrophoneView microphone) {
+        var state = microphone.state();
+        // Stay enabled while busy so focus does not jump to Disconnect. Busy presses are ignored by the session.
+        micButton.setDisable(renderedState != RealtimeSession.State.READY
+                || state == RealtimeSession.MicState.UNCONFIRMED);
+        micTooltip.setText(state == RealtimeSession.MicState.UNCONFIRMED ? "Manual PCM microphone input was not confirmed"
+                : renderedState == RealtimeSession.State.READY
+                ? "Hold the microphone or Space to record. Release to send. Esc cancels."
+                : "Microphone (connect to record)");
+        boolean recording = state == RealtimeSession.MicState.RECORDING;
+        micButton.pseudoClassStateChanged(RECORDING, recording);
+        micLevel.setVisible(recording);
+        micLevel.setProgress(microphone.level());
+        micStatus.setText(switch (state) {
+            case IDLE -> microphone.canStart() ? "Hold to talk" : "";
+            case UNCONFIRMED -> "Manual PCM microphone input was not confirmed";
+            case OPENING -> "Opening microphone…";
+            case RECORDING -> String.format(Locale.ROOT, "Recording · %.1f s", microphone.seconds());
+            case LIMIT -> "Recording limit reached. Release to send.";
+            case STOPPING -> "Stopping microphone…";
+            case SENDING -> "Sending audio…";
+            case TOO_SHORT -> "Recording too short. Hold to talk.";
+            case UNSUPPORTED -> "Microphone requires mono PCM16 at 24 kHz";
+            case UNAVAILABLE -> "Microphone unavailable. Check your input device.";
+        });
     }
 
     private void sendText() {
@@ -205,7 +354,7 @@ public final class WorkspaceController {
 
     private void renderConversation(List<RealtimeSession.TurnView> turns) {
         conversationEmpty.setText(renderedState == RealtimeSession.State.READY
-                ? "Send a message to start the conversation." : "Connect to start a conversation.");
+                ? "Send a message or hold the microphone to talk." : "Connect to start a conversation.");
         conversationEmpty.setVisible(turns.isEmpty());
         if (turns.equals(renderedTurns)) {
             return;
@@ -261,7 +410,7 @@ public final class WorkspaceController {
                 case CANCELLING -> "Cancelling…";
                 case COMPLETED -> turn.output().isEmpty() ? "No text returned" : "";
                 case CANCELLED -> "Response cancelled";
-                case FAILED -> "Text request failed";
+                case FAILED -> "Request failed";
                 case INCOMPLETE -> "Response incomplete";
                 case INTERRUPTED -> "Response interrupted";
                 case CANCEL_REJECTED -> "Cancellation failed. Try again or disconnect.";

@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public final class FakeTransport implements RealtimeTransport {
     public final List<Socket> attempts = new ArrayList<>();
@@ -31,7 +32,7 @@ public final class FakeTransport implements RealtimeTransport {
         CompletableFuture<WebSocket> nextTurnWrite = CompletableFuture.completedFuture(this);
         private CompletableFuture<WebSocket> pendingWrite = textWrite;
         private boolean closeCancelWritten;
-        public final List<String> writes = new ArrayList<>();
+        public final List<String> writes = new CopyOnWriteArrayList<>();
         public int demand;
         public int closeWrites;
         public boolean aborted;
@@ -60,7 +61,8 @@ public final class FakeTransport implements RealtimeTransport {
         public void updated() {
             text("""
                     {"type":"session.updated","session":{"type":"realtime","id":"test-session","max_output_tokens":512,
-                     "audio":{"output":{"format":{"type":"audio/pcm","rate":24000}}}}}
+                     "audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"turn_detection":null},
+                              "output":{"format":{"type":"audio/pcm","rate":24000}}}}}
                     """, true);
         }
 

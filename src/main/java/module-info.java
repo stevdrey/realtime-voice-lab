@@ -2,6 +2,7 @@ module io.github.stevdrey.realtimevoicelab {
     requires javafx.controls;
     requires javafx.fxml;
     requires java.net.http;
+    requires java.desktop;
     requires com.fasterxml.jackson.core;
     requires com.fasterxml.jackson.databind;
 
