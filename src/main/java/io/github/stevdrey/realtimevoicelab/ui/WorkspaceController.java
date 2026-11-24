@@ -103,8 +103,22 @@ public final class WorkspaceController {
             }
             renderSession();
         });
-        composer.setTextFormatter(new TextFormatter<>(change ->
-                change.getControlNewText().length() <= RealtimeSession.MAX_INPUT_CHARS ? change : null));
+        composer.setTextFormatter(new TextFormatter<>(change -> {
+            int overflow = change.getControlNewText().length() - RealtimeSession.MAX_INPUT_CHARS;
+            if (overflow <= 0) {
+                return change;
+            }
+            var text = change.getText();
+            if (overflow > text.length()) {
+                return null;
+            }
+            // Keep as much of an oversized paste as fits.
+            var kept = text.substring(0, text.length() - overflow);
+            change.setText(kept);
+            int caret = change.getRangeStart() + kept.length();
+            change.selectRange(caret, caret);
+            return change;
+        }));
         composer.textProperty().addListener((observable, previous, text) -> updateSendButton());
         composer.setOnAction(event -> sendText());
         sendButton.setOnAction(event -> sendText());

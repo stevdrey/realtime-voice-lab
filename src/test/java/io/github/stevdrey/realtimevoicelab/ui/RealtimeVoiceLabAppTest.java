@@ -10,6 +10,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 import io.github.stevdrey.realtimevoicelab.realtime.FakeTransport;
+import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -131,6 +132,10 @@ class RealtimeVoiceLabAppTest {
                 var cancel = (Button) scene.lookup("#cancel-text");
                 assertFalse(composer.isDisabled());
                 assertTrue(send.isDisabled());
+                composer.insertText(0, "x".repeat(RealtimeSession.MAX_INPUT_CHARS + 500));
+                assertEquals(RealtimeSession.MAX_INPUT_CHARS, composer.getText().length());
+                assertEquals(RealtimeSession.MAX_INPUT_CHARS, composer.getCaretPosition());
+                composer.clear();
                 composer.setText("Offline greeting");
                 assertFalse(send.isDisabled());
                 send.fire();

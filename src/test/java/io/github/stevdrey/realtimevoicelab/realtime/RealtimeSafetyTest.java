@@ -46,7 +46,7 @@ class RealtimeSafetyTest {
         clock.advance(Duration.ofNanos(1));
 
         assertEquals(State.CLOSING, session.status().state());
-        assertEquals("{\"type\":\"response.cancel\"}", socket.writes.getLast());
+        assertOnlyCancelAfterSetup(socket);
         assertEquals(1, socket.closeWrites);
         session.connect(DEFAULT_MODEL);
         assertEquals(1, transport.attempts.size());
@@ -181,7 +181,7 @@ class RealtimeSafetyTest {
         }
 
         functionCall(socket);
-        assertEquals("{\"type\":\"response.cancel\"}", socket.writes.getLast());
+        assertOnlyCancelAfterSetup(socket);
         socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
         assertLimit(Failure.TOOL_LIMIT);
 
@@ -211,7 +211,7 @@ class RealtimeSafetyTest {
         var extraSample = audioDelta("response_2", "AAA=");
         socket.text(extraSample.substring(0, 20), false);
         socket.text(extraSample.substring(20), true);
-        assertEquals("{\"type\":\"response.cancel\"}", socket.writes.getLast());
+        assertOnlyCancelAfterSetup(socket);
         socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
         assertLimit(Failure.AUDIO_LIMIT);
     }
@@ -237,7 +237,7 @@ class RealtimeSafetyTest {
         assertEquals(State.READY, session.status().state());
 
         socket.text(audioDelta("response_A", "AAA="), true);
-        assertEquals("{\"type\":\"response.cancel\"}", socket.writes.getLast());
+        assertOnlyCancelAfterSetup(socket);
         socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
         assertLimit(Failure.AUDIO_LIMIT);
     }
@@ -322,6 +322,12 @@ class RealtimeSafetyTest {
                 {"type":"session.updated","session":{"type":"realtime","id":"test-session"%s}}
                 """.formatted(fields), true);
         return socket;
+    }
+
+    private void assertOnlyCancelAfterSetup(FakeTransport.Socket socket) {
+        // Only the configuration precedes the generic cancellation in these audio and tool scenarios.
+        assertEquals(2, socket.writes.size());
+        assertEquals(SessionProtocol.CANCEL_RESPONSE, socket.writes.getLast());
     }
 
     private void assertLimit(Failure expected) {

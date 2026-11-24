@@ -30,6 +30,7 @@ public final class FakeTransport implements RealtimeTransport {
         CompletableFuture<WebSocket> closeWrite = CompletableFuture.completedFuture(this);
         CompletableFuture<WebSocket> nextTurnWrite = CompletableFuture.completedFuture(this);
         private CompletableFuture<WebSocket> pendingWrite = textWrite;
+        private boolean closeCancelWritten;
         public final List<String> writes = new ArrayList<>();
         public int demand;
         public int closeWrites;
@@ -91,8 +92,13 @@ public final class FakeTransport implements RealtimeTransport {
             if (!last || !pendingWrite.isDone()) {
                 throw new AssertionError("Unexpected or overlapping text write");
             }
+            if (closeCancelWritten) {
+                // The generic cancel precedes close, so nothing else may follow it.
+                throw new AssertionError("Text write after the close cancellation");
+            }
             writes.add(data.toString());
             if (SessionProtocol.CANCEL_RESPONSE.contentEquals(data)) {
+                closeCancelWritten = true;
                 pendingWrite = cancelWrite;
             } else {
                 pendingWrite = nextTurnWrite;

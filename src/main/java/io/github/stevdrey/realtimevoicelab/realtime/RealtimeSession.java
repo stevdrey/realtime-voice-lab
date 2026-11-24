@@ -175,6 +175,9 @@ public final class RealtimeSession implements AutoCloseable {
         attempt.sessionDeadline.complete(null);
         attempt.closeFailure = limit;
         attempt.message = null;
+        // OUTPUT_LIMIT arrives after the provider has already stopped generation.
+        attempt.cancelBeforeClose = limit != Failure.OUTPUT_LIMIT
+                && (limit != null || (attempt.turn != null && attempt.turn.responseRequested));
         finishTurn(attempt, TurnState.INTERRUPTED);
         startDeadline(attempt, closeTimeout, limit);
         if (active != attempt) {
@@ -187,8 +190,7 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private void closeSocket(Attempt attempt) {
-        if (attempt.closeFailure == null || attempt.closeFailure == Failure.OUTPUT_LIMIT) {
-            // OUTPUT_LIMIT arrives after the provider has already stopped generation.
+        if (!attempt.cancelBeforeClose) {
             sendClose(attempt);
             return;
         }
@@ -425,8 +427,7 @@ public final class RealtimeSession implements AutoCloseable {
             }
             case "response.output_text.delta" -> {
                 var turn = attempt.turn;
-                if (status.state() == State.READY && turn != null && event.responseId().equals(turn.responseId)
-                        && turn.state != TurnState.CANCELLING) {
+                if (status.state() == State.READY && turn != null && event.responseId().equals(turn.responseId)) {
                     turn.append(event.textDelta());
                     statusChanged.run();
                 }
@@ -458,9 +459,8 @@ public final class RealtimeSession implements AutoCloseable {
         var turn = attempt.turn;
         boolean matchesTurn = turn != null && (id.equals(turn.responseId) || matchesUnboundResponse(turn, response));
         if (matchesTurn) {
-            if (turn.state != TurnState.CANCELLING || "completed".equals(outcome)) {
-                turn.reconcile(protocol.terminalText(response));
-            }
+            // The terminal output is what the provider keeps, including text generated before a cancel applied.
+            turn.reconcile(protocol.terminalText(response));
             finishTurn(attempt, switch (outcome) {
                 case "completed" -> TurnState.COMPLETED;
                 case "cancelled" -> TurnState.CANCELLED;
@@ -512,8 +512,10 @@ public final class RealtimeSession implements AutoCloseable {
         var turn = attempt.turn;
         var eventId = error.path("event_id").textValue();
         if (eventId == null) {
-            // With no correlation, the provider may still be generating. Reconnect before sending again.
-            fail(attempt, Failure.PROVIDER);
+            // Once a response is requested, the provider may still be generating. Reconnect before sending again.
+            if (turn.responseRequested) {
+                fail(attempt, Failure.PROVIDER);
+            }
             return;
         }
         boolean itemRejected = !turn.itemAcknowledged && turn.itemEventId().equals(eventId);
@@ -624,6 +626,7 @@ public final class RealtimeSession implements AutoCloseable {
         private String sessionId;
         private TextTurn turn;
         private boolean writing;
+        private boolean cancelBeforeClose;
         private final Map<String, Long> audioBytes = new HashMap<>();
         private int toolCalls;
         private Failure closeFailure;

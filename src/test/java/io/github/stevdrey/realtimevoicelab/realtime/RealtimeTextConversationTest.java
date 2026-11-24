@@ -168,8 +168,10 @@ class RealtimeTextConversationTest {
         assertEquals("response.cancel", cancel.path("type").asText());
         assertEquals("target", cancel.path("response_id").asText());
         textDelta(socket, "target", 0, "Late text");
+        assertEquals("Late text", last().output());
+        assertEquals(TurnState.CANCELLING, last().state());
         doneWithText(socket, "target", "cancelled", "Late terminal text");
-        assertEquals("", last().output());
+        assertEquals("Late terminal text", last().output());
         assertEquals(TurnState.CANCELLED, last().state());
         assertFalse(session.workspace().canSend());
         cancelWrite.complete(socket);
@@ -201,9 +203,42 @@ class RealtimeTextConversationTest {
         session.cancelText();
         error(socket, "rvl-2-cancel-1");
         assertEquals(TurnState.CANCELLING, last().state());
-        doneWithText(socket, "active-response", "cancelled", "Ignore after cancel");
-        assertEquals("Partial text", last().output());
+        doneWithText(socket, "active-response", "cancelled", "Kept after cancel");
+        assertEquals("Kept after cancel", last().output());
         assertTrue(session.workspace().canSend());
+    }
+
+    @Test
+    void ignoresAnUncorrelatedErrorBeforeTheResponseIsRequested() throws Exception {
+        var socket = ready();
+        session.sendText("Synthetic input");
+        socket.text("""
+                {"type":"error","error":{"type":"server_error","message":"private detail"}}
+                """, true);
+        assertEquals(State.READY, session.status().state());
+        assertEquals(TurnState.WAITING, last().state());
+        assertFalse(socket.aborted);
+
+        itemAdded(socket, "rvl-1");
+        assertEquals("response.create", mapper.readTree(socket.writes.getLast()).path("type").asText());
+    }
+
+    @Test
+    void disconnectCancelsAnActiveResponseBeforeClosing() {
+        var socket = ready();
+        session.sendText("Count for a while");
+        itemAdded(socket, "rvl-1");
+        responseCreated(socket, "rvl-1", "active");
+        textDelta(socket, "active", 0, "One");
+        session.disconnect();
+        assertEquals(State.CLOSING, session.status().state());
+        assertEquals(4, socket.writes.size());
+        assertEquals(SessionProtocol.CANCEL_RESPONSE, socket.writes.getLast());
+        assertEquals(1, socket.closeWrites);
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        assertEquals(new RealtimeSession.Status(State.DISCONNECTED, null), session.status());
+        assertEquals(TurnState.INTERRUPTED, last().state());
+        assertEquals("One", last().output());
     }
 
     @Test
