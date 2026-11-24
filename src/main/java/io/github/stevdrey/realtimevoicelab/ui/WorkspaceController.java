@@ -161,7 +161,7 @@ public final class WorkspaceController {
             if (!focused) {
                 finishMicGesture(false);
                 mouseHeld = false;
-                micKeyHeld = null;
+                // Keep a held key latched so auto-repeat after refocus does not start a new take.
             }
         });
     }
@@ -294,11 +294,9 @@ public final class WorkspaceController {
 
     private void renderMicrophone(RealtimeSession.MicrophoneView microphone) {
         var state = microphone.state();
-        boolean holding = switch (state) {
-            case OPENING, RECORDING, LIMIT -> true;
-            default -> false;
-        };
-        micButton.setDisable(!microphone.canStart() && !holding);
+        // Stay enabled while busy so focus does not jump to Disconnect. Busy presses are ignored by the session.
+        micButton.setDisable(renderedState != RealtimeSession.State.READY
+                || state == RealtimeSession.MicState.UNCONFIRMED);
         micTooltip.setText(state == RealtimeSession.MicState.UNCONFIRMED ? "Manual PCM microphone input was not confirmed"
                 : renderedState == RealtimeSession.State.READY
                 ? "Hold the microphone or Space to record. Release to send. Esc cancels."

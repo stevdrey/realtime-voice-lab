@@ -42,7 +42,6 @@ public final class MicrophoneCapture {
         if (stopped.getAsBoolean()) {
             return Result.STOPPED;
         }
-        long startedAt = System.nanoTime();
         long limitNanos = limit.toNanos();
         try (var line = source.open()) {
             var actualFormat = line.getFormat();
@@ -57,10 +56,9 @@ public final class MicrophoneCapture {
             if (stopped.getAsBoolean()) {
                 return Result.STOPPED;
             }
-            if (System.nanoTime() - startedAt >= limitNanos) {
-                return Result.LIMIT;
-            }
             line.start();
+            // Device open latency does not count against the recording limit.
+            long startedAt = System.nanoTime();
             started.run();
             var block = new byte[readBytes];
             while (!stopped.getAsBoolean()) {

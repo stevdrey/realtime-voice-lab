@@ -5,6 +5,9 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
@@ -413,6 +416,106 @@ class RealtimeAudioInputTest {
             assertEquals(1_440_000, bytes);
             assertEquals("input_audio_buffer.commit", types(socket).getLast());
         }
+    }
+
+    @Test
+    void openTimeoutDetachesAHungDeviceSoTextAndCancelAreNotBlocked() throws Exception {
+        var finishOpen = new CompletableFuture<Void>();
+        var device = new FakeMicrophone(new AudioFormat(24_000, 16, 1, true, false), finishOpen::join);
+        var deadlines = new CopyOnWriteArrayList<Deadline>();
+        try (var session = scheduledSession(device, deadlines)) {
+            var socket = ready(session);
+            assertTrue(session.startAudio());
+            await(() -> device.opens.get() == 1);
+            session.cancelTurn();
+            assertFalse(session.workspace().canSend());
+
+            expire(deadlines, RealtimeSession.OPEN_TIMEOUT);
+            assertEquals(UNAVAILABLE, session.workspace().microphone().state());
+            assertTrue(session.workspace().canSend());
+            assertFalse(session.startAudio());
+
+            finishOpen.complete(null);
+            await(() -> session.workspace().microphone().canStart());
+            assertEquals(0, device.starts.get());
+            assertEquals(1, device.closes.get());
+            assertEquals(List.of("session.update"), types(socket));
+        } finally {
+            finishOpen.complete(null);
+        }
+    }
+
+    @Test
+    void restartsTheAcknowledgmentDeadlineForEveryUploadWrite() throws Exception {
+        var device = new FakeMicrophone();
+        var deadlines = new CopyOnWriteArrayList<Deadline>();
+        try (var session = scheduledSession(device, deadlines)) {
+            var socket = ready(session);
+            record(session, device, 7);
+            session.releaseAudio();
+            await(() -> socket.writes.size() == 4);
+            assertEquals(List.of("session.update", "input_audio_buffer.append", "input_audio_buffer.append",
+                    "input_audio_buffer.commit"), types(socket));
+            var ackDeadlines = deadlines.stream()
+                    .filter(deadline -> deadline.nanos() == RealtimeSession.ITEM_ACK_TIMEOUT.toNanos()).toList();
+            assertEquals(3, ackDeadlines.size());
+            assertTrue(ackDeadlines.stream().limit(2)
+                    .allMatch(deadline -> deadline.future().isDone() && !deadline.future().isCompletedExceptionally()));
+        }
+    }
+
+    @Test
+    void deviceErrorAfterReleaseStillSendsTheCapturedTake() throws Exception {
+        int tailBytes = MicrophoneCapture.BYTES_PER_SECOND * 30 / 1_000;
+        var tailObserved = new CompletableFuture<Void>();
+        var resumeCapture = new CompletableFuture<Void>();
+        var failRead = new AtomicBoolean();
+        var device = new FakeMicrophone(available -> {
+            if (available == tailBytes) {
+                tailObserved.complete(null);
+                resumeCapture.join();
+            }
+        }, length -> {
+            if (failRead.get()) {
+                throw new IllegalStateException("synthetic device removal");
+            }
+        });
+
+        try (var session = newSession(device)) {
+            var socket = ready(session);
+            record(session, device, 3);
+            device.queueBytes(tailBytes);
+            await(tailObserved::isDone);
+            session.releaseAudio();
+            failRead.set(true);
+            resumeCapture.complete(null);
+            await(() -> socket.writes.size() == 3);
+
+            assertEquals(List.of("session.update", "input_audio_buffer.append", "input_audio_buffer.commit"),
+                    types(socket));
+            assertEquals(3 * MicrophoneCapture.BLOCK_BYTES,
+                    json.readTree(socket.writes.get(1)).path("audio").binaryValue().length);
+            assertEquals(1, device.closes.get());
+        } finally {
+            resumeCapture.complete(null);
+        }
+    }
+
+    private record Deadline(long nanos, CompletableFuture<Void> future) {
+    }
+
+    private RealtimeSession scheduledSession(FakeMicrophone microphone, List<Deadline> deadlines) {
+        return new RealtimeSession(transport, () -> {}, Duration.ofSeconds(10), Duration.ofSeconds(3),
+                System::nanoTime, nanos -> {
+                    var future = new CompletableFuture<Void>();
+                    deadlines.add(new Deadline(nanos, future));
+                    return future;
+                }, microphone.microphone());
+    }
+
+    private void expire(List<Deadline> deadlines, Duration timeout) {
+        deadlines.stream().filter(deadline -> deadline.nanos() == timeout.toNanos()).findFirst().orElseThrow()
+                .future().completeExceptionally(new TimeoutException());
     }
 
     private RealtimeSession newSession(FakeMicrophone microphone) {

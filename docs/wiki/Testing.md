@@ -23,7 +23,7 @@ After giving explicit opt-in for a paid test, use a dedicated restricted key in 
 
 ## RVL-004 push-to-talk verification
 
-In a ready session, hold the microphone with the primary mouse button, or focus it and hold Space or Enter. The recording label shows elapsed captured audio and the meter shows the current input level. Release to send an in-memory take of up to 30 seconds. Escape or loss of focus during the hold discards the take. The voice turn appears as “Voice input” and receives a text reply. Playback and transcripts are tracked in [RVL-005](../../issues/11).
+In a ready session, hold the microphone with the primary mouse button, or focus it and hold Space or Enter. The recording label shows elapsed captured audio and the meter shows the current input level. Release to send an in-memory take of up to 30 seconds. Escape or loss of focus during the hold discards the take. The voice turn appears as “Voice input” and receives a text reply. Playback and transcripts are tracked in [RVL-005](https://github.com/stevdrey/realtime-voice-lab/issues/11).
 
 ```sh
 env -u OPENAI_API_KEY -u DISPLAY -u WAYLAND_DISPLAY ./gradlew --offline test --tests '*RealtimeAudioInputTest' --tests '*RealtimeVoiceLabAppTest'

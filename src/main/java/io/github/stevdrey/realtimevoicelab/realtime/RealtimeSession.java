@@ -28,6 +28,7 @@ public final class RealtimeSession implements AutoCloseable {
     static final Duration RESPONSE_CORRELATION_TIMEOUT = Duration.ofSeconds(15);
     static final Duration CANCEL_TIMEOUT = Duration.ofSeconds(5);
     static final Duration MAX_AUDIO_TIME = Duration.ofSeconds(30);
+    static final Duration OPEN_TIMEOUT = Duration.ofSeconds(5);
     static final int MAX_INPUT_AUDIO_BYTES = (int) (SessionProtocol.PCM_BYTES_PER_SECOND * MAX_AUDIO_TIME.toSeconds());
     // Ignore very short taps instead of asking the provider to commit a sub-100 ms buffer.
     static final int MIN_INPUT_AUDIO_BYTES = SessionProtocol.PCM_BYTES_PER_SECOND / 10;
@@ -102,7 +103,7 @@ public final class RealtimeSession implements AutoCloseable {
         this(transport, statusChanged, setupTimeout, closeTimeout, nanoTime, scheduleTimeout, new MicrophoneCapture());
     }
 
-    private RealtimeSession(RealtimeTransport transport, Runnable statusChanged, Duration setupTimeout,
+    RealtimeSession(RealtimeTransport transport, Runnable statusChanged, Duration setupTimeout,
                             Duration closeTimeout, LongSupplier nanoTime,
                             LongFunction<CompletableFuture<Void>> scheduleTimeout, MicrophoneCapture microphone) {
         this.transport = transport;
@@ -196,6 +197,14 @@ public final class RealtimeSession implements AutoCloseable {
         attempt.input = input;
         captureWorker = input;
         attempt.micState = MicState.OPENING;
+        // A device open cannot be interrupted. Detach the take so text and cancel are not blocked behind it.
+        var openDeadline = scheduleTimeout.apply(OPEN_TIMEOUT.toNanos());
+        input.openDeadline = openDeadline;
+        openDeadline.whenComplete((ignored, error) -> {
+            if (error != null) {
+                openExpired(attempt, input);
+            }
+        });
         Thread.ofVirtual().name("rvl-microphone").start(() -> {
             var result = MicrophoneCapture.Result.UNAVAILABLE;
             try {
@@ -227,7 +236,16 @@ public final class RealtimeSession implements AutoCloseable {
         statusChanged.run();
     }
 
+    private synchronized void openExpired(Attempt attempt, AudioInput input) {
+        if (active == attempt && attempt.input == input && !input.started && withinSessionTime(attempt)) {
+            resetInput(attempt, MicState.UNAVAILABLE);
+            statusChanged.run();
+        }
+    }
+
     private synchronized void captureStarted(Attempt attempt, AudioInput input) {
+        input.started = true;
+        input.openDeadline.complete(null);
         if (active == attempt && attempt.input == input && !input.stop && withinSessionTime(attempt)) {
             attempt.micState = MicState.RECORDING;
             statusChanged.run();
@@ -263,12 +281,15 @@ public final class RealtimeSession implements AutoCloseable {
 
     private synchronized void captureEnded(Attempt attempt, AudioInput input, MicrophoneCapture.Result result) {
         captureWorker = null;
+        input.openDeadline.complete(null);
         if (active == attempt && attempt.input == input && withinSessionTime(attempt)) {
             if (input.discard) {
                 resetInput(attempt, MicState.IDLE);
             } else if (result == MicrophoneCapture.Result.UNSUPPORTED) {
                 resetInput(attempt, MicState.UNSUPPORTED);
-            } else if (result == MicrophoneCapture.Result.UNAVAILABLE) {
+            } else if (result == MicrophoneCapture.Result.UNAVAILABLE
+                    && !(input.released && input.size >= MIN_INPUT_AUDIO_BYTES)) {
+                // A device error after release still sends the audio already captured.
                 resetInput(attempt, MicState.UNAVAILABLE);
             } else if (input.released) {
                 submitAudio(attempt, input);
@@ -286,7 +307,6 @@ public final class RealtimeSession implements AutoCloseable {
         }
         input.pcm.flip();
         attempt.micState = MicState.SENDING;
-        startDeadline(attempt, ITEM_ACK_TIMEOUT, Failure.ITEM_ACK_TIMEOUT);
         advanceInput(attempt);
     }
 
@@ -325,11 +345,18 @@ public final class RealtimeSession implements AutoCloseable {
                 } else if (input.pcm.hasRemaining()) {
                     var chunk = new byte[Math.min(input.pcm.remaining(), AUDIO_APPEND_BYTES)];
                     input.pcm.get(chunk);
-                    writeTurnEvent(attempt, protocol.appendAudio(input.eventPrefix + ++input.sentChunks, chunk));
+                    // Bound each write rather than the whole upload, so long takes on slow links can finish.
+                    startDeadline(attempt, ITEM_ACK_TIMEOUT, Failure.ITEM_ACK_TIMEOUT);
+                    if (active == attempt) {
+                        writeTurnEvent(attempt, protocol.appendAudio(input.eventPrefix + ++input.sentChunks, chunk));
+                    }
                 } else {
                     input.pcm = null;
                     input.committing = true;
-                    writeTurnEvent(attempt, protocol.commitAudio(input.eventPrefix + "commit"));
+                    startDeadline(attempt, ITEM_ACK_TIMEOUT, Failure.ITEM_ACK_TIMEOUT);
+                    if (active == attempt) {
+                        writeTurnEvent(attempt, protocol.commitAudio(input.eventPrefix + "commit"));
+                    }
                 }
             }
         } finally {
@@ -929,6 +956,8 @@ public final class RealtimeSession implements AutoCloseable {
         private final long number;
         private final String eventPrefix;
         private volatile boolean stop;
+        private CompletableFuture<Void> openDeadline;
+        private boolean started;
         // Accessed under the session monitor. The byte FIFO is filled before it is drained.
         private ByteBuffer pcm;
         private int size;

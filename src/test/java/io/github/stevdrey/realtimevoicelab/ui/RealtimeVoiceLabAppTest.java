@@ -483,7 +483,8 @@ class RealtimeVoiceLabAppTest {
             assertEquals(4, socket.writes.size());
 
             onFxThread(() -> {
-                stage.getScene().lookup("#mic-button").requestFocus();
+                // Keyboard focus must stay on the microphone after the take ends.
+                assertTrue(stage.getScene().lookup("#mic-button").isFocused());
                 new Robot().keyPress(KeyCode.SPACE);
                 return null;
             });
