@@ -1,0 +1,233 @@
+.root {
+    -rv-app: #11151e;
+    -rv-workspace: #151923;
+    -rv-panel: #1e2430;
+    -rv-control: #272d3a;
+    -rv-divider: #343b49;
+    -rv-text: #f3f4f6;
+    -rv-secondary: #d1d5db;
+    -rv-muted: #9ca3af;
+    -rv-accent: #818cf8;
+    -rv-heading: #a5b4fc;
+    -rv-primary: #6366f1;
+    -rv-primary-hover: #5558db;
+
+    -fx-background-color: -rv-app;
+    -fx-font-family: "System";
+    -fx-font-size: 14px;
+    -fx-accent: -rv-accent;
+    -fx-focus-color: -rv-accent;
+    -fx-faint-focus-color: transparent;
+}
+
+.app-shell {
+    -fx-padding: 16;
+    -fx-spacing: 12;
+}
+
+.app-header {
+    -fx-alignment: center-left;
+    -fx-padding: 0 4 0 4;
+}
+
+.workspace {
+    -fx-background-color: -rv-workspace;
+    -fx-background-radius: 12;
+    -fx-padding: 16;
+    -fx-spacing: 12;
+}
+
+.label {
+    -fx-text-fill: -rv-text;
+}
+
+.app-title {
+    -fx-font-size: 20px;
+    -fx-font-weight: 600;
+}
+
+.caption, .empty-message {
+    -fx-text-fill: -rv-muted;
+}
+
+.caption, .session-status {
+    -fx-font-size: 12px;
+}
+
+.status-dot {
+    -fx-background-color: -rv-muted;
+    -fx-background-radius: 999;
+    -fx-pref-width: 8;
+    -fx-pref-height: 8;
+    -fx-max-height: 8;
+}
+
+.session-status {
+    -fx-text-fill: -rv-secondary;
+    -fx-font-weight: 600;
+}
+
+.combo-box {
+    -fx-background-color: -rv-control;
+    -fx-background-radius: 8;
+    -fx-font-size: 12px;
+}
+
+.combo-box > .list-cell, .combo-box-popup .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: -rv-secondary;
+}
+
+.combo-box > .arrow-button > .arrow {
+    -fx-background-color: -rv-secondary;
+}
+
+.combo-box-popup .list-view {
+    -fx-background-color: -rv-control;
+}
+
+.combo-box-popup .list-cell:hover, .combo-box-popup .list-cell:selected {
+    -fx-background-color: -rv-divider;
+}
+
+.split-pane {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.split-pane > .split-pane-divider {
+    -fx-background-color: -rv-divider;
+    -fx-background-insets: 0 5 0 5;
+    -fx-padding: 0 6 0 6;
+}
+
+.lab-panel {
+    -fx-background-color: -rv-panel;
+    -fx-background-radius: 9;
+    -fx-border-color: -rv-divider;
+    -fx-border-radius: 9;
+    -fx-padding: 12;
+}
+
+.panel-title {
+    -fx-text-fill: -rv-heading;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+
+.scroll-pane, .scroll-pane > .viewport, .scroll-pane > .corner,
+.list-view, .lab-panel .list-cell {
+    -fx-background-color: -rv-panel;
+}
+
+.scroll-pane, .list-view {
+    -fx-background-insets: 0;
+    -fx-border-color: transparent;
+    -fx-border-radius: 4;
+}
+
+.combo-box:focus-visible, .scroll-pane:focus-visible, .list-view:focus-visible {
+    -fx-border-color: -rv-accent;
+}
+
+.scroll-bar, .scroll-bar > .increment-button, .scroll-bar > .decrement-button {
+    -fx-background-color: -rv-panel;
+}
+
+.scroll-bar > .thumb {
+    -fx-background-color: -rv-divider;
+}
+
+.scroll-bar .increment-arrow, .scroll-bar .decrement-arrow {
+    -fx-background-color: -rv-muted;
+}
+
+.waveform {
+    -fx-min-height: 52;
+    -fx-pref-height: 52;
+    -fx-padding: 0 12 0 12;
+}
+
+.waveform-baseline {
+    -fx-background-color: -rv-accent;
+    -fx-pref-height: 4;
+    -fx-max-height: 4;
+}
+
+.icon {
+    -fx-fill: transparent;
+    -fx-stroke: -rv-secondary;
+    -fx-stroke-width: 1.7;
+    -fx-stroke-line-cap: round;
+    -fx-stroke-line-join: round;
+}
+
+.app-header .icon {
+    -fx-stroke: -rv-accent;
+}
+
+.round-control, .mic-button {
+    -fx-background-radius: 999;
+    -fx-background-insets: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 2;
+    -fx-border-radius: 999;
+    -fx-padding: 0;
+}
+
+.round-control {
+    -fx-background-color: -rv-control;
+    -fx-min-width: 40;
+    -fx-min-height: 40;
+    -fx-pref-width: 40;
+    -fx-pref-height: 40;
+}
+
+.mic-button {
+    -fx-background-color: -rv-primary;
+    -fx-min-width: 60;
+    -fx-min-height: 60;
+    -fx-pref-width: 60;
+    -fx-pref-height: 60;
+}
+
+.mic-button .icon {
+    -fx-stroke: white;
+}
+
+.round-control:hover, .round-control:pressed {
+    -fx-background-color: -rv-divider;
+}
+
+.mic-button:hover, .mic-button:pressed {
+    -fx-background-color: -rv-primary-hover;
+}
+
+.round-control:focus-visible, .mic-button:focus-visible {
+    -fx-border-color: -rv-accent;
+}
+
+.round-control:disabled, .combo-box:disabled {
+    -fx-opacity: 0.72;
+    -fx-background-color: -rv-control;
+}
+
+.combo-box:disabled > .list-cell {
+    -fx-text-fill: -rv-text;
+    -fx-opacity: 1;
+}
+
+.mic-button:disabled {
+    -fx-opacity: 0.62;
+    -fx-background-color: -rv-primary-hover;
+}
+
+.metrics {
+    -fx-border-color: -rv-divider transparent transparent transparent;
+    -fx-padding: 8 0 0 0;
+}
+
+.metric-value {
+    -fx-font-size: 19px;
+    -fx-font-weight: 600;
+}
