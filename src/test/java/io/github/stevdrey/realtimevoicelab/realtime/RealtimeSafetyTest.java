@@ -13,8 +13,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.CANCEL_TIMEOUT;
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.DEFAULT_MODEL;
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.Failure;
+import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.ITEM_ACK_TIMEOUT;
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.RESPONSE_CORRELATION_TIMEOUT;
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.State;
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TurnState;
@@ -123,6 +125,141 @@ class RealtimeSafetyTest {
     }
 
     @Test
+    void abortsTheUnacknowledgedItemAndIgnoresLateEventsAfterReconnect() {
+        var socket = connect();
+        socket.ready();
+        assertTrue(session.sendText("Synthetic input"));
+        socket.text("""
+                {"type":"error","error":{"message":"Synthetic error without an event ID"}}
+                """, true);
+
+        clock.advance(ITEM_ACK_TIMEOUT.minusNanos(1));
+        assertEquals(TurnState.WAITING, session.workspace().turns().getLast().state());
+        assertFalse(session.workspace().canSend());
+        assertTrue(session.workspace().canCancel());
+        clock.advance(Duration.ofNanos(1));
+
+        assertLimit(Failure.ITEM_ACK_TIMEOUT);
+        assertTrue(socket.aborted);
+        assertEquals(2, socket.writes.size());
+        assertEquals(0, clock.pendingTimers());
+        connect().ready();
+        acknowledgeTextItem(socket);
+        assertEquals(2, socket.writes.size());
+        assertTrue(session.workspace().canSend());
+    }
+
+    @Test
+    void waitsForTheItemWriteBeforeRequestingTheResponseAndReplacingItsDeadline() {
+        var socket = connect();
+        socket.ready();
+        var itemWrite = new CompletableFuture<WebSocket>();
+        socket.nextTurnWrite = itemWrite;
+        assertTrue(session.sendText("Synthetic input"));
+        acknowledgeTextItem(socket);
+        clock.advance(ITEM_ACK_TIMEOUT.minusNanos(1));
+        assertEquals(2, socket.writes.size());
+        assertEquals(2, clock.pendingTimers());
+
+        itemWrite.complete(socket);
+        assertEquals(3, socket.writes.size());
+        assertEquals(2, clock.pendingTimers());
+        clock.advance(Duration.ofNanos(1));
+        assertEquals(State.READY, session.status().state());
+        identifyTextResponse(socket);
+        assertEquals(1, clock.pendingTimers());
+        clock.advance(RESPONSE_CORRELATION_TIMEOUT);
+        assertEquals(State.READY, session.status().state());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void abortsAnUnconfirmedCancellationEvenWhenTheResponseIdArrivesLate(boolean identifyAfterCancel) {
+        var socket = connect();
+        socket.ready();
+        requestTextResponse(socket);
+        if (!identifyAfterCancel) {
+            identifyTextResponse(socket);
+        }
+        session.cancelText();
+
+        clock.advance(CANCEL_TIMEOUT.minusNanos(1));
+        if (identifyAfterCancel) {
+            identifyTextResponse(socket);
+        }
+        assertEquals(4, socket.writes.size());
+        assertTrue(socket.writes.getLast().contains("\"response_id\":\"reply\""));
+        assertFalse(session.sendText("Overlapping turn"));
+        assertFalse(session.workspace().canCancel());
+        clock.advance(Duration.ofNanos(1));
+
+        assertLimit(Failure.CANCEL_TIMEOUT);
+        assertTrue(socket.aborted);
+        assertEquals(0, clock.pendingTimers());
+        connect().ready();
+        responseDone(socket, "reply");
+        assertTrue(session.workspace().canSend());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void keepsTheCancellationWriteBoundedWhenTheTerminalEventArrivesFirst(boolean writeCompletes) {
+        var socket = connect();
+        socket.ready();
+        requestTextResponse(socket);
+        identifyTextResponse(socket);
+        var cancelWrite = new CompletableFuture<WebSocket>();
+        socket.nextTurnWrite = cancelWrite;
+        session.cancelText();
+        socket.text("""
+                {"type":"response.done","response":{"id":"reply","status":"cancelled"}}
+                """, true);
+        assertEquals(TurnState.CANCELLED, session.workspace().turns().getLast().state());
+        assertFalse(session.workspace().canSend());
+
+        clock.advance(CANCEL_TIMEOUT.minusNanos(1));
+        if (writeCompletes) {
+            cancelWrite.complete(socket);
+            assertTrue(session.workspace().canSend());
+        }
+        clock.advance(Duration.ofNanos(1));
+        if (writeCompletes) {
+            assertEquals(State.READY, session.status().state());
+            assertEquals(1, clock.pendingTimers());
+        } else {
+            assertLimit(Failure.CANCEL_TIMEOUT);
+            assertTrue(socket.aborted);
+        }
+    }
+
+    @Test
+    void retriesRejectedCancellationWhileThePreviousWriteIsStillPending() {
+        var socket = connect();
+        socket.ready();
+        requestTextResponse(socket);
+        identifyTextResponse(socket);
+        var cancelWrite = new CompletableFuture<WebSocket>();
+        socket.nextTurnWrite = cancelWrite;
+        session.cancelText();
+        clock.advance(CANCEL_TIMEOUT.minusNanos(1));
+        socket.text("""
+                {"type":"error","error":{"event_id":"rvl-1-cancel-1","message":"Synthetic rejection"}}
+                """, true);
+        assertTrue(session.workspace().canCancel());
+        session.cancelText();
+        assertEquals(4, socket.writes.size());
+        cancelWrite.complete(socket);
+        assertTrue(socket.writes.getLast().contains("rvl-1-cancel-2"));
+
+        clock.advance(Duration.ofNanos(1));
+        assertEquals(TurnState.CANCELLING, session.workspace().turns().getLast().state());
+        responseDone(socket, "reply");
+        clock.advance(CANCEL_TIMEOUT);
+        assertTrue(session.workspace().canSend());
+        assertEquals(1, clock.pendingTimers());
+    }
+
+    @Test
     void abortsTheUnknownResponseAfterTheCorrelationDeadlineAndAllowsReconnect() {
         var socket = connect();
         socket.ready();
@@ -131,11 +268,10 @@ class RealtimeSafetyTest {
                 {"type":"response.created","response":{"id":"unknown"}}
                 """, true);
         responseDone(socket, "unknown");
-        session.cancelText();
 
         clock.advance(RESPONSE_CORRELATION_TIMEOUT.minusNanos(1));
         assertEquals(State.READY, session.status().state());
-        assertEquals(TurnState.CANCELLING, session.workspace().turns().getLast().state());
+        assertEquals(TurnState.WAITING, session.workspace().turns().getLast().state());
         assertEquals(3, socket.writes.size());
         clock.advance(Duration.ofNanos(1));
 
@@ -336,8 +472,19 @@ class RealtimeSafetyTest {
 
     private void requestTextResponse(FakeTransport.Socket socket) {
         assertTrue(session.sendText("Synthetic input"));
+        acknowledgeTextItem(socket);
+    }
+
+    private void acknowledgeTextItem(FakeTransport.Socket socket) {
         socket.text("""
                 {"type":"conversation.item.added","item":{"id":"rvl-1","type":"message","role":"user"}}
+                """, true);
+    }
+
+    private void identifyTextResponse(FakeTransport.Socket socket) {
+        socket.text("""
+                {"type":"response.created","response":{"id":"reply","status":"in_progress",
+                 "metadata":{"rvl_turn":"rvl-1"}}}
                 """, true);
     }
 

@@ -136,6 +136,24 @@ class RealtimeVoiceLabAppTest {
                 assertEquals(RealtimeSession.MAX_INPUT_CHARS, composer.getText().length());
                 assertEquals(RealtimeSession.MAX_INPUT_CHARS, composer.getCaretPosition());
                 composer.clear();
+                var emoji = "😀";
+                var oneUnitLeft = "x".repeat(RealtimeSession.MAX_INPUT_CHARS - 1);
+                composer.insertText(0, oneUnitLeft + emoji);
+                assertEquals(oneUnitLeft, composer.getText());
+                assertEquals(oneUnitLeft.length(), composer.getCaretPosition());
+
+                var exactFit = "x".repeat(RealtimeSession.MAX_INPUT_CHARS - emoji.length()) + emoji;
+                composer.selectAll();
+                composer.replaceSelection(exactFit);
+                assertEquals(exactFit, composer.getText());
+                assertEquals(exactFit.length(), composer.getCaretPosition());
+
+                composer.selectRange(1, 2);
+                composer.replaceSelection(emoji);
+                assertEquals(exactFit.substring(0, 1) + exactFit.substring(2), composer.getText());
+                assertEquals(1, composer.getCaretPosition());
+
+                composer.clear();
                 composer.setText("Offline greeting");
                 assertFalse(send.isDisabled());
                 send.fire();

@@ -112,8 +112,12 @@ public final class WorkspaceController {
             if (overflow > text.length()) {
                 return null;
             }
-            // Keep as much of an oversized paste as fits.
-            var kept = text.substring(0, text.length() - overflow);
+            // Keep as much of an oversized paste as fits without splitting a supplementary character.
+            int end = text.length() - overflow;
+            if (end > 0 && Character.isSurrogatePair(text.charAt(end - 1), text.charAt(end))) {
+                end--;
+            }
+            var kept = text.substring(0, end);
             change.setText(kept);
             int caret = change.getRangeStart() + kept.length();
             change.selectRange(caret, caret);
@@ -273,7 +277,9 @@ public final class WorkspaceController {
             case AUTHENTICATION -> "Authentication rejected";
             case CONNECTION -> "Connection failed";
             case TIMEOUT -> "Connection timed out";
+            case ITEM_ACK_TIMEOUT -> "Message was not acknowledged. Reconnect to try again.";
             case RESPONSE_TIMEOUT -> "Response could not be identified. Reconnect to try again.";
+            case CANCEL_TIMEOUT -> "Cancellation timed out. Reconnect to try again.";
             case PROTOCOL -> "Invalid Realtime event";
             case PROVIDER -> "Realtime session failed";
             case REMOTE_CLOSE -> "Server closed the session";

@@ -23,7 +23,9 @@ public final class RealtimeSession implements AutoCloseable {
     public static final int MAX_INPUT_CHARS = 4_000;
     private static final int MAX_HISTORY_TURNS = 60;
     static final Duration MAX_SESSION_TIME = Duration.ofMinutes(5);
+    static final Duration ITEM_ACK_TIMEOUT = Duration.ofSeconds(15);
     static final Duration RESPONSE_CORRELATION_TIMEOUT = Duration.ofSeconds(15);
+    static final Duration CANCEL_TIMEOUT = Duration.ofSeconds(5);
     static final Duration MAX_AUDIO_TIME = Duration.ofSeconds(30);
     static final int MAX_TOOL_CALLS = 10;
     static final int MAX_AUDIO_RESPONSES = 4;
@@ -33,7 +35,8 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     public enum Failure {
-        MISSING_CREDENTIAL, AUTHENTICATION, CONNECTION, TIMEOUT, RESPONSE_TIMEOUT, PROTOCOL, PROVIDER, REMOTE_CLOSE,
+        MISSING_CREDENTIAL, AUTHENTICATION, CONNECTION, TIMEOUT, ITEM_ACK_TIMEOUT, RESPONSE_TIMEOUT, CANCEL_TIMEOUT,
+        PROTOCOL, PROVIDER, REMOTE_CLOSE,
         SESSION_LIMIT, AUDIO_LIMIT, OUTPUT_LIMIT, TOOL_LIMIT
     }
 
@@ -107,7 +110,10 @@ public final class RealtimeSession implements AutoCloseable {
             history.removeFirst();
         }
         history.addLast(turn);
-        writeTurnEvent(attempt, protocol.createItem(turn));
+        startDeadline(attempt, ITEM_ACK_TIMEOUT, Failure.ITEM_ACK_TIMEOUT);
+        if (active == attempt) {
+            writeTurnEvent(attempt, protocol.createItem(turn));
+        }
         statusChanged.run();
         return true;
     }
@@ -119,7 +125,12 @@ public final class RealtimeSession implements AutoCloseable {
             return;
         }
         attempt.turn.state = TurnState.CANCELLING;
-        advanceTurn(attempt);
+        if (attempt.turn.responseRequested) {
+            startDeadline(attempt, CANCEL_TIMEOUT, Failure.CANCEL_TIMEOUT);
+        }
+        if (active == attempt) {
+            advanceTurn(attempt);
+        }
         statusChanged.run();
     }
 
@@ -268,6 +279,7 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private void startDeadline(Attempt attempt, Duration timeout, Failure onExpiry) {
+        clearPhaseDeadline(attempt);
         var deadline = scheduleTimeout.apply(timeout.toNanos());
         attempt.phaseDeadline = deadline;
         deadline.whenComplete((ignored, error) -> {
@@ -495,7 +507,6 @@ public final class RealtimeSession implements AutoCloseable {
                         throw new IOException("Missing Realtime response ID");
                     }
                     turn.responseId = id;
-                    clearPhaseDeadline(attempt);
                     advanceTurn(attempt);
                 }
             }
@@ -526,6 +537,7 @@ public final class RealtimeSession implements AutoCloseable {
         } else if (turn.cancelSent && turn.cancelEventId().equals(eventId)) {
             turn.cancelSent = false;
             turn.state = TurnState.CANCEL_REJECTED;
+            advanceTurn(attempt);
         } else {
             return;
         }
@@ -534,15 +546,25 @@ public final class RealtimeSession implements AutoCloseable {
 
     private void finishTurn(Attempt attempt, TurnState outcome) {
         if (attempt.turn != null) {
-            clearPhaseDeadline(attempt);
+            // A terminal event can arrive before the write completes. Keep that write bounded.
+            if (!attempt.writing) {
+                clearPhaseDeadline(attempt);
+            }
             attempt.turn.finish(outcome);
             attempt.turn = null;
         }
     }
 
     private void advanceTurn(Attempt attempt) {
+        if (attempt.writing) {
+            return;
+        }
         var turn = attempt.turn;
-        if (turn == null || attempt.writing || !withinSessionTime(attempt)) {
+        if (turn == null) {
+            clearPhaseDeadline(attempt);
+            return;
+        }
+        if (!withinSessionTime(attempt)) {
             return;
         }
         if (!turn.responseRequested && turn.state == TurnState.CANCELLING) {
@@ -559,6 +581,8 @@ public final class RealtimeSession implements AutoCloseable {
             turn.cancelSent = true;
             turn.cancelRequests++;
             writeTurnEvent(attempt, protocol.cancelResponse(turn));
+        } else if (turn.responseId != null && turn.state != TurnState.CANCELLING) {
+            clearPhaseDeadline(attempt);
         }
     }
 
