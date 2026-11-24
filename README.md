@@ -20,6 +20,8 @@ The [documentation home](docs/wiki/Home.md) is the canonical, version-controlled
 See [roadmap](docs/wiki/Roadmap.md), [architecture](docs/wiki/Architecture.md), [decisions](docs/wiki/Architecture-Decisions.md), [security](docs/wiki/Security-and-Cost.md) and [testing](docs/wiki/Testing.md).
 
 ## Development
+See the [project agent workflow](.agents/README.md) and the [40-file pull request guard](docs/verification/pr-size-guard.md) for development and review guidance.
+
 Once RVL-001 lands, use the Gradle wrapper to build, test and launch (planned tasks: `./gradlew test`, `./gradlew run`). Do not assume these commands exist yet.
 Set OPENAI_API_KEY in your local process environment only when performing an explicit live test. Never commit it or enter it in a prompt. No API calls are required for offline tests. Use headphones; start with the lowest-cost model and short sessions.
 
