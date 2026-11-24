@@ -12,19 +12,25 @@ public final class FakeSpeaker {
     public static final int BUFFER_BYTES = MicrophoneCapture.BLOCK_BYTES;
     public final List<Device> devices = new CopyOnWriteArrayList<>();
     private final Runnable beforeOpen;
+    private final Runnable beforeStop;
 
     public FakeSpeaker() {
         this(() -> {});
     }
 
     public FakeSpeaker(Runnable beforeOpen) {
+        this(beforeOpen, () -> {});
+    }
+
+    public FakeSpeaker(Runnable beforeOpen, Runnable beforeStop) {
         this.beforeOpen = beforeOpen;
+        this.beforeStop = beforeStop;
     }
 
     public SpeakerPlayback playback() {
         return new SpeakerPlayback(() -> {
             beforeOpen.run();
-            var device = new Device();
+            var device = new Device(beforeStop);
             devices.add(device);
             return device.line();
         });
@@ -32,12 +38,17 @@ public final class FakeSpeaker {
 
     public static final class Device {
         private final ByteArrayOutputStream written = new ByteArrayOutputStream();
+        private final Runnable beforeStop;
         private long framesPlayed;
         private boolean started;
         public volatile boolean stopped;
         public volatile boolean flushed;
         public volatile boolean closed;
         public volatile boolean wroteOnFxThread;
+
+        private Device(Runnable beforeStop) {
+            this.beforeStop = beforeStop;
+        }
 
         private SourceDataLine line() {
             return (SourceDataLine) Proxy.newProxyInstance(getClass().getClassLoader(),
@@ -51,6 +62,7 @@ public final class FakeSpeaker {
                             yield null;
                         }
                         case "stop" -> {
+                            beforeStop.run();
                             stopped = true;
                             yield null;
                         }

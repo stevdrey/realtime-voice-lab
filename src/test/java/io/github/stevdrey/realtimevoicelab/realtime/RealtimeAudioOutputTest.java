@@ -4,6 +4,7 @@ import java.net.http.WebSocket;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 import javax.sound.sampled.LineUnavailableException;
@@ -131,6 +132,47 @@ class RealtimeAudioOutputTest {
     }
 
     @Test
+    void blocksPushToTalkUntilTheSpeakerHasStoppedFlushedAndClosed() throws Exception {
+        var stopping = new CompletableFuture<Void>();
+        var allowStop = new CompletableFuture<Void>();
+        var delayedSpeaker = new FakeSpeaker(() -> {}, () -> {
+            stopping.complete(null);
+            allowStop.join();
+        });
+        var statusChanges = new AtomicInteger();
+        try (var session = new RealtimeSession(transport, statusChanges::incrementAndGet,
+                microphone.microphone(), delayedSpeaker.playback())) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "response-1");
+            var pcm = microphone.block(1);
+            socket.text(audio("response-1", pcm), true);
+            await(() -> !delayedSpeaker.devices.isEmpty()
+                    && delayedSpeaker.devices.getFirst().written().length == pcm.length);
+            var device = delayedSpeaker.devices.getFirst();
+            responseDone(socket, "response-1", "completed");
+            session.cancelTurn();
+            await(stopping::isDone);
+
+            int previousOpens = microphone.opens.get();
+            assertFalse(device.flushed);
+            assertTrue(session.workspace().canSend());
+            assertFalse(session.workspace().microphone().canStart());
+            assertFalse(session.startAudio());
+            assertEquals(previousOpens, microphone.opens.get());
+
+            int previousChanges = statusChanges.get();
+            allowStop.complete(null);
+            await(() -> statusChanges.get() > previousChanges && session.workspace().microphone().canStart());
+            assertTrue(device.flushed);
+            assertTrue(device.closed);
+            assertTrue(session.startAudio());
+            await(() -> microphone.opens.get() == previousOpens + 1);
+        } finally {
+            allowStop.complete(null);
+        }
+    }
+
+    @Test
     void cancellingBeforeResponseDoneFlushesPlaybackAndBlocksSubsequentDeltas() throws Exception {
         try (var session = session(speaker.playback())) {
             var socket = ready(session, TranscriptionModel.OFF);
@@ -170,9 +212,11 @@ class RealtimeAudioOutputTest {
             session.disconnect();
             socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
             var reconnected = ready(session, TranscriptionModel.OFF);
+            assertFalse(session.workspace().microphone().canStart());
             socket.text(audio("response-1", pcm), true);
             unblock.complete(null);
             await(() -> !delayedSpeaker.devices.isEmpty() && delayedSpeaker.devices.getFirst().closed);
+            await(() -> session.workspace().microphone().canStart());
             assertEquals(0, delayedSpeaker.devices.getFirst().written().length);
             assertFalse(reconnected.aborted);
             assertEquals(IDLE, session.workspace().speaker().state());

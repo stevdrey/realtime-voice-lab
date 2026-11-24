@@ -186,7 +186,8 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private boolean canStartAudio(Attempt attempt) {
-        return canStartTurn(attempt) && attempt.inputConfigured && captureWorker == null;
+        // Stopped playback can still own the speaker while its worker flushes and closes the line.
+        return canStartTurn(attempt) && attempt.inputConfigured && captureWorker == null && playbackWorker == null;
     }
 
     public synchronized boolean sendText(String input) {
@@ -964,6 +965,8 @@ public final class RealtimeSession implements AutoCloseable {
                 stopPlayback(attempt);
                 statusChanged.run();
             }
+        } else if (status.state() == State.READY && canStartAudio(active)) {
+            statusChanged.run();
         }
         startPlaybackIfAvailable();
     }
