@@ -2,7 +2,7 @@
 
 A small JavaFX desktop playground for learning OpenAI Realtime API directly from the JVM.
 
-**Status:** the desktop opens disconnected. Connect and Disconnect manage a GA Realtime session. Conversation, audio, the event inspector and metrics are under development. See [RVL-002](../../issues/8).
+**Status:** the desktop opens disconnected. Connect and Disconnect manage a GA Realtime session. The text composer supports multi-turn conversation, streaming replies and cancellation. Audio, the event inspector and metrics are under development. See [RVL-003](../../issues/9).
 
 ## Goals
 - Inspect GA WebSocket events and learn the session lifecycle.
@@ -41,5 +41,7 @@ Edit [workspace.fxml](src/main/resources/io/github/stevdrey/realtimevoicelab/ui/
 - Check the selected input and output in your desktop sound settings. `arecord -l` and `aplay -l` from `alsa-utils` can list ALSA capture and playback hardware. An audio device is unnecessary for the current shell and tests.
 
 Set `OPENAI_API_KEY` in your local process environment only for an explicitly authorized live test after session limits are in place. Keep the key out of commits and prompts. For those tests, use headphones, the lowest-cost model, and short sessions.
+
+For the text-only walkthrough, see the [manual text smoke in the testing guide](docs/wiki/Testing.md#rvl-003-manual-text-smoke).
 
 [Backlog](../../issues) · [Official Realtime guide](https://developers.openai.com/api/docs/guides/realtime)

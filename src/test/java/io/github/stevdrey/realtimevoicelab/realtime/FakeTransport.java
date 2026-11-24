@@ -28,6 +28,9 @@ public final class FakeTransport implements RealtimeTransport {
         public final CompletableFuture<WebSocket> textWrite = new CompletableFuture<>();
         CompletableFuture<WebSocket> cancelWrite = CompletableFuture.completedFuture(this);
         CompletableFuture<WebSocket> closeWrite = CompletableFuture.completedFuture(this);
+        CompletableFuture<WebSocket> nextTurnWrite = CompletableFuture.completedFuture(this);
+        private CompletableFuture<WebSocket> pendingWrite = textWrite;
+        private boolean closeCancelWritten;
         public final List<String> writes = new ArrayList<>();
         public int demand;
         public int closeWrites;
@@ -86,17 +89,27 @@ public final class FakeTransport implements RealtimeTransport {
                 writes.add(data.toString());
                 return textWrite;
             }
-            if (!last || writes.size() != 1 || !textWrite.isDone()
-                    || !SessionProtocol.CANCEL_RESPONSE.contentEquals(data)) {
-                throw new AssertionError("Unexpected text write");
+            if (!last || !pendingWrite.isDone()) {
+                throw new AssertionError("Unexpected or overlapping text write");
+            }
+            if (closeCancelWritten) {
+                // The generic cancel precedes close, so nothing else may follow it.
+                throw new AssertionError("Text write after the close cancellation");
             }
             writes.add(data.toString());
-            return cancelWrite;
+            if (SessionProtocol.CANCEL_RESPONSE.contentEquals(data)) {
+                closeCancelWritten = true;
+                pendingWrite = cancelWrite;
+            } else {
+                pendingWrite = nextTurnWrite;
+                nextTurnWrite = CompletableFuture.completedFuture(this);
+            }
+            return pendingWrite;
         }
 
         @Override
         public CompletableFuture<WebSocket> sendClose(int statusCode, String reason) {
-            if (!textWrite.isDone() || (writes.size() > 1 && !cancelWrite.isDone())
+            if (!pendingWrite.isDone()
                     || statusCode != NORMAL_CLOSURE || !reason.isEmpty()) {
                 throw new AssertionError("Unexpected or overlapping close write");
             }

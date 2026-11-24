@@ -1,6 +1,7 @@
 package io.github.stevdrey.realtimevoicelab.realtime;
 
 import java.io.IOException;
+import java.util.StringJoiner;
 
 import com.fasterxml.jackson.core.Base64Variants;
 import com.fasterxml.jackson.core.JsonFactory;
@@ -10,6 +11,7 @@ import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 final class SessionProtocol {
     static final int MAX_MESSAGE_CHARS = 256 * 1024;
@@ -18,6 +20,7 @@ final class SessionProtocol {
     private static final int PCM_SAMPLE_RATE = 24_000;
     static final int PCM_BYTES_PER_SECOND = PCM_SAMPLE_RATE * Short.BYTES;
     static final String CANCEL_RESPONSE = "{\"type\":\"response.cancel\"}";
+    static final String TURN_METADATA = "rvl_turn";
 
     private final JsonFactory factory = JsonFactory.builder()
             .streamReadConstraints(StreamReadConstraints.builder().maxNestingDepth(32).build())
@@ -40,7 +43,50 @@ final class SessionProtocol {
         return update.toString();
     }
 
-    // Streams the event so large payloads such as audio deltas are skipped rather than materialized.
+    String createItem(TextTurn turn) {
+        var event = command("conversation.item.create", turn.itemEventId());
+        event.putObject("item").put("id", turn.id).put("type", "message").put("role", "user")
+                .putArray("content").addObject().put("type", "input_text").put("text", turn.input);
+        return event.toString();
+    }
+
+    String createResponse(TextTurn turn) {
+        var event = command("response.create", turn.responseEventId());
+        var response = event.putObject("response").put("max_output_tokens", MAX_OUTPUT_TOKENS);
+        response.putArray("output_modalities").add("text");
+        response.putObject("metadata").put(TURN_METADATA, turn.id);
+        return event.toString();
+    }
+
+    String cancelResponse(TextTurn turn) {
+        return command("response.cancel", turn.cancelEventId()).put("response_id", turn.responseId).toString();
+    }
+
+    private ObjectNode command(String type, String id) {
+        return mapper.createObjectNode().put("type", type).put("event_id", id);
+    }
+
+    JsonNode textEvent(String message) throws IOException {
+        return mapper.readTree(message);
+    }
+
+    String terminalText(JsonNode response) {
+        var text = new StringJoiner("\n");
+        boolean hasText = false;
+        for (var item : response.path("output")) {
+            if ("message".equals(item.path("type").textValue()) && "assistant".equals(item.path("role").textValue())) {
+                for (var part : item.path("content")) {
+                    if ("output_text".equals(part.path("type").textValue()) && part.path("text").isTextual()) {
+                        text.add(part.path("text").textValue());
+                        hasText = true;
+                    }
+                }
+            }
+        }
+        return hasText ? text.toString() : null;
+    }
+
+    // Read lifecycle fields and stream payloads without building a tree for every event.
     Event parse(String message) throws IOException {
         String type = null;
         String sessionType = null;
@@ -49,6 +95,8 @@ final class SessionProtocol {
         boolean pcmOutput = false;
         String responseId = null;
         String delta = null;
+        int outputIndex = -1;
+        int contentIndex = -1;
         try (var parser = factory.createParser(message)) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new IOException("Invalid Realtime event");
@@ -63,6 +111,10 @@ final class SessionProtocol {
                 } else if ("delta".equals(field) && value == JsonToken.VALUE_STRING) {
                     // The type may follow the delta, so decoding waits until the event is known.
                     delta = parser.getText();
+                } else if ("output_index".equals(field) && value == JsonToken.VALUE_NUMBER_INT) {
+                    outputIndex = partIndex(parser);
+                } else if ("content_index".equals(field) && value == JsonToken.VALUE_NUMBER_INT) {
+                    contentIndex = partIndex(parser);
                 } else if ("session".equals(field) && value == JsonToken.START_OBJECT) {
                     while (parser.nextToken() == JsonToken.FIELD_NAME) {
                         var sessionField = parser.currentName();
@@ -95,12 +147,18 @@ final class SessionProtocol {
                     throw new IOException("Invalid session type");
                 }
                 yield new Event(type, requiredText(sessionId),
-                        pcmOutput && outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS, null, -1);
+                        pcmOutput && outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS, null, -1, null);
             }
             case "response.output_audio.delta" ->
-                    new Event(type, null, false, requiredText(responseId), decodedLength(delta));
-            default -> new Event(type, null, false, null, -1);
+                    new Event(type, null, false, requiredText(responseId), decodedLength(delta), null);
+            case "response.output_text.delta" -> new Event(type, null, false, requiredText(responseId), -1,
+                    new TextDelta(outputIndex, contentIndex, delta));
+            default -> new Event(type, null, false, null, -1, null);
         };
+    }
+
+    private int partIndex(JsonParser parser) throws IOException {
+        return parser.getNumberType() == JsonParser.NumberType.INT ? parser.getIntValue() : -1;
     }
 
     private boolean readSupportedOutputFormat(JsonParser parser) throws IOException {
@@ -127,52 +185,6 @@ final class SessionProtocol {
         }
     }
 
-    ResponseDone responseDone(String message) throws IOException {
-        try (var parser = factory.createParser(message)) {
-            parser.nextToken();
-            while (parser.nextToken() == JsonToken.FIELD_NAME) {
-                var field = parser.currentName();
-                var value = parser.nextToken();
-                if ("response".equals(field) && value == JsonToken.START_OBJECT) {
-                    return readCompletedResponse(parser);
-                }
-                parser.skipChildren();
-            }
-        }
-        throw new IOException("Missing completed Realtime response");
-    }
-
-    private ResponseDone readCompletedResponse(JsonParser parser) throws IOException {
-        String id = null;
-        String status = null;
-        String reason = null;
-        while (parser.nextToken() == JsonToken.FIELD_NAME) {
-            var field = parser.currentName();
-            var value = parser.nextToken();
-            switch (field) {
-                case "id" -> id = textValue(parser, value);
-                case "status" -> status = textValue(parser, value);
-                case "status_details" -> {
-                    if (value == JsonToken.START_OBJECT) {
-                        while (parser.nextToken() == JsonToken.FIELD_NAME) {
-                            var detail = parser.currentName();
-                            var detailValue = parser.nextToken();
-                            if ("reason".equals(detail)) {
-                                reason = textValue(parser, detailValue);
-                            } else {
-                                parser.skipChildren();
-                            }
-                        }
-                    } else {
-                        parser.skipChildren();
-                    }
-                }
-                default -> parser.skipChildren();
-            }
-        }
-        return new ResponseDone(requiredText(id), "incomplete".equals(status) && "max_output_tokens".equals(reason));
-    }
-
     private String textValue(JsonParser parser, JsonToken token) throws IOException {
         if (token == JsonToken.VALUE_STRING) {
             return parser.getText();
@@ -189,9 +201,9 @@ final class SessionProtocol {
     }
 
     record Event(String type, String sessionId, boolean outputConfigurationConfirmed, String responseId,
-                 int audioBytes) {
+                 int audioBytes, TextDelta textDelta) {
     }
 
-    record ResponseDone(String id, boolean outputLimitReached) {
+    record TextDelta(int outputIndex, int contentIndex, String text) {
     }
 }
