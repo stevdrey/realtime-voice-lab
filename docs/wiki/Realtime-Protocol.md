@@ -1,12 +1,14 @@
 # Realtime protocol (GA)
 
-Reference checked 2026-11-23: [Realtime conversations](https://developers.openai.com/api/docs/guides/realtime-conversations), [GA migration](https://developers.openai.com/api/docs/guides/realtime), [model](https://developers.openai.com/api/docs/models/gpt-realtime-2.1-mini). Re-check schemas during implementation. This is a proposed contract, not an implemented client.
+The session lifecycle is implemented in RVL-002. The text, audio, tools and usage notes below describe later work. See [Realtime conversations](https://developers.openai.com/api/docs/guides/realtime-conversations), [Realtime WebSockets](https://developers.openai.com/api/docs/guides/realtime-websocket) and the [default model](https://developers.openai.com/api/docs/models/gpt-realtime-2.1-mini).
 
-Connect to wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1-mini with Authorization: Bearer from local environment. Do not send the legacy beta header. Wait for session.created and session.updated after configuration.
+Connect opens `wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1-mini` with bearer authorization from the local environment. The client waits for `session.created`, writes `session.update` and enters ready state after a matching `session.updated` and a successful write.
 
 ```json
 {"type":"session.update","session":{"type":"realtime","instructions":"Respond briefly.","output_modalities":["audio"],"audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"turn_detection":null},"output":{"format":{"type":"audio/pcm","rate":24000},"voice":"marin"}}}}
 ```
+
+The upgrade has a 10-second timeout, and readiness has a 15-second deadline from Connect. Inbound fragmented text is limited to 256 Ki UTF-16 code units per message. Disconnect sends a normal close frame and waits up to three seconds for the peer. Cancellation during setup and window shutdown abort the active socket or cancel the pending handshake. The app surfaces fixed status messages for failures.
 
 Text: use output_modalities ["text"], conversation.item.create with input_text, response.create, response.output_text.delta/done. Treat response.done status as authoritative for completion; not every terminal response is successful.
 

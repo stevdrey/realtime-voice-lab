@@ -2,19 +2,29 @@ package io.github.stevdrey.realtimevoicelab.ui;
 
 import java.io.IOException;
 
+import io.github.stevdrey.realtimevoicelab.realtime.JdkRealtimeTransport;
+import io.github.stevdrey.realtimevoicelab.realtime.RealtimeTransport;
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 
 public final class RealtimeVoiceLabApp extends Application {
+    private WorkspaceController workspace;
+
     public static void main(String[] args) {
         launch(args);
     }
 
     @Override
     public void start(Stage stage) throws IOException {
+        start(stage, new JdkRealtimeTransport());
+    }
+
+    void start(Stage stage, RealtimeTransport transport) throws IOException {
         var loader = new FXMLLoader(getClass().getResource("workspace.fxml"));
+        workspace = new WorkspaceController(transport);
+        loader.setController(workspace);
         var scene = new Scene(loader.load(), 1100, 720);
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
 
@@ -22,6 +32,14 @@ public final class RealtimeVoiceLabApp extends Application {
         stage.setMinWidth(760);
         stage.setMinHeight(520);
         stage.setScene(scene);
+        stage.setOnHidden(event -> stop());
         stage.show();
+    }
+
+    @Override
+    public void stop() {
+        if (workspace != null) {
+            workspace.dispose();
+        }
     }
 }

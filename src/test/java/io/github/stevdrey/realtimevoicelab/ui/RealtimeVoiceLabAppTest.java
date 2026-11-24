@@ -1,5 +1,6 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
+import java.net.http.WebSocket;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -8,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
+import io.github.stevdrey.realtimevoicelab.realtime.FakeTransport;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -27,6 +29,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -49,7 +52,7 @@ class RealtimeVoiceLabAppTest {
     }
 
     @Test
-    void showsTooltipsWhenHoveringDisabledSessionButtons() throws Exception {
+    void showsTooltipsWhenHoveringSessionButtons() throws Exception {
         var stage = onFxThread(Stage::new);
         try {
             onFxThread(() -> {
@@ -59,7 +62,7 @@ class RealtimeVoiceLabAppTest {
 
             assertHoveredTooltip(stage, "#settings-button", "Settings (unavailable)");
             assertHoveredTooltip(stage, "#mic-button", "Microphone (unavailable)");
-            assertHoveredTooltip(stage, "#connect-button", "Connect (unavailable)");
+            assertHoveredTooltip(stage, "#connect-button", "Connect");
         } finally {
             onFxThread(() -> {
                 stage.close();
@@ -75,14 +78,13 @@ class RealtimeVoiceLabAppTest {
             assertEquals("Realtime Voice Lab", stage.getTitle());
 
             var scene = stage.getScene();
-            assertEquals("Disconnected", ((Label) scene.lookup("#session-status")).getText());
             var model = (ComboBox<?>) scene.lookup("#model-selector");
             assertEquals("gpt-realtime-2.1-mini", model.getValue());
             assertEquals("Model: gpt-realtime-2.1-mini", model.getAccessibleText());
             assertTrue(model.isDisabled());
             assertDisabledButton(scene, "#settings-button", "Settings");
             assertDisabledButton(scene, "#mic-button", "Microphone");
-            assertDisabledButton(scene, "#connect-button", "Connect");
+            assertSession(stage, "Disconnected", "Connect", false);
 
             var metrics = scene.getRoot().lookupAll(".metric-value");
             assertEquals(3, metrics.size());
@@ -100,6 +102,67 @@ class RealtimeVoiceLabAppTest {
             assertSame(conversation, conversationHeading.getLabelFor());
             assertSame(events, inspectorHeading.getLabelFor());
         });
+    }
+
+    @Test
+    void connectsCancelsAndDisconnectsThroughTheWorkspaceUsingSyntheticEvents() throws Exception {
+        var transport = new FakeTransport();
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport);
+                assertTrue(transport.attempts.isEmpty());
+                assertSession(stage, "Disconnected", "Connect", false);
+                connectButton(stage).fire();
+                assertSession(stage, "Connecting…", "Cancel connection", false);
+                connectButton(stage).fire();
+                assertSession(stage, "Disconnected", "Connect", false);
+                assertTrue(transport.attempts.getFirst().opening.isCancelled());
+                connectButton(stage).fire();
+                return null;
+            });
+
+            var cancelled = transport.attempts.getFirst();
+            var current = transport.attempts.getLast();
+            // Drive the listener from the test thread to exercise the handoff to JavaFX.
+            cancelled.opened();
+            assertTrue(cancelled.aborted);
+            current.ready();
+            onFxThread(() -> {
+                assertSession(stage, "Connected", "Disconnect", false);
+                assertTrue(((Button) stage.getScene().lookup("#mic-button")).isDisabled());
+                connectButton(stage).fire();
+                assertSession(stage, "Disconnecting…", "Disconnecting…", true);
+                return null;
+            });
+
+            assertEquals(1, current.closeWrites);
+            current.peerClose(WebSocket.NORMAL_CLOSURE, "private synthetic detail");
+            onFxThread(() -> {
+                assertSession(stage, "Disconnected", "Connect", false);
+                connectButton(stage).fire();
+                return null;
+            });
+
+            var failed = transport.attempts.getLast();
+            failed.opened();
+            failed.text("""
+                    {"type":"error","error":{"message":"private synthetic detail"}}
+                    """, true);
+            assertTrue(failed.aborted);
+            onFxThread(() -> {
+                assertSession(stage, "Realtime session failed", "Connect", false);
+                connectButton(stage).fire();
+                return null;
+            });
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+        assertTrue(transport.closed);
+        assertTrue(transport.attempts.getLast().opening.isCancelled());
     }
 
     @Test
@@ -164,6 +227,16 @@ class RealtimeVoiceLabAppTest {
         var button = (Button) scene.lookup(selector);
         assertTrue(button.isDisabled());
         assertEquals(name, button.getAccessibleText());
+    }
+
+    private Button connectButton(Stage stage) {
+        return (Button) stage.getScene().lookup("#connect-button");
+    }
+
+    private void assertSession(Stage stage, String text, String action, boolean disabled) {
+        assertEquals(text, ((Label) stage.getScene().lookup("#session-status")).getText());
+        assertEquals(action, connectButton(stage).getAccessibleText());
+        assertEquals(disabled, connectButton(stage).isDisabled());
     }
 
     private void assertHoveredTooltip(Stage stage, String selector, String expectedText) throws Exception {

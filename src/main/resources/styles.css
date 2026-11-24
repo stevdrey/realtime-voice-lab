@@ -62,6 +62,14 @@
     -fx-max-height: 8;
 }
 
+.status-dot:connected {
+    -fx-background-color: -rv-success;
+}
+
+.status-dot:session-error {
+    -fx-background-color: -rv-danger;
+}
+
 .session-status {
     -fx-text-fill: -rv-secondary;
     -fx-font-weight: 600;
@@ -167,6 +175,10 @@
 
 .app-header .icon {
     -fx-stroke: -rv-accent;
+}
+
+.round-control:disconnect .icon {
+    -fx-stroke: -rv-danger;
 }
 
 .round-control, .mic-button {
