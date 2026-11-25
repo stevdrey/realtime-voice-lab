@@ -108,7 +108,7 @@ public final class FakeTransport implements RealtimeTransport {
                 throw new AssertionError("Text write after the close cancellation");
             }
             writes.add(data.toString());
-            if (SessionProtocol.CANCEL_RESPONSE.contentEquals(data)) {
+            if (SessionProtocol.CANCEL_RESPONSE.message().contentEquals(data)) {
                 closeCancelWritten = true;
                 pendingWrite = cancelWrite;
             } else {

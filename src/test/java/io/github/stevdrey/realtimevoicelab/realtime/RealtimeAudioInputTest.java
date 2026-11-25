@@ -66,6 +66,15 @@ class RealtimeAudioInputTest {
                     json.readTree(socket.writes.get(1)).path("audio").binaryValue().length);
             assertEquals(2 * MicrophoneCapture.BLOCK_BYTES,
                     json.readTree(socket.writes.get(2)).path("audio").binaryValue().length);
+            var inspectedAppends = session.inspectedEvents().stream()
+                    .filter(event -> "input_audio_buffer.append".equals(event.type())).toList();
+            assertEquals(List.of(5 * MicrophoneCapture.BLOCK_BYTES, 2 * MicrophoneCapture.BLOCK_BYTES),
+                    inspectedAppends.stream().map(EventInspector.Entry::audioBytes).toList());
+            for (var entry : inspectedAppends) {
+                var detail = json.readTree(entry.jsonDetail());
+                assertFalse(detail.has("audio"));
+                assertEquals(entry.audioBytes(), detail.path("audio_bytes").intValue());
+            }
             committed(socket);
             var response = json.readTree(socket.writes.getLast());
             assertEquals("response.create", response.path("type").asText());

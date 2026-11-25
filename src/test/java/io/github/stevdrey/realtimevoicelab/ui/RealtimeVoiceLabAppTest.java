@@ -20,6 +20,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.collections.ListChangeListener;
 import javafx.css.PseudoClass;
 import javafx.event.Event;
 import javafx.scene.Scene;
@@ -30,7 +31,9 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TitledPane;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -125,6 +128,92 @@ class RealtimeVoiceLabAppTest {
             assertSame(conversation, conversationHeading.getLabelFor());
             assertSame(events, inspectorHeading.getLabelFor());
         });
+    }
+
+    @Test
+    void inspectsFiltersAndBatchesSyntheticEventsInTheWorkspace() throws Exception {
+        var transport = new FakeTransport();
+        var stage = onFxThread(Stage::new);
+        try {
+            var socket = onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport);
+                ((Button) stage.getScene().lookup("#connect-button")).fire();
+                return transport.attempts.getFirst();
+            });
+            socket.ready();
+            var events = onFxThread(() -> (ListView<?>) stage.getScene().lookup("#event-list"));
+            awaitOnFxThread(() -> events.getItems().size() == 3, "Inspector did not display the handshake");
+
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                var filter = (TextField) scene.lookup("#event-filter");
+                filter.setText("OUTGOING");
+                assertEquals(1, events.getItems().size());
+                var pane = (TitledPane) scene.lookup("#event-detail-pane");
+                pane.setExpanded(true);
+                var detail = (TextArea) pane.getContent();
+                events.getSelectionModel().selectFirst();
+                assertTrue(detail.getText().contains("session.update"));
+                assertFalse(detail.getText().contains("instructions"));
+                assertFalse(detail.isEditable());
+
+                filter.setText("missing-type");
+                assertTrue(events.getItems().isEmpty());
+                assertTrue(detail.getText().isEmpty());
+                filter.clear();
+                return null;
+            });
+
+            var changes = new ArrayDeque<Integer>();
+            // Queue the whole synthetic burst in one FX task so the pending render cannot run between messages.
+            onFxThread(() -> {
+                events.getItems().addListener((ListChangeListener<Object>) change -> {
+                    while (change.next()) {
+                        changes.add(change.getAddedSize());
+                        assertTrue(Platform.isFxApplicationThread());
+                    }
+                });
+                events.getSelectionModel().select(1);
+                for (int index = 0; index < 40; index++) {
+                    socket.text("{\"type\":\"unrecognized.event\",\"detail\":\"synthetic-private-text\"}", true);
+                }
+                assertEquals(3, events.getItems().size());
+                return null;
+            });
+            onFxThread(() -> {
+                assertEquals(List.of(40), List.copyOf(changes));
+                assertEquals(43, events.getItems().size());
+                assertEquals(1, events.getSelectionModel().getSelectedIndex());
+                var filter = (TextField) stage.getScene().lookup("#event-filter");
+                filter.setText("unknown event");
+                assertEquals(40, events.getItems().size());
+                events.getSelectionModel().selectFirst();
+                var pane = (TitledPane) stage.getScene().lookup("#event-detail-pane");
+                var detail = (TextArea) pane.getContent();
+                assertTrue(detail.getText().contains("Unknown event"));
+                assertFalse(detail.getText().contains("synthetic-private-text"));
+                for (int index = 0; index < 240; index++) {
+                    socket.text("{\"type\":\"rate_limits.updated\"}", true);
+                }
+                return null;
+            });
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                var filter = (TextField) scene.lookup("#event-filter");
+                filter.clear();
+                assertEquals(256, events.getItems().size());
+                filter.setText("session.update");
+                assertTrue(events.getItems().isEmpty());
+                stage.close();
+                assertTrue(events.getItems().isEmpty());
+                return null;
+            });
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
     }
 
     @Test

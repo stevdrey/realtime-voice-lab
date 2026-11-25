@@ -5,6 +5,7 @@ import java.net.http.WebSocket;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 
@@ -22,6 +23,7 @@ import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.State
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TurnState;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RealtimeSafetyTest {
@@ -71,6 +73,24 @@ class RealtimeSafetyTest {
         functionCall(socket);
 
         assertEquals(State.CLOSING, session.status().state());
+        // The late frame is inspected before the cancellation it triggers.
+        var types = session.inspectedEvents().stream().map(EventInspector.Entry::type).toList();
+        assertEquals(List.of("response.function_call_arguments.done", "response.cancel"),
+                types.subList(types.size() - 2, types.size()));
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        assertLimit(Failure.SESSION_LIMIT);
+    }
+
+    @Test
+    void endsAnExpiredSessionAtTheLimitWhenItsLateFrameIsInvalid() {
+        var socket = connect();
+        socket.ready();
+        clock.elapse(Duration.ofMinutes(5));
+        socket.text("{", true);
+
+        assertEquals(State.CLOSING, session.status().state());
+        var types = session.inspectedEvents().stream().map(EventInspector.Entry::type).toList();
+        assertEquals(List.of("Invalid event", "response.cancel"), types.subList(types.size() - 2, types.size()));
         socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
         assertLimit(Failure.SESSION_LIMIT);
     }
@@ -328,6 +348,84 @@ class RealtimeSafetyTest {
     }
 
     @Test
+    void inspectsLateEventsDuringToolLimitShutdown() {
+        var socket = connect();
+        socket.ready();
+        socket.cancelWrite = new CompletableFuture<>();
+        for (int index = 0; index <= RealtimeSession.MAX_TOOL_CALLS; index++) {
+            functionCall(socket);
+        }
+        assertEquals(State.CLOSING, session.status().state());
+        assertOnlyCancelAfterSetup(socket);
+        assertEquals("response.cancel", session.inspectedEvents().getLast().type());
+        assertEquals(0, socket.closeWrites);
+        var closingWorkspace = session.workspace();
+        int demand = socket.demand;
+
+        socket.text("""
+                {"type":"response.done","event_id":"synthetic-private-id","response":{"id":"reply",
+                 "status":"cancelled","output":[{"content":[{"text":"synthetic-private-output"}]}]}}
+                """, true);
+        var done = session.inspectedEvents().getLast();
+        assertEquals("response.done", done.type());
+        assertEquals(EventInspector.Direction.INCOMING, done.direction());
+        assertTrue(done.eventId().startsWith("server-"));
+        assertFalse(done.jsonDetail().contains("synthetic-private"));
+
+        socket.text(audioDelta("reply", "AQIDBA=="), true);
+        var audio = session.inspectedEvents().getLast();
+        assertEquals("response.output_audio.delta", audio.type());
+        assertEquals(4, audio.audioBytes());
+        assertFalse(audio.jsonDetail().contains("AQIDBA=="));
+        assertEquals(closingWorkspace, session.workspace());
+        assertEquals(demand + 2, socket.demand);
+        assertEquals(0, socket.closeWrites);
+        assertOnlyCancelAfterSetup(socket);
+
+        socket.cancelWrite.complete(socket);
+        assertEquals(1, socket.closeWrites);
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        assertLimit(Failure.TOOL_LIMIT);
+        assertFalse(socket.aborted);
+    }
+
+    @Test
+    void keepsClosingFramingBoundedAndContinuesAfterInvalidMessages() {
+        var socket = connect();
+        socket.ready();
+        socket.text("{\"type\":\"rate_limits.updated\",", false);
+        session.disconnect();
+        socket.text("\"event_id\":\"synthetic-rate-limit-event\"}", true);
+        var afterFragment = session.inspectedEvents();
+        assertEquals("rate_limits.updated", afterFragment.getLast().type());
+
+        socket.text(" ".repeat(SessionProtocol.MAX_MESSAGE_CHARS), false);
+        socket.text(" ", false);
+        // The final fragment resembles a standalone event but still belongs to the oversized message.
+        socket.text("{\"type\":\"rate_limits.updated\"}", true);
+        socket.text("{", true);
+        // One fixed row each for the oversized message and the unparseable one. The tail adds nothing.
+        var afterInvalid = session.inspectedEvents();
+        assertEquals(afterFragment.size() + 2, afterInvalid.size());
+        for (var invalid : afterInvalid.subList(afterFragment.size(), afterInvalid.size())) {
+            assertEquals("Invalid event", invalid.type());
+            assertEquals(null, invalid.eventId());
+            assertFalse(invalid.jsonDetail().contains("rate_limits.updated"));
+        }
+
+        socket.text("{\"type\":\"error\",\"error\":{\"message\":\"synthetic-private-error\"}}", true);
+        var afterError = session.inspectedEvents();
+        assertEquals(afterInvalid.size() + 1, afterError.size());
+        assertEquals("error", afterError.getLast().type());
+        assertFalse(afterError.getLast().jsonDetail().contains("synthetic-private-error"));
+        assertEquals(State.CLOSING, session.status().state());
+        assertEquals(1, socket.closeWrites);
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        assertEquals(State.DISCONNECTED, session.status().state());
+        assertFalse(socket.aborted);
+    }
+
+    @Test
     void allowsThirtySecondsOfPcmPerResponseAndStopsOnExcess() {
         var socket = connect();
         socket.ready();
@@ -463,7 +561,7 @@ class RealtimeSafetyTest {
     private void assertOnlyCancelAfterSetup(FakeTransport.Socket socket) {
         // Only the configuration precedes the generic cancellation in these audio and tool scenarios.
         assertEquals(2, socket.writes.size());
-        assertEquals(SessionProtocol.CANCEL_RESPONSE, socket.writes.getLast());
+        assertEquals(SessionProtocol.CANCEL_RESPONSE.message(), socket.writes.getLast());
     }
 
     private void assertLimit(Failure expected) {

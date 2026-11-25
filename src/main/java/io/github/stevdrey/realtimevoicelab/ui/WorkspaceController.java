@@ -54,6 +54,7 @@ public final class WorkspaceController {
     private final Tooltip connectTooltip = new Tooltip();
     private final Tooltip micTooltip = new Tooltip();
     private final AtomicBoolean renderPending = new AtomicBoolean();
+    private final AtomicBoolean inspectorRenderPending = new AtomicBoolean();
     private final EnumMap<KeyCode, MicKeyScope> heldMicKeys = new EnumMap<>(KeyCode.class);
     private RealtimeSession.State renderedState;
     private List<RealtimeSession.TurnView> renderedTurns = List.of();
@@ -119,8 +120,12 @@ public final class WorkspaceController {
     @FXML
     private Button cancelButton;
 
+    @FXML
+    private EventInspectorController eventInspectorController;
+
     WorkspaceController(RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker) {
-        session = new RealtimeSession(transport, this::scheduleRender, microphone, speaker);
+        session = new RealtimeSession(transport, this::scheduleRender, microphone, speaker,
+                this::scheduleInspectorRender);
     }
 
     @FXML
@@ -303,6 +308,9 @@ public final class WorkspaceController {
         if (turnRows != null) {
             turnRows.getChildren().clear();
         }
+        if (eventInspectorController != null) {
+            eventInspectorController.render(List.of());
+        }
         renderedTurns = List.of();
     }
 
@@ -312,6 +320,18 @@ public final class WorkspaceController {
                 renderPending.set(false);
                 if (!disposed) {
                     renderSession();
+                }
+            });
+        }
+    }
+
+    // Event bursts refresh only the inspector, not the whole workspace.
+    private void scheduleInspectorRender() {
+        if (inspectorRenderPending.compareAndSet(false, true)) {
+            Platform.runLater(() -> {
+                inspectorRenderPending.set(false);
+                if (!disposed) {
+                    eventInspectorController.render(session.inspectedEvents());
                 }
             });
         }
