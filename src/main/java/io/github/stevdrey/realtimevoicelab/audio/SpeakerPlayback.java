@@ -50,15 +50,23 @@ public final class SpeakerPlayback {
             if (stream.stopped) {
                 return Result.STOPPED;
             }
+            var result = Result.UNAVAILABLE;
             try {
                 line.start();
                 started.run();
-                return writeStream(stream, line, meter);
+                result = writeStream(stream, line, meter);
+                if (result == Result.COMPLETED) {
+                    // Let the device play out its buffer. Only stopped or failed playback discards queued audio.
+                    line.drain();
+                }
+                return result;
             } finally {
                 try {
                     line.stop();
                 } finally {
-                    line.flush();
+                    if (result != Result.COMPLETED) {
+                        line.flush();
+                    }
                 }
             }
         } catch (LineUnavailableException | RuntimeException unavailable) {
@@ -96,7 +104,7 @@ public final class SpeakerPlayback {
                 }
                 continue;
             }
-            if (playedFrames >= writtenFrames && stream.isComplete()) {
+            if (stream.isComplete()) {
                 return Result.COMPLETED;
             }
             if (playedFrames >= writtenFrames && stream.isEmpty()) {

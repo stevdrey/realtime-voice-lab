@@ -43,6 +43,7 @@ public final class FakeSpeaker {
         private boolean started;
         public volatile boolean stopped;
         public volatile boolean flushed;
+        public volatile boolean drained;
         public volatile boolean closed;
         public volatile boolean wroteOnFxThread;
 
@@ -68,6 +69,10 @@ public final class FakeSpeaker {
                         }
                         case "flush" -> {
                             flushed = true;
+                            yield null;
+                        }
+                        case "drain" -> {
+                            drain();
                             yield null;
                         }
                         case "close" -> {
@@ -102,6 +107,14 @@ public final class FakeSpeaker {
 
         public synchronized void playBufferedFrames() {
             framesPlayed = written.size() / Short.BYTES;
+            notifyAll();
+        }
+
+        private synchronized void drain() throws InterruptedException {
+            while (framesPlayed * Short.BYTES < written.size()) {
+                wait();
+            }
+            drained = true;
         }
     }
 }

@@ -247,11 +247,8 @@ final class SessionProtocol {
             throw new IOException("Invalid Realtime audio delta");
         }
         try {
-            var pcm = Base64Variants.getDefaultVariant().decode(delta);
-            if (pcm.length % Short.BYTES != 0) {
-                throw new IOException("Invalid Realtime PCM frame");
-            }
-            return pcm;
+            // Frame alignment is checked only for PCM that enters the playback queue.
+            return Base64Variants.getDefaultVariant().decode(delta);
         } catch (IllegalArgumentException invalidBase64) {
             throw new IOException("Invalid Realtime audio delta");
         }

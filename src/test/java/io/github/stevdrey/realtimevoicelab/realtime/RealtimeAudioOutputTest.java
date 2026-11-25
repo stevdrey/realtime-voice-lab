@@ -3,7 +3,10 @@ package io.github.stevdrey.realtimevoicelab.realtime;
 import java.net.http.WebSocket;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
@@ -247,6 +250,7 @@ class RealtimeAudioOutputTest {
                     """, true);
             transcript(socket, "delta", 1, "too late", "response-1");
             assertEquals("First sentence.\nSecond sentence.", session.workspace().turns().getFirst().output());
+            assertEquals(IDLE, session.workspace().speaker().state());
             assertTrue(session.workspace().canSend());
         }
     }
@@ -308,10 +312,63 @@ class RealtimeAudioOutputTest {
             socket = ready(session, TranscriptionModel.OFF);
             inputTranscript(socket, "completed", "unknown", ",\"transcript\":\"unexpected\"");
             assertTrue(session.workspace().turns().isEmpty());
+            socket.text(audio("unrelated", new byte[1]), true);
+            assertEquals(RealtimeSession.State.READY, session.status().state());
+            startVoice(session, socket, "input-1", "response-1");
             socket.text(audio("response-1", new byte[1]), true);
             assertEquals(RealtimeSession.Failure.PROTOCOL, session.status().failure());
             assertTrue(speaker.devices.isEmpty());
         }
+    }
+
+    @Test
+    void acceptsAProviderNormalizedTranscriptionModel() {
+        try (var session = session(speaker.playback())) {
+            session.connect("test-model", TranscriptionModel.TRANSCRIBE);
+            transport.attempts.getLast().ready("gpt-transcribe-2026-01-01");
+            assertEquals(RealtimeSession.State.READY, session.status().state());
+        }
+    }
+
+    @Test
+    void detachesAStuckSpeakerSoPushToTalkRecovers() throws Exception {
+        var unblock = new CompletableFuture<Void>();
+        var opening = new CompletableFuture<Void>();
+        var stuckSpeaker = new FakeSpeaker(() -> {
+            opening.complete(null);
+            unblock.join();
+        });
+        var deadlines = new CopyOnWriteArrayList<Deadline>();
+        try (var session = new RealtimeSession(transport, () -> {}, Duration.ofSeconds(15), Duration.ofSeconds(3),
+                System::nanoTime, nanos -> {
+                    var future = new CompletableFuture<Void>();
+                    deadlines.add(new Deadline(nanos, future));
+                    return future;
+                }, microphone.microphone(), stuckSpeaker.playback())) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "response-1");
+            socket.text(audio("response-1", microphone.block(1)), true);
+            await(opening::isDone);
+
+            expire(deadlines, RealtimeSession.OPEN_TIMEOUT);
+            assertEquals(UNAVAILABLE, session.workspace().speaker().state());
+            responseDone(socket, "response-1", "completed");
+            assertEquals(IDLE, session.workspace().speaker().state());
+            assertFalse(session.workspace().microphone().canStart());
+
+            expire(deadlines, RealtimeSession.SPEAKER_RELEASE_TIMEOUT);
+            assertTrue(session.workspace().microphone().canStart());
+        } finally {
+            unblock.complete(null);
+        }
+    }
+
+    private record Deadline(long nanos, CompletableFuture<Void> future) {
+    }
+
+    private void expire(List<Deadline> deadlines, Duration timeout) {
+        deadlines.stream().filter(deadline -> deadline.nanos() == timeout.toNanos() && !deadline.future().isDone())
+                .findFirst().orElseThrow().future().completeExceptionally(new TimeoutException());
     }
 
     private RealtimeSession session(SpeakerPlayback playback) {

@@ -32,6 +32,8 @@ public final class RealtimeSession implements AutoCloseable {
     static final Duration CANCEL_TIMEOUT = Duration.ofSeconds(5);
     static final Duration MAX_AUDIO_TIME = Duration.ofSeconds(30);
     static final Duration OPEN_TIMEOUT = Duration.ofSeconds(5);
+    // A Java Sound call cannot be interrupted. Detach a stopped speaker worker that has not returned by then.
+    static final Duration SPEAKER_RELEASE_TIMEOUT = Duration.ofSeconds(4);
     static final int MAX_INPUT_AUDIO_BYTES = (int) (SessionProtocol.PCM_BYTES_PER_SECOND * MAX_AUDIO_TIME.toSeconds());
     private static final int MAX_OUTPUT_AUDIO_BYTES = MAX_INPUT_AUDIO_BYTES;
     // Ignore very short taps instead of asking the provider to commit a sub-100 ms buffer.
@@ -756,7 +758,7 @@ public final class RealtimeSession implements AutoCloseable {
                 var configuration = event.configuration();
                 if (status.state() == State.CONNECTING && configuration.sessionId().equals(attempt.sessionId)) {
                     if (!configuration.outputConfirmed()
-                            || !attempt.transcriptionModel.modelId().equals(configuration.transcriptionModel())) {
+                            || !transcriptionConfirmed(attempt.transcriptionModel, configuration.transcriptionModel())) {
                         fail(attempt, Failure.PROTOCOL);
                         return;
                     }
@@ -862,6 +864,13 @@ public final class RealtimeSession implements AutoCloseable {
         }
     }
 
+    // The provider may report a normalized model name, so only the enabled or disabled state must match.
+    private static boolean transcriptionConfirmed(TranscriptionModel requested, String acknowledged) {
+        return requested == TranscriptionModel.OFF
+                ? "".equals(acknowledged)
+                : acknowledged != null && !acknowledged.isBlank();
+    }
+
     private boolean isVoiceResponse(ConversationTurn turn, String responseId) {
         return turn != null && turn.isVoice() && responseId.equals(turn.responseId);
     }
@@ -887,6 +896,9 @@ public final class RealtimeSession implements AutoCloseable {
         var turn = attempt.turn;
         if (status.state() == State.READY && pcm.length != 0 && isVoiceResponse(turn, event.responseId())
                 && turn.canPlayPart(event.part()) && attempt.speakerState != SpeakerState.UNAVAILABLE) {
+            if (pcm.length % Short.BYTES != 0) {
+                throw new IOException("Invalid Realtime PCM frame");
+            }
             turn.markResponding();
             queuePlayback(attempt, pcm);
         }
@@ -957,7 +969,12 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private synchronized void playbackEnded(Attempt attempt, AudioOutput output, SpeakerPlayback.Result result) {
-        playbackWorker = null;
+        if (output.releaseDeadline != null) {
+            output.releaseDeadline.complete(null);
+        }
+        if (playbackWorker == output) {
+            playbackWorker = null;
+        }
         if (active == attempt && attempt.output == output) {
             if (result == SpeakerPlayback.Result.UNAVAILABLE) {
                 playbackUnavailable(attempt);
@@ -984,7 +1001,27 @@ public final class RealtimeSession implements AutoCloseable {
         if (output != null) {
             output.stream.stop();
             output.openDeadline.complete(null);
+            if (playbackWorker == output && output.releaseDeadline == null) {
+                var release = scheduleTimeout.apply(SPEAKER_RELEASE_TIMEOUT.toNanos());
+                output.releaseDeadline = release;
+                release.whenComplete((ignored, error) -> {
+                    if (error != null) {
+                        releasePlayback(output);
+                    }
+                });
+            }
         }
+    }
+
+    private synchronized void releasePlayback(AudioOutput output) {
+        if (playbackWorker != output) {
+            return;
+        }
+        playbackWorker = null;
+        if (status.state() == State.READY && canStartAudio(active)) {
+            statusChanged.run();
+        }
+        startPlaybackIfAvailable();
     }
 
     private void accountForAudio(Attempt attempt, String responseId, int bytes) throws IOException {
@@ -1100,6 +1137,10 @@ public final class RealtimeSession implements AutoCloseable {
             // A terminal event can arrive before the write completes. Keep that write bounded.
             if (!attempt.writing) {
                 clearPhaseDeadline(attempt);
+            }
+            // Keep the speaker error for the failed reply only, then restore the microphone hint.
+            if (attempt.turn.isVoice() && attempt.speakerState == SpeakerState.UNAVAILABLE) {
+                attempt.speakerState = SpeakerState.IDLE;
             }
             attempt.turn.finish(outcome);
             attempt.turn = null;
@@ -1220,6 +1261,7 @@ public final class RealtimeSession implements AutoCloseable {
     private static final class AudioOutput {
         private final SpeakerPlayback.Stream stream = new SpeakerPlayback.Stream(MAX_OUTPUT_AUDIO_BYTES);
         private CompletableFuture<Void> openDeadline;
+        private CompletableFuture<Void> releaseDeadline;
         private double level;
     }
 
