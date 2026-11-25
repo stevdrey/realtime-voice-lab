@@ -239,7 +239,11 @@ public final class WorkspaceController {
             }
         });
         root.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-            if (event.getCode() == KeyCode.ESCAPE && activeMicGesture != null) {
+            var key = event.getCode();
+            // Repeats belong to the microphone until release, even after focus moves.
+            if (heldMicKeys.contains(key)) {
+                event.consume();
+            } else if (key == KeyCode.ESCAPE && activeMicGesture != null) {
                 finishMicGesture(false);
                 event.consume();
             }

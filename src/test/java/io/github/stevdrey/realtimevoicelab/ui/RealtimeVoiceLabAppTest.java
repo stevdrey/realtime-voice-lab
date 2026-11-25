@@ -269,7 +269,7 @@ class RealtimeVoiceLabAppTest {
                 assertTrue(mic.getPseudoClassStates().contains(waitingForSpeaker));
                 assertEquals("Closing speaker…", mic.getAccessibleHelp());
                 new Robot().keyPress(key);
-                repeatFocusedKey(stage, key);
+                pressFocusedKey(stage, key);
                 return null;
             });
             awaitOnFxThread(() -> "Audio unavailable. Waiting for the speaker to close.".equals(micStatus(stage)),
@@ -278,7 +278,7 @@ class RealtimeVoiceLabAppTest {
                 assertTrue(mic.isFocused());
                 assertTrue(mic.getPseudoClassStates().contains(waitingForSpeaker));
                 assertEquals(micStatus(stage), mic.getAccessibleHelp());
-                repeatFocusedKey(stage, key);
+                pressFocusedKey(stage, key);
                 assertSession(stage, "Connected", "Disconnect", false);
                 assertEquals(1, microphone.opens.get());
                 assertEquals(writesBeforeCleanup, socket.writes.size());
@@ -290,7 +290,7 @@ class RealtimeVoiceLabAppTest {
             onFxThread(() -> {
                 assertTrue(mic.isFocused());
                 assertFalse(mic.getPseudoClassStates().contains(waitingForSpeaker));
-                repeatFocusedKey(stage, key);
+                pressFocusedKey(stage, key);
                 assertEquals("Hold to talk", micStatus(stage));
                 assertEquals(1, microphone.opens.get());
                 assertEquals(writesBeforeCleanup, socket.writes.size());
@@ -333,6 +333,75 @@ class RealtimeVoiceLabAppTest {
         }
     }
 
+    @Test
+    void heldMicrophoneEnterDoesNotSendADraftAfterFocusMovesToTheComposer() throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var allowStop = new CompletableFuture<Void>();
+        var speaker = new FakeSpeaker(() -> {}, allowStop::join);
+        var stage = onFxThread(Stage::new);
+        var draft = "Synthetic draft";
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone(), speaker.playback(),
+                        stage.focusedProperty());
+                connectButton(stage).fire();
+                stage.requestFocus();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.ready();
+            awaitOnFxThread(stage::isFocused, "Workspace never received window focus");
+            onFxThread(() -> {
+                stage.getScene().lookup("#mic-button").requestFocus();
+                return null;
+            });
+            recordWithKey(stage, microphone, KeyCode.ENTER);
+            awaitOnFxThread(() -> socket.writes.size() == 3, "Voice take was not committed");
+            finishSyntheticPlayback(stage, socket, speaker, microphone, 1);
+            int writesBeforeRepeat = socket.writes.size();
+
+            var composer = onFxThread(() -> {
+                var field = (TextField) stage.getScene().lookup("#text-composer");
+                field.setText(draft);
+                assertFalse(stage.getScene().lookup("#send-text").isDisabled());
+                assertTrue(stage.getScene().lookup("#mic-button").isFocused());
+                pressFocusedKey(stage, KeyCode.ENTER);
+                field.requestFocus();
+                assertTrue(field.isFocused());
+                pressFocusedKey(stage, KeyCode.ENTER);
+                assertEquals(draft, field.getText());
+                assertEquals(writesBeforeRepeat, socket.writes.size());
+                return field;
+            });
+
+            allowStop.complete(null);
+            awaitOnFxThread(() -> "Hold to talk".equals(micStatus(stage)), "Speaker cleanup did not finish");
+            onFxThread(() -> {
+                assertTrue(composer.isFocused());
+                pressFocusedKey(stage, KeyCode.ENTER);
+                assertEquals(draft, composer.getText());
+                assertEquals(writesBeforeRepeat, socket.writes.size());
+
+                Event.fireEvent(composer, new KeyEvent(KeyEvent.KEY_RELEASED, "", "", KeyCode.ENTER,
+                        false, false, false, false));
+                pressFocusedKey(stage, KeyCode.ENTER);
+                assertEquals("", composer.getText());
+                assertEquals(writesBeforeRepeat + 1, socket.writes.size());
+                assertTrue(socket.writes.getLast().contains("conversation.item.create"));
+                assertTrue(socket.writes.getLast().contains(draft));
+                return null;
+            });
+            assertEquals(1, microphone.opens.get());
+        } finally {
+            allowStop.complete(null);
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
     private void recordWithKey(Stage stage, FakeMicrophone microphone, KeyCode key) throws Exception {
         onFxThread(() -> {
             new Robot().keyPress(key);
@@ -346,7 +415,7 @@ class RealtimeVoiceLabAppTest {
         });
     }
 
-    private void repeatFocusedKey(Stage stage, KeyCode key) {
+    private void pressFocusedKey(Stage stage, KeyCode key) {
         Event.fireEvent(stage.getScene().getFocusOwner(),
                 new KeyEvent(KeyEvent.KEY_PRESSED, "", "", key, false, false, false, false));
     }
