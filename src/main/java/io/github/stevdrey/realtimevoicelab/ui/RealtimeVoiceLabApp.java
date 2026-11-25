@@ -3,6 +3,7 @@ package io.github.stevdrey.realtimevoicelab.ui;
 import java.io.IOException;
 
 import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
+import io.github.stevdrey.realtimevoicelab.audio.SpeakerPlayback;
 import io.github.stevdrey.realtimevoicelab.realtime.JdkRealtimeTransport;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeTransport;
 import javafx.application.Application;
@@ -33,8 +34,13 @@ public final class RealtimeVoiceLabApp extends Application {
 
     void start(Stage stage, RealtimeTransport transport, MicrophoneCapture microphone,
                ObservableBooleanValue windowFocus) throws IOException {
+        start(stage, transport, microphone, new SpeakerPlayback(), windowFocus);
+    }
+
+    void start(Stage stage, RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker,
+               ObservableBooleanValue windowFocus) throws IOException {
         var loader = new FXMLLoader(getClass().getResource("workspace.fxml"));
-        workspace = new WorkspaceController(transport, microphone);
+        workspace = new WorkspaceController(transport, microphone, speaker);
         loader.setController(workspace);
         Scene scene;
         try {

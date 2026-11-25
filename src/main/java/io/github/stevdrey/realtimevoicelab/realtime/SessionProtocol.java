@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.StringJoiner;
 
 import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
+import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
 
 import com.fasterxml.jackson.core.Base64Variants;
 import com.fasterxml.jackson.core.JsonFactory;
@@ -18,6 +19,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 final class SessionProtocol {
     static final int MAX_MESSAGE_CHARS = 256 * 1024;
     static final int MAX_OUTPUT_TOKENS = 512;
+    private static final int MAX_ID_CHARS = 512;
     private static final String PCM_AUDIO_TYPE = "audio/pcm";
     private static final int PCM_SAMPLE_RATE = MicrophoneCapture.SAMPLE_RATE;
     static final int PCM_BYTES_PER_SECOND = MicrophoneCapture.BYTES_PER_SECOND;
@@ -31,15 +33,20 @@ final class SessionProtocol {
             .build();
     private final ObjectMapper mapper = new ObjectMapper(factory);
 
-    String configuration() {
+    String configuration(TranscriptionModel transcription) {
         var update = mapper.createObjectNode().put("type", "session.update");
         var session = update.putObject("session").put("type", "realtime");
         session.put("instructions", "Respond briefly.");
         session.put("max_output_tokens", MAX_OUTPUT_TOKENS);
         session.putArray("output_modalities").add("audio");
         var audio = session.putObject("audio");
-        audio.putObject("input").putNull("turn_detection")
-                .putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
+        var input = audio.putObject("input").putNull("turn_detection");
+        input.putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
+        if (transcription == TranscriptionModel.OFF) {
+            input.putNull("transcription");
+        } else {
+            input.putObject("transcription").put("model", transcription.modelId());
+        }
         audio.putObject("output").put("voice", "marin")
                 .putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
         return update.toString();
@@ -71,7 +78,7 @@ final class SessionProtocol {
     String createResponse(ConversationTurn turn) {
         var event = command("response.create", turn.responseEventId());
         var response = event.putObject("response").put("max_output_tokens", MAX_OUTPUT_TOKENS);
-        response.putArray("output_modalities").add("text");
+        response.putArray("output_modalities").add(turn.isVoice() ? "audio" : "text");
         response.putObject("metadata").put(TURN_METADATA, turn.id);
         return event.toString();
     }
@@ -104,6 +111,24 @@ final class SessionProtocol {
         return hasText ? text.toString() : null;
     }
 
+    void reconcileVoiceTranscript(ConversationTurn turn, JsonNode response) throws IOException {
+        int outputIndex = 0;
+        for (var item : response.path("output")) {
+            if ("message".equals(item.path("type").textValue()) && "assistant".equals(item.path("role").textValue())) {
+                int contentIndex = 0;
+                for (var part : item.path("content")) {
+                    var type = part.path("type").textValue();
+                    var transcript = part.path("transcript").textValue();
+                    if ("output_audio".equals(type) && transcript != null) {
+                        turn.finishTranscriptPart(new OutputPart(outputIndex, contentIndex, transcript));
+                    }
+                    contentIndex++;
+                }
+            }
+            outputIndex++;
+        }
+    }
+
     // Read lifecycle fields and stream payloads without building a tree for every event.
     Event parse(String message) throws IOException {
         String type = null;
@@ -112,8 +137,11 @@ final class SessionProtocol {
         int outputCap = 0;
         boolean pcmOutput = false;
         boolean manualPcmInput = false;
+        String transcriptionModel = "";
         String responseId = null;
+        String itemId = null;
         String delta = null;
+        String transcript = null;
         int outputIndex = -1;
         int contentIndex = -1;
         try (var parser = factory.createParser(message)) {
@@ -127,9 +155,13 @@ final class SessionProtocol {
                     type = textValue(parser, value);
                 } else if ("response_id".equals(field)) {
                     responseId = textValue(parser, value);
+                } else if ("item_id".equals(field)) {
+                    itemId = textValue(parser, value);
                 } else if ("delta".equals(field) && value == JsonToken.VALUE_STRING) {
                     // The type may follow the delta, so decoding waits until the event is known.
                     delta = parser.getText();
+                } else if ("transcript".equals(field)) {
+                    transcript = textValue(parser, value);
                 } else if ("output_index".equals(field) && value == JsonToken.VALUE_NUMBER_INT) {
                     outputIndex = partIndex(parser);
                 } else if ("content_index".equals(field) && value == JsonToken.VALUE_NUMBER_INT) {
@@ -149,6 +181,13 @@ final class SessionProtocol {
                             pcmOutput = isPcmFormat(audio.path("output").path("format"));
                             var input = audio.path("input");
                             manualPcmInput = input.path("turn_detection").isNull() && isPcmFormat(input.path("format"));
+                            var transcription = input.path("transcription");
+                            if (!transcription.isNull() && !transcription.isMissingNode()) {
+                                transcriptionModel = transcription.path("model").textValue();
+                                if ("".equals(transcriptionModel)) {
+                                    transcriptionModel = null;
+                                }
+                            }
                         } else {
                             parser.skipChildren();
                         }
@@ -168,14 +207,24 @@ final class SessionProtocol {
                 if (!"realtime".equals(sessionType)) {
                     throw new IOException("Invalid session type");
                 }
-                yield new Event(type, requiredText(sessionId),
-                        pcmOutput && outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS, manualPcmInput, null, -1, null);
+                yield new Event(type, new Configuration(requiredText(sessionId),
+                        pcmOutput && outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS, manualPcmInput,
+                        transcriptionModel), null, null, null, null);
             }
             case "response.output_audio.delta" ->
-                    new Event(type, null, false, false, requiredText(responseId), decodedLength(delta), null);
-            case "response.output_text.delta" -> new Event(type, null, false, false, requiredText(responseId), -1,
-                    new TextDelta(outputIndex, contentIndex, delta));
-            default -> new Event(type, null, false, false, null, -1, null);
+                    new Event(type, null, requiredId(responseId), itemId, delta,
+                            new OutputPart(outputIndex, contentIndex, null));
+            case "response.output_text.delta", "response.output_audio_transcript.delta" ->
+                    new Event(type, null, requiredId(responseId), itemId, null,
+                            new OutputPart(outputIndex, contentIndex, delta));
+            case "response.output_audio.done", "response.output_audio_transcript.done" ->
+                    new Event(type, null, requiredId(responseId), itemId, null,
+                            new OutputPart(outputIndex, contentIndex, transcript));
+            case "conversation.item.input_audio_transcription.completed",
+                 "conversation.item.input_audio_transcription.failed" ->
+                    new Event(type, null, null, itemId, null, new OutputPart(-1, contentIndex, transcript));
+            case "input_audio_buffer.committed" -> new Event(type, null, null, itemId, null, null);
+            default -> new Event(type, null, null, null, null, null);
         };
     }
 
@@ -193,13 +242,13 @@ final class SessionProtocol {
                 || (rate.isIntegralNumber() && rate.canConvertToInt() && rate.intValue() == PCM_SAMPLE_RATE);
     }
 
-    private int decodedLength(String delta) throws IOException {
+    byte[] decodeAudio(String delta) throws IOException {
         if (delta == null) {
             throw new IOException("Invalid Realtime audio delta");
         }
         try {
-            // Only the length is used. The decoded PCM is discarded immediately.
-            return Base64Variants.getDefaultVariant().decode(delta).length;
+            // Frame alignment is checked only for PCM that enters the playback queue.
+            return Base64Variants.getDefaultVariant().decode(delta);
         } catch (IllegalArgumentException invalidBase64) {
             throw new IOException("Invalid Realtime audio delta");
         }
@@ -220,10 +269,20 @@ final class SessionProtocol {
         return value;
     }
 
-    record Event(String type, String sessionId, boolean outputConfigurationConfirmed,
-                 boolean inputConfigurationConfirmed, String responseId, int audioBytes, TextDelta textDelta) {
+    String requiredId(String value) throws IOException {
+        if (value != null && value.length() > MAX_ID_CHARS) {
+            throw new IOException("Realtime identifier limit exceeded");
+        }
+        return requiredText(value);
     }
 
-    record TextDelta(int outputIndex, int contentIndex, String text) {
+    record Configuration(String sessionId, boolean outputConfirmed, boolean inputConfirmed, String transcriptionModel) {
+    }
+
+    record Event(String type, Configuration configuration, String responseId, String itemId, String encodedAudio,
+                 OutputPart part) {
+    }
+
+    record OutputPart(int outputIndex, int contentIndex, String text) {
     }
 }

@@ -30,6 +30,8 @@
             <ProgressIndicator fx:id="sessionProgress" visible="false"
                                maxWidth="16" maxHeight="16"/>
             <Region HBox.hgrow="ALWAYS"/>
+            <Label text="Input transcription" styleClass="caption" labelFor="${transcriptionSelector}"/>
+            <ComboBox fx:id="transcriptionSelector" id="transcription-selector"/>
             <ComboBox fx:id="modelSelector" id="model-selector" disable="true"/>
         </HBox>
 

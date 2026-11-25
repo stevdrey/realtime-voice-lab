@@ -23,13 +23,23 @@ After giving explicit opt-in for a paid test, use a dedicated restricted key in 
 
 ## RVL-004 push-to-talk verification
 
-In a ready session, hold the microphone with the primary mouse button, or focus it and hold Space or Enter. The recording label shows elapsed captured audio and the meter shows the current input level. Release to send an in-memory take of up to 30 seconds. Escape or loss of focus during the hold discards the take. The voice turn appears as “Voice input” and receives a text reply. Playback and transcripts are tracked in [RVL-005](https://github.com/stevdrey/realtime-voice-lab/issues/11).
+In a ready session, hold the microphone with the primary mouse button, or focus it and hold Space or Enter. The recording label shows elapsed captured audio and the meter shows the current input level. Release to send an in-memory take of up to 30 seconds. Escape or loss of focus during the hold discards the take. The voice turn appears as “Voice input” and requests an audio reply.
 
 ```sh
 env -u OPENAI_API_KEY -u DISPLAY -u WAYLAND_DISPLAY ./gradlew --offline test --tests '*RealtimeAudioInputTest' --tests '*RealtimeVoiceLabAppTest'
 ```
 
 The synthetic checks exercise the audio format and explicit start, device closure on release/cancel/disconnect, the 30-second cap, empty and short takes, and ordered raw PCM appends followed by commit and response creation. The JavaFX journey exercises mouse release outside the button, keyboard capture, Escape, focus loss, window close and recording feedback. No physical input device or live Realtime session is needed.
+
+## RVL-005 playback and transcript verification
+
+Select **Input transcription** before connecting to enable approximate microphone transcripts for that session. The default is **Off**. The **Stop** button flushes playback and cancels a reply that is still generating. It stays available after the reply finishes generating while audio is still queued.
+
+```sh
+env -u OPENAI_API_KEY -u DISPLAY -u WAYLAND_DISPLAY ./gradlew --offline test --tests '*RealtimeAudioOutputTest' --tests '*RealtimeVoiceLabAppTest'
+```
+
+The fake socket and speaker verify playback starts before `response.done`, PCM stays in order across fragmented events, and late events cannot restart a finished or cancelled reply. The headless workspace exercises the speaker meter, Stop after generation, window-close cleanup and transcript updates while the device is active. Input results are matched to committed recordings, including out-of-order results and a redacted failure.
 
 ## Opt-in manual smoke across MVP features
 Use a dedicated restricted API key, headphones and own adult or synthetic speech.

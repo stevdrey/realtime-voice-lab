@@ -1,12 +1,15 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
-import java.util.EnumSet;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
+import io.github.stevdrey.realtimevoicelab.audio.SpeakerPlayback;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
+import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.SpeakerState;
+import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeTransport;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
@@ -30,22 +33,28 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.util.StringConverter;
 
 public final class WorkspaceController {
     private enum MicGesture {
         MOUSE, SPACE, ENTER
     }
 
+    private enum MicKeyScope {
+        WORKSPACE, MICROPHONE_ONLY
+    }
+
     private static final PseudoClass CONNECTED = PseudoClass.getPseudoClass("connected");
     private static final PseudoClass ERROR = PseudoClass.getPseudoClass("session-error");
     private static final PseudoClass DISCONNECT = PseudoClass.getPseudoClass("disconnect");
     private static final PseudoClass RECORDING = PseudoClass.getPseudoClass("recording");
+    private static final PseudoClass WAITING_FOR_SPEAKER = PseudoClass.getPseudoClass("waiting-for-speaker");
 
     private final RealtimeSession session;
     private final Tooltip connectTooltip = new Tooltip();
     private final Tooltip micTooltip = new Tooltip();
     private final AtomicBoolean renderPending = new AtomicBoolean();
-    private final EnumSet<KeyCode> heldMicKeys = EnumSet.noneOf(KeyCode.class);
+    private final EnumMap<KeyCode, MicKeyScope> heldMicKeys = new EnumMap<>(KeyCode.class);
     private RealtimeSession.State renderedState;
     private List<RealtimeSession.TurnView> renderedTurns = List.of();
     private boolean canSendText;
@@ -58,6 +67,9 @@ public final class WorkspaceController {
 
     @FXML
     private ComboBox<String> modelSelector;
+
+    @FXML
+    private ComboBox<TranscriptionModel> transcriptionSelector;
 
     @FXML
     private Region statusDot;
@@ -107,8 +119,8 @@ public final class WorkspaceController {
     @FXML
     private Button cancelButton;
 
-    WorkspaceController(RealtimeTransport transport, MicrophoneCapture microphone) {
-        session = new RealtimeSession(transport, this::scheduleRender, microphone);
+    WorkspaceController(RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker) {
+        session = new RealtimeSession(transport, this::scheduleRender, microphone, speaker);
     }
 
     @FXML
@@ -118,13 +130,30 @@ public final class WorkspaceController {
         sessionProgress.managedProperty().bind(sessionProgress.visibleProperty());
         modelSelector.accessibleTextProperty().bind(Bindings.createStringBinding(
                 () -> "Model: " + modelSelector.getValue(), modelSelector.valueProperty()));
+        transcriptionSelector.getItems().setAll(TranscriptionModel.values());
+        transcriptionSelector.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(TranscriptionModel model) {
+                return model == null || model == TranscriptionModel.OFF ? "Off" : model.modelId();
+            }
+
+            @Override
+            public TranscriptionModel fromString(String value) {
+                // The selector is read-only and never parses typed text.
+                return null;
+            }
+        });
+        transcriptionSelector.setValue(TranscriptionModel.OFF);
+        var transcriptionHelp = "Optional. Select a model before connecting to display approximate microphone transcripts.";
+        transcriptionSelector.setTooltip(new Tooltip(transcriptionHelp));
+        transcriptionSelector.setAccessibleHelp(transcriptionHelp);
 
         installUnavailableTooltip(settingsControl, settingsButton);
         installMicControls();
         connectButton.setTooltip(connectTooltip);
         connectButton.setOnAction(event -> {
             switch (renderedState) {
-                case DISCONNECTED, ERROR -> session.connect(modelSelector.getValue());
+                case DISCONNECTED, ERROR -> session.connect(modelSelector.getValue(), transcriptionSelector.getValue());
                 case CONNECTING, READY -> session.disconnect();
                 case CLOSING -> { }
             }
@@ -164,9 +193,10 @@ public final class WorkspaceController {
     void watchFocus(ObservableBooleanValue windowFocus) {
         windowFocus.addListener((observable, previous, focused) -> {
             if (!focused) {
+                // A release can occur outside this window. Keep only the microphone's repeat guard.
+                heldMicKeys.replaceAll((key, scope) -> MicKeyScope.MICROPHONE_ONLY);
                 finishMicGesture(false);
                 mouseHeld = false;
-                // Keep a held key latched so auto-repeat after refocus does not start a new take.
             }
         });
     }
@@ -198,7 +228,9 @@ public final class WorkspaceController {
             var key = event.getCode();
             var gesture = keyboardMicGesture(key);
             if (gesture != null) {
-                if (heldMicKeys.add(key) && !mouseHeld && activeMicGesture == null) {
+                // A repeat on the microphone after refocus restores its protection across controls.
+                var previousScope = heldMicKeys.put(key, MicKeyScope.WORKSPACE);
+                if (previousScope == null && !mouseHeld && activeMicGesture == null) {
                     startMicGesture(gesture);
                 }
                 event.consume();
@@ -206,7 +238,8 @@ public final class WorkspaceController {
         });
         root.addEventFilter(KeyEvent.KEY_RELEASED, event -> {
             var key = event.getCode();
-            if (heldMicKeys.remove(key)) {
+            var scope = heldMicKeys.remove(key);
+            if (scope != null && (scope == MicKeyScope.WORKSPACE || event.getTarget() == micButton)) {
                 if (activeMicGesture == keyboardMicGesture(key)) {
                     finishMicGesture(true);
                 }
@@ -214,7 +247,11 @@ public final class WorkspaceController {
             }
         });
         root.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-            if (event.getCode() == KeyCode.ESCAPE && activeMicGesture != null) {
+            var key = event.getCode();
+            // Consume repeats across controls while the window retains focus.
+            if (heldMicKeys.get(key) == MicKeyScope.WORKSPACE) {
+                event.consume();
+            } else if (key == KeyCode.ESCAPE && activeMicGesture != null) {
                 finishMicGesture(false);
                 event.consume();
             }
@@ -310,25 +347,43 @@ public final class WorkspaceController {
         canSendText = workspace.canSend();
         updateSendButton();
         cancelButton.setDisable(!workspace.canCancel());
-        renderMicrophone(workspace.microphone());
+        transcriptionSelector.setDisable(state != RealtimeSession.State.DISCONNECTED && state != RealtimeSession.State.ERROR);
+        renderAudio(workspace.microphone(), workspace.speaker());
         renderConversation(workspace.turns());
     }
 
-    private void renderMicrophone(RealtimeSession.MicrophoneView microphone) {
+    private void renderAudio(RealtimeSession.MicrophoneView microphone, RealtimeSession.SpeakerView speaker) {
         var state = microphone.state();
-        // Stay enabled while busy so focus does not jump to Disconnect. Busy presses are ignored by the session.
+        var speakerState = speaker.state();
+        boolean cleaningSpeaker = speakerState == SpeakerState.CLEANING_UP || speakerState == SpeakerState.CLEANUP_TIMEOUT;
+        var audioStatus = switch (speakerState) {
+            case IDLE -> microphone.canStart() ? "Hold to talk" : "";
+            case OPENING -> "Opening speaker…";
+            case SPEAKING -> "Speaking…";
+            case CLEANING_UP -> "Closing speaker…";
+            case CLEANUP_TIMEOUT -> "Audio unavailable. Waiting for the speaker to close.";
+            case UNAVAILABLE -> "Speaker unavailable. Check your output device.";
+        };
+        // Keep keyboard focus during speaker cleanup. The session prevents capture until the speaker is released.
         micButton.setDisable(renderedState != RealtimeSession.State.READY
                 || state == RealtimeSession.MicState.UNCONFIRMED);
+        micButton.pseudoClassStateChanged(WAITING_FOR_SPEAKER, cleaningSpeaker);
         micTooltip.setText(state == RealtimeSession.MicState.UNCONFIRMED ? "Manual PCM microphone input was not confirmed"
+                : cleaningSpeaker ? audioStatus
                 : renderedState == RealtimeSession.State.READY
                 ? "Hold the microphone or Space to record. Release to send. Esc cancels."
                 : "Microphone (connect to record)");
         boolean recording = state == RealtimeSession.MicState.RECORDING;
+        boolean speaking = speakerState == SpeakerState.SPEAKING;
+        boolean playing = speaking || speakerState == SpeakerState.OPENING;
         micButton.pseudoClassStateChanged(RECORDING, recording);
-        micLevel.setVisible(recording);
-        micLevel.setProgress(microphone.level());
+        micLevel.setVisible(recording || speaking);
+        micLevel.setAccessibleText(speaking ? "Speaker level" : "Microphone level");
+        micLevel.setProgress(speaking ? speaker.level() : microphone.level());
+        cancelButton.setText(playing ? "Stop" : "Cancel");
+        cancelButton.setAccessibleText(playing ? "Stop playback" : "Cancel turn");
         micStatus.setText(switch (state) {
-            case IDLE -> microphone.canStart() ? "Hold to talk" : "";
+            case IDLE -> audioStatus;
             case UNCONFIRMED -> "Manual PCM microphone input was not confirmed";
             case OPENING -> "Opening microphone…";
             case RECORDING -> String.format(Locale.ROOT, "Recording · %.1f s", microphone.seconds());
@@ -380,6 +435,8 @@ public final class WorkspaceController {
 
     private static final class TurnRow extends VBox {
         private final long number;
+        private final Label user = new Label("You");
+        private final Label input = new Label();
         private final Label reply = new Label();
         private final Label status = new Label();
 
@@ -392,9 +449,7 @@ public final class WorkspaceController {
             status.setWrapText(true);
             reply.managedProperty().bind(reply.visibleProperty());
             status.managedProperty().bind(status.visibleProperty());
-            var input = new Label(turn.input());
             input.setWrapText(true);
-            var user = new Label("You");
             var assistant = new Label("Assistant");
             user.getStyleClass().add("caption");
             assistant.getStyleClass().add("caption");
@@ -402,13 +457,21 @@ public final class WorkspaceController {
         }
 
         void update(RealtimeSession.TurnView turn) {
+            user.setText(turn.inputTranscript() == RealtimeSession.InputTranscriptState.COMPLETED
+                    ? "You · Approximate transcript" : "You");
+            input.setText(switch (turn.inputTranscript()) {
+                case OFF, COMPLETED -> turn.input();
+                case PENDING -> "Voice input · Transcribing…";
+                case FAILED -> "Voice input · Transcription unavailable";
+            });
             reply.setText(turn.output());
             reply.setVisible(!turn.output().isEmpty());
             var message = switch (turn.state()) {
                 case WAITING -> "Waiting for response…";
                 case RESPONDING -> "Responding…";
                 case CANCELLING -> "Cancelling…";
-                case COMPLETED -> turn.output().isEmpty() ? "No text returned" : "";
+                case COMPLETED -> turn.output().isEmpty()
+                        ? (turn.voice() ? "No transcript returned" : "No text returned") : "";
                 case CANCELLED -> "Response cancelled";
                 case FAILED -> "Request failed";
                 case INCOMPLETE -> "Response incomplete";

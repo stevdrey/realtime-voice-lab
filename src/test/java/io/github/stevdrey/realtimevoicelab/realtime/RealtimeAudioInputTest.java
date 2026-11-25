@@ -69,13 +69,13 @@ class RealtimeAudioInputTest {
             committed(socket);
             var response = json.readTree(socket.writes.getLast());
             assertEquals("response.create", response.path("type").asText());
-            assertEquals("text", response.path("response").path("output_modalities").get(0).asText());
+            assertEquals("audio", response.path("response").path("output_modalities").get(0).asText());
             assertEquals(512, response.path("response").path("max_output_tokens").asInt());
             assertEquals("Voice input", session.workspace().turns().getFirst().input());
             socket.text("""
                     {"type":"response.done","response":{"id":"audio-response","status":"completed",
                      "metadata":{"rvl_turn":"rvl-1"},"output":[{"type":"message","role":"assistant",
-                     "content":[{"type":"output_text","text":"Synthetic reply"}]}]}}
+                     "content":[{"type":"output_audio","transcript":"Synthetic reply"}]}]}}
                     """, true);
             assertEquals("Synthetic reply", session.workspace().turns().getFirst().output());
             assertTrue(session.workspace().canSend());
