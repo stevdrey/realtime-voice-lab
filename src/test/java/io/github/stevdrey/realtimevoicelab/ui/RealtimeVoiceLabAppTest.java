@@ -402,6 +402,72 @@ class RealtimeVoiceLabAppTest {
         }
     }
 
+    @Test
+    void firstComposerEnterWorksAfterTheMicrophoneKeyIsReleasedOutsideTheWindow() throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var windowFocus = new SimpleBooleanProperty(true);
+        var stage = onFxThread(Stage::new);
+        var draft = "Synthetic draft after switching windows";
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone(), windowFocus);
+                connectButton(stage).fire();
+                stage.requestFocus();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.ready();
+            awaitOnFxThread(stage::isFocused, "Workspace never received window focus");
+            onFxThread(() -> {
+                var mic = stage.getScene().lookup("#mic-button");
+                mic.requestFocus();
+                assertTrue(mic.isFocused());
+                pressFocusedKey(stage, KeyCode.ENTER);
+                return null;
+            });
+            microphone.queueBlocks(3);
+            awaitOnFxThread(() -> hasRecordingLevel(stage), "Enter did not start recording");
+
+            onFxThread(() -> {
+                windowFocus.set(false);
+                var otherScene = new Scene(new Region());
+                Event.fireEvent(otherScene.getRoot(), new KeyEvent(KeyEvent.KEY_RELEASED, "", "", KeyCode.ENTER,
+                        false, false, false, false));
+                return null;
+            });
+            awaitOnFxThread(() -> microphone.closes.get() == 1 && "Hold to talk".equals(micStatus(stage)),
+                    "Window blur did not discard the microphone take");
+            assertEquals(1, socket.writes.size());
+
+            onFxThread(() -> {
+                windowFocus.set(true);
+                var composer = (TextField) stage.getScene().lookup("#text-composer");
+                composer.setText(draft);
+                composer.requestFocus();
+                assertTrue(composer.isFocused());
+                assertFalse(stage.getScene().lookup("#send-text").isDisabled());
+                pressFocusedKey(stage, KeyCode.ENTER);
+                assertEquals("", composer.getText());
+                assertEquals(2, socket.writes.size());
+                assertTrue(socket.writes.getLast().contains("conversation.item.create"));
+                assertTrue(socket.writes.getLast().contains(draft));
+                var releaseObserved = new CompletableFuture<Void>();
+                composer.addEventFilter(KeyEvent.KEY_RELEASED, event -> releaseObserved.complete(null));
+                Event.fireEvent(composer, new KeyEvent(KeyEvent.KEY_RELEASED, "", "", KeyCode.ENTER,
+                        false, false, false, false));
+                assertTrue(releaseObserved.isDone(), "The composer did not receive the fresh Enter release");
+                return null;
+            });
+            assertEquals(1, microphone.opens.get());
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
     private void recordWithKey(Stage stage, FakeMicrophone microphone, KeyCode key) throws Exception {
         onFxThread(() -> {
             new Robot().keyPress(key);

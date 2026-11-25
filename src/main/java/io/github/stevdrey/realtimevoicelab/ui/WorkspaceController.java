@@ -1,6 +1,6 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
-import java.util.EnumSet;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -40,6 +40,10 @@ public final class WorkspaceController {
         MOUSE, SPACE, ENTER
     }
 
+    private enum MicKeyScope {
+        WORKSPACE, MICROPHONE_ONLY
+    }
+
     private static final PseudoClass CONNECTED = PseudoClass.getPseudoClass("connected");
     private static final PseudoClass ERROR = PseudoClass.getPseudoClass("session-error");
     private static final PseudoClass DISCONNECT = PseudoClass.getPseudoClass("disconnect");
@@ -50,7 +54,7 @@ public final class WorkspaceController {
     private final Tooltip connectTooltip = new Tooltip();
     private final Tooltip micTooltip = new Tooltip();
     private final AtomicBoolean renderPending = new AtomicBoolean();
-    private final EnumSet<KeyCode> heldMicKeys = EnumSet.noneOf(KeyCode.class);
+    private final EnumMap<KeyCode, MicKeyScope> heldMicKeys = new EnumMap<>(KeyCode.class);
     private RealtimeSession.State renderedState;
     private List<RealtimeSession.TurnView> renderedTurns = List.of();
     private boolean canSendText;
@@ -189,9 +193,10 @@ public final class WorkspaceController {
     void watchFocus(ObservableBooleanValue windowFocus) {
         windowFocus.addListener((observable, previous, focused) -> {
             if (!focused) {
+                // A release can occur outside this window. Keep only the microphone's repeat guard.
+                heldMicKeys.replaceAll((key, scope) -> MicKeyScope.MICROPHONE_ONLY);
                 finishMicGesture(false);
                 mouseHeld = false;
-                // Keep a held key latched so auto-repeat after refocus does not start a new take.
             }
         });
     }
@@ -223,7 +228,8 @@ public final class WorkspaceController {
             var key = event.getCode();
             var gesture = keyboardMicGesture(key);
             if (gesture != null) {
-                if (heldMicKeys.add(key) && !mouseHeld && activeMicGesture == null) {
+                if (heldMicKeys.putIfAbsent(key, MicKeyScope.WORKSPACE) == null
+                        && !mouseHeld && activeMicGesture == null) {
                     startMicGesture(gesture);
                 }
                 event.consume();
@@ -231,7 +237,8 @@ public final class WorkspaceController {
         });
         root.addEventFilter(KeyEvent.KEY_RELEASED, event -> {
             var key = event.getCode();
-            if (heldMicKeys.remove(key)) {
+            var scope = heldMicKeys.remove(key);
+            if (scope != null && (scope == MicKeyScope.WORKSPACE || event.getTarget() == micButton)) {
                 if (activeMicGesture == keyboardMicGesture(key)) {
                     finishMicGesture(true);
                 }
@@ -240,8 +247,8 @@ public final class WorkspaceController {
         });
         root.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             var key = event.getCode();
-            // Repeats belong to the microphone until release, even after focus moves.
-            if (heldMicKeys.contains(key)) {
+            // Consume repeats across controls while the window retains focus.
+            if (heldMicKeys.get(key) == MicKeyScope.WORKSPACE) {
                 event.consume();
             } else if (key == KeyCode.ESCAPE && activeMicGesture != null) {
                 finishMicGesture(false);
