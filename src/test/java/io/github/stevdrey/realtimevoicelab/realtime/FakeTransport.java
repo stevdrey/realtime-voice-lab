@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 public final class FakeTransport implements RealtimeTransport {
     public final List<Socket> attempts = new ArrayList<>();
     public boolean closed;
@@ -63,12 +65,33 @@ public final class FakeTransport implements RealtimeTransport {
         }
 
         public void updated(String transcriptionModel) {
-            var transcription = transcriptionModel == null ? "null" : "{\"model\":\"" + transcriptionModel + "\"}";
-            text("""
-                    {"type":"session.updated","session":{"type":"realtime","id":"test-session","max_output_tokens":512,
-                     "audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"turn_detection":null,"transcription":%s},
-                              "output":{"format":{"type":"audio/pcm","rate":24000}}}}}
-                    """.formatted(transcription), true);
+            updated(SessionSettings.DEFAULT, transcriptionModel);
+        }
+
+        public void updated(SessionSettings settings, String transcriptionModel) {
+            updated(settings, transcriptionModel, "audio/pcm");
+        }
+
+        void updated(SessionSettings settings, String transcriptionModel, String outputFormat) {
+            var event = new ObjectMapper().createObjectNode().put("type", "session.updated");
+            var session = event.putObject("session").put("type", "realtime").put("id", "test-session")
+                    .put("max_output_tokens", 512).put("model", settings.model().id())
+                    .put("instructions", settings.instructions());
+            session.putArray("output_modalities").add(settings.mode().modality());
+            var audio = session.putObject("audio");
+            var input = audio.putObject("input").putNull("turn_detection");
+            input.putObject("format").put("type", "audio/pcm").put("rate", 24000);
+            if (transcriptionModel == null) {
+                input.putNull("transcription");
+            } else {
+                input.putObject("transcription").put("model", transcriptionModel);
+            }
+            var output = audio.putObject("output").put("voice", settings.voice().id())
+                    .putObject("format").put("type", outputFormat);
+            if ("audio/pcm".equals(outputFormat)) {
+                output.put("rate", 24000);
+            }
+            text(event.toString(), true);
         }
 
         public void ready() {

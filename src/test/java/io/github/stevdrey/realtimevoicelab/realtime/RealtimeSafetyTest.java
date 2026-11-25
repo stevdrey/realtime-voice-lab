@@ -521,7 +521,7 @@ class RealtimeSafetyTest {
     @Test
     void acceptsPcmWithTheImplicitGaSampleRate() {
         acknowledgeConfiguration("""
-                ,"max_output_tokens":512,"audio":{"output":{"format":{"type":"audio/pcm"}}}
+                ,"max_output_tokens":512,"audio":{"output":{"voice":"marin","format":{"type":"audio/pcm"}}}
                 """);
         assertEquals(new RealtimeSession.Status(State.READY, null), session.status());
     }
@@ -553,7 +553,8 @@ class RealtimeSafetyTest {
         socket.created();
         socket.textWrite.complete(socket);
         socket.text("""
-                {"type":"session.updated","session":{"type":"realtime","id":"test-session"%s}}
+                {"type":"session.updated","session":{"type":"realtime","id":"test-session",
+                 "model":"gpt-realtime-2.1-mini","instructions":"Respond briefly.","output_modalities":["audio"]%s}}
                 """.formatted(fields), true);
         return socket;
     }

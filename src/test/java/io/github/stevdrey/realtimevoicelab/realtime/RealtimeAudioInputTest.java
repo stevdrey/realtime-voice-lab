@@ -242,8 +242,9 @@ class RealtimeAudioInputTest {
             socket.textWrite.complete(socket);
             socket.text("""
                     {"type":"session.updated","session":{"type":"realtime","id":"test-session","max_output_tokens":512,
+                     "model":"gpt-realtime-2.1-mini","instructions":"Respond briefly.","output_modalities":["audio"],
                      "audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"turn_detection":{"type":"server_vad"}},
-                              "output":{"format":{"type":"audio/pcm","rate":24000}}}}}
+                              "output":{"voice":"marin","format":{"type":"audio/pcm","rate":24000}}}}}
                     """, true);
             assertEquals(UNCONFIRMED, session.workspace().microphone().state());
             assertTrue(session.workspace().canSend());

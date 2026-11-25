@@ -18,6 +18,11 @@ import io.github.stevdrey.realtimevoicelab.audio.FakeSpeaker;
 import io.github.stevdrey.realtimevoicelab.realtime.FakeTransport;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Preset;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Voice;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.collections.ListChangeListener;
@@ -42,6 +47,7 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
 import javafx.scene.robot.Robot;
+import javafx.scene.text.Text;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
@@ -53,6 +59,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -83,7 +90,7 @@ class RealtimeVoiceLabAppTest {
                 return null;
             });
 
-            assertHoveredTooltip(stage, "#settings-button", "Settings (unavailable)");
+            assertHoveredTooltip(stage, "#settings-button", "Settings");
             assertHoveredTooltip(stage, "#mic-button", "Microphone (connect to record)");
             assertHoveredTooltip(stage, "#connect-button", "Connect");
         } finally {
@@ -102,13 +109,13 @@ class RealtimeVoiceLabAppTest {
 
             var scene = stage.getScene();
             var model = (ComboBox<?>) scene.lookup("#model-selector");
-            assertEquals("gpt-realtime-2.1-mini", model.getValue());
+            assertEquals(Model.MINI, model.getValue());
             assertEquals("Model: gpt-realtime-2.1-mini", model.getAccessibleText());
-            assertTrue(model.isDisabled());
+            assertFalse(model.isDisabled());
             var transcription = (ComboBox<?>) scene.lookup("#transcription-selector");
             assertEquals(TranscriptionModel.OFF, transcription.getValue());
             assertFalse(transcription.isDisabled());
-            assertDisabledButton(scene, "#settings-button", "Settings");
+            assertFalse(scene.lookup("#settings-button").isDisabled());
             assertDisabledButton(scene, "#mic-button", "Microphone");
             assertSession(stage, "Disconnected", "Connect", false);
 
@@ -128,6 +135,168 @@ class RealtimeVoiceLabAppTest {
             assertSame(conversation, conversationHeading.getLabelFor());
             assertSame(events, inspectorHeading.getLabelFor());
         });
+    }
+
+    @Test
+    void editsSessionSettingsAndShowsOnlyAcknowledgedChangesInTheWorkspace() throws Exception {
+        var transport = new FakeTransport();
+        var stage = onFxThread(Stage::new);
+        var saved = new SessionSettings(Model.STANDARD, Voice.CEDAR, Mode.TEXT, "Synthetic coaching instructions.");
+        var applied = new SessionSettings(Model.STANDARD, Voice.MARIN, Mode.AUDIO, Preset.FREE_CONVERSATION.instructions());
+        var transcription = TranscriptionModel.REALTIME_WHISPER;
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport);
+                var dialog = openSettings(stage);
+                var root = (Region) dialog.getScene().getRoot();
+                root.applyCss();
+                assertEquals(Color.web("#151923"), root.getBackground().getFills().getFirst().getFill());
+                assertEquals(Model.MINI, combo(dialog, "#settings-model").getValue());
+                assertEquals(Preset.FREE_CONVERSATION, combo(dialog, "#settings-preset").getValue());
+                this.<Preset>combo(dialog, "#settings-preset").setValue(Preset.ENGLISH_COACH);
+                var instructions = (TextArea) dialog.getScene().lookup("#settings-instructions");
+                assertEquals(Preset.ENGLISH_COACH.instructions(), instructions.getText());
+                instructions.setText(saved.instructions());
+                assertNull(combo(dialog, "#settings-preset").getValue());
+                this.<Model>combo(dialog, "#settings-model").setValue(saved.model());
+                this.<Mode>combo(dialog, "#settings-mode").setValue(saved.mode());
+                this.<Voice>combo(dialog, "#settings-voice").setValue(saved.voice());
+                ((Button) dialog.getScene().lookup("#apply-settings")).fire();
+                assertFalse(dialog.isShowing());
+                assertTrue(transport.attempts.isEmpty());
+                assertEquals(Model.STANDARD, combo(stage, "#model-selector").getValue());
+                this.<TranscriptionModel>combo(stage, "#transcription-selector").setValue(transcription);
+                connectButton(stage).fire();
+                assertSession(stage, "Connecting…", "Cancel connection", false);
+                assertTrue(stage.getScene().lookup("#settings-button").isDisabled());
+                return null;
+            });
+            assertHoveredTooltip(stage, "#settings-button", "Settings (unavailable while busy)");
+            var socket = transport.attempts.getFirst();
+            assertEquals(Model.STANDARD.id(), socket.model);
+            socket.opened();
+            socket.created();
+            socket.textWrite.complete(socket);
+            socket.updated(saved, transcription.modelId());
+
+            onFxThread(() -> {
+                assertSession(stage, "Connected", "Disconnect", false);
+                assertTrue(stage.getScene().lookup("#mic-button").isDisabled());
+                var dialog = openSettings(stage);
+                assertTrue(combo(dialog, "#settings-model").isDisabled());
+                assertFalse(combo(dialog, "#settings-voice").isDisabled());
+                this.<Voice>combo(dialog, "#settings-voice").setValue(applied.voice());
+                this.<Mode>combo(dialog, "#settings-mode").setValue(applied.mode());
+                this.<Preset>combo(dialog, "#settings-preset").setValue(Preset.FREE_CONVERSATION);
+                ((Button) dialog.getScene().lookup("#apply-settings")).fire();
+                assertSession(stage, "Applying settings…", "Disconnect", false);
+                assertEquals("Text", ((Label) stage.getScene().lookup("#session-mode")).getText());
+                assertTrue(stage.getScene().lookup("#mic-button").isDisabled());
+                return null;
+            });
+            socket.updated(applied, transcription.modelId());
+
+            onFxThread(() -> {
+                assertSession(stage, "Connected", "Disconnect", false);
+                assertEquals("Audio", ((Label) stage.getScene().lookup("#session-mode")).getText());
+                assertFalse(stage.getScene().lookup("#mic-button").isDisabled());
+                return null;
+            });
+            socket.text("""
+                    {"type":"response.output_audio.delta","response_id":"synthetic-audio","item_id":"item",
+                     "output_index":0,"content_index":0,"delta":"AAA="}
+                    """, true);
+            onFxThread(() -> {
+                var dialog = openSettings(stage);
+                assertTrue(combo(dialog, "#settings-model").isDisabled());
+                assertTrue(combo(dialog, "#settings-voice").isDisabled());
+                var help = (Label) dialog.getScene().lookup("#settings-reconnect-help");
+                assertTrue(help.getText().contains("reconnect to change the model or voice"));
+                ((TextArea) dialog.getScene().lookup("#settings-instructions")).setText("Synthetic rejected instructions.");
+                ((Button) dialog.getScene().lookup("#apply-settings")).fire();
+                return null;
+            });
+            socket.text("""
+                    {"type":"error","error":{"event_id":"rvl-settings-3","message":"private provider details"}}
+                    """, true);
+            onFxThread(() -> {
+                assertSession(stage, "Settings rejected. Review them and reconnect.", "Connect", false);
+                var root = (Region) stage.getScene().getRoot();
+                root.resize(760, 520);
+                root.applyCss();
+                root.layout();
+                var status = (Label) root.lookup("#session-status");
+                assertEquals(status.getText(), ((Text) status.lookup(".text")).getText());
+                assertTrue(stage.getScene().lookup("#mic-button").isDisabled());
+                var dialog = openSettings(stage);
+                assertFalse(combo(dialog, "#settings-model").isDisabled());
+                assertFalse(combo(dialog, "#settings-voice").isDisabled());
+                var instructions = (TextArea) dialog.getScene().lookup("#settings-instructions");
+                assertEquals(applied.instructions(), instructions.getText());
+                instructions.setText("a".repeat(SessionSettings.MAX_INSTRUCTION_CHARS - 10));
+                instructions.end();
+                instructions.replaceSelection("b".repeat(20));
+                assertEquals(SessionSettings.MAX_INSTRUCTION_CHARS, instructions.getLength());
+                assertEquals(SessionSettings.MAX_INSTRUCTION_CHARS, instructions.getCaretPosition());
+                connectButton(stage).fire();
+                return null;
+            });
+            awaitOnFxThread(() -> Window.getWindows().stream().noneMatch(window -> window instanceof Stage dialog
+                    && "Session Settings".equals(dialog.getTitle())), "A session change did not close the settings dialog");
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    @Test
+    void truncatesInstructionsWithoutSplittingSurrogatePairs() throws Exception {
+        withWindow(stage -> {
+            var dialog = openSettings(stage);
+            try {
+                var instructions = (TextArea) dialog.getScene().lookup("#settings-instructions");
+                int limit = SessionSettings.MAX_INSTRUCTION_CHARS;
+                var emoji = "\uD83C\uDFAF";
+                var oneUnitLeft = "a".repeat(limit - 1);
+                instructions.setText(oneUnitLeft);
+                instructions.end();
+                instructions.replaceSelection(emoji);
+                assertEquals(oneUnitLeft, instructions.getText());
+                assertEquals(limit - 1, instructions.getCaretPosition());
+
+                var twoUnitsLeft = "a".repeat(limit - 2);
+                instructions.setText(twoUnitsLeft);
+                instructions.end();
+                instructions.replaceSelection(emoji + "b");
+                var full = twoUnitsLeft + emoji;
+                assertEquals(full, instructions.getText());
+                assertEquals(limit, instructions.getCaretPosition());
+
+                instructions.selectRange(1, 3);
+                instructions.replaceSelection(emoji + "b");
+                assertEquals("a" + emoji + full.substring(3), instructions.getText());
+                assertEquals(limit, instructions.getLength());
+                assertEquals(3, instructions.getCaretPosition());
+                assertEquals(3, instructions.getAnchor());
+            } finally {
+                dialog.close();
+            }
+        });
+    }
+
+    private Stage openSettings(Stage owner) {
+        ((Button) owner.getScene().lookup("#settings-button")).fire();
+        return Window.getWindows().stream()
+                .filter(window -> window instanceof Stage dialog && dialog.getOwner() == owner
+                        && "Session Settings".equals(dialog.getTitle()))
+                .map(Stage.class::cast).findFirst().orElseThrow();
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> ComboBox<T> combo(Stage stage, String selector) {
+        return (ComboBox<T>) stage.getScene().lookup(selector);
     }
 
     @Test

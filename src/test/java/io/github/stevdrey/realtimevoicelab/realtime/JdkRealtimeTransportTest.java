@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
@@ -18,8 +19,10 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.DEFAULT_MODEL;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -67,14 +70,11 @@ class JdkRealtimeTransportTest {
     }
 
     @Test
-    void modelCannotChangeEndpointOrInjectQueryParameters() throws Exception {
-        var transport = new JdkRealtimeTransport(() -> "synthetic-token", () -> fail("Unexpected socket builder"));
-        var failed = new CountDownLatch(2);
-        try (var session = new RealtimeSession(transport, failed::countDown)) {
-            session.connect("mini&model=another-model");
-            assertTrue(failed.await(5, TimeUnit.SECONDS));
-            assertEquals(new RealtimeSession.Status(RealtimeSession.State.ERROR,
-                    RealtimeSession.Failure.CONNECTION), session.status());
+    void modelCannotChangeEndpointOrInjectQueryParameters() {
+        try (var transport = new JdkRealtimeTransport(() -> "synthetic-token", () -> fail("Unexpected socket builder"))) {
+            var opening = transport.open("mini&model=another-model", new WebSocket.Listener() {});
+            var failure = assertThrows(ExecutionException.class, () -> opening.get(5, TimeUnit.SECONDS));
+            assertInstanceOf(IllegalArgumentException.class, failure.getCause());
         }
     }
 

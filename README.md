@@ -6,6 +6,8 @@ A small JavaFX desktop playground for learning OpenAI Realtime API directly from
 
 The Event Inspector shows the latest 256 Realtime events in memory. Filter by type, direction or event ID (shown in the row tooltip and JSON), then select a row and expand **Redacted JSON**. Audio chunks show their decoded byte counts. See [RVL-006](../../issues/12).
 
+Open **Settings** to choose a model, voice and mode or edit instructions from the Free Conversation and English Coach presets. In Text mode, the microphone is disabled. Typed messages receive text replies in both modes. See [RVL-007](../../issues/13).
+
 ## Goals
 - Inspect GA WebSocket events and learn the session lifecycle.
 - Talk to `gpt-realtime-2.1-mini` using text and push-to-talk audio.
