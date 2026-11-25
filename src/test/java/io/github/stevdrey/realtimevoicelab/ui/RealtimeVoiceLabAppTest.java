@@ -402,8 +402,9 @@ class RealtimeVoiceLabAppTest {
         }
     }
 
-    @Test
-    void firstComposerEnterWorksAfterTheMicrophoneKeyIsReleasedOutsideTheWindow() throws Exception {
+    @ParameterizedTest(name = "Enter stays pressed outside the window: {0}")
+    @ValueSource(booleans = {false, true})
+    void distinguishesFreshComposerEnterFromMicrophoneRepeatsAfterWindowBlur(boolean enterStillHeld) throws Exception {
         var transport = new FakeTransport();
         var microphone = new FakeMicrophone();
         var windowFocus = new SimpleBooleanProperty(true);
@@ -431,9 +432,11 @@ class RealtimeVoiceLabAppTest {
 
             onFxThread(() -> {
                 windowFocus.set(false);
-                var otherScene = new Scene(new Region());
-                Event.fireEvent(otherScene.getRoot(), new KeyEvent(KeyEvent.KEY_RELEASED, "", "", KeyCode.ENTER,
-                        false, false, false, false));
+                if (!enterStillHeld) {
+                    var otherScene = new Scene(new Region());
+                    Event.fireEvent(otherScene.getRoot(), new KeyEvent(KeyEvent.KEY_RELEASED, "", "", KeyCode.ENTER,
+                            false, false, false, false));
+                }
                 return null;
             });
             awaitOnFxThread(() -> microphone.closes.get() == 1 && "Hold to talk".equals(micStatus(stage)),
@@ -442,11 +445,23 @@ class RealtimeVoiceLabAppTest {
 
             onFxThread(() -> {
                 windowFocus.set(true);
+                if (enterStillHeld) {
+                    assertTrue(stage.getScene().lookup("#mic-button").isFocused());
+                    pressFocusedKey(stage, KeyCode.ENTER);
+                    assertEquals("Hold to talk", micStatus(stage), "The repeat restarted microphone capture");
+                }
                 var composer = (TextField) stage.getScene().lookup("#text-composer");
                 composer.setText(draft);
                 composer.requestFocus();
                 assertTrue(composer.isFocused());
                 assertFalse(stage.getScene().lookup("#send-text").isDisabled());
+                if (enterStillHeld) {
+                    pressFocusedKey(stage, KeyCode.ENTER);
+                    assertEquals(draft, composer.getText(), "A microphone repeat sent the draft");
+                    assertEquals(1, socket.writes.size());
+                    Event.fireEvent(composer, new KeyEvent(KeyEvent.KEY_RELEASED, "", "", KeyCode.ENTER,
+                            false, false, false, false));
+                }
                 pressFocusedKey(stage, KeyCode.ENTER);
                 assertEquals("", composer.getText());
                 assertEquals(2, socket.writes.size());

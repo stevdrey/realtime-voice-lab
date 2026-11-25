@@ -228,8 +228,9 @@ public final class WorkspaceController {
             var key = event.getCode();
             var gesture = keyboardMicGesture(key);
             if (gesture != null) {
-                if (heldMicKeys.putIfAbsent(key, MicKeyScope.WORKSPACE) == null
-                        && !mouseHeld && activeMicGesture == null) {
+                // A repeat on the microphone after refocus restores its protection across controls.
+                var previousScope = heldMicKeys.put(key, MicKeyScope.WORKSPACE);
+                if (previousScope == null && !mouseHeld && activeMicGesture == null) {
                     startMicGesture(gesture);
                 }
                 event.consume();
