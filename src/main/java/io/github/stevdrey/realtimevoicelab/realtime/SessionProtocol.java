@@ -290,6 +290,11 @@ final class SessionProtocol {
     }
 
     record Command(String type, String eventId, String message, Integer audioBytes) {
+        // The message can hold user text or audio, so it never appears in diagnostics.
+        @Override
+        public String toString() {
+            return "Command[type=" + type + ", eventId=" + eventId + ", audioBytes=" + audioBytes + "]";
+        }
     }
 
     record Event(String type, String eventId, Configuration configuration, String responseId, String itemId,

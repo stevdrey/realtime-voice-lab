@@ -54,6 +54,7 @@ public final class WorkspaceController {
     private final Tooltip connectTooltip = new Tooltip();
     private final Tooltip micTooltip = new Tooltip();
     private final AtomicBoolean renderPending = new AtomicBoolean();
+    private final AtomicBoolean inspectorRenderPending = new AtomicBoolean();
     private final EnumMap<KeyCode, MicKeyScope> heldMicKeys = new EnumMap<>(KeyCode.class);
     private RealtimeSession.State renderedState;
     private List<RealtimeSession.TurnView> renderedTurns = List.of();
@@ -123,7 +124,8 @@ public final class WorkspaceController {
     private EventInspectorController eventInspectorController;
 
     WorkspaceController(RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker) {
-        session = new RealtimeSession(transport, this::scheduleRender, microphone, speaker, this::scheduleRender);
+        session = new RealtimeSession(transport, this::scheduleRender, microphone, speaker,
+                this::scheduleInspectorRender);
     }
 
     @FXML
@@ -323,6 +325,18 @@ public final class WorkspaceController {
         }
     }
 
+    // Event bursts refresh only the inspector, not the whole workspace.
+    private void scheduleInspectorRender() {
+        if (inspectorRenderPending.compareAndSet(false, true)) {
+            Platform.runLater(() -> {
+                inspectorRenderPending.set(false);
+                if (!disposed) {
+                    eventInspectorController.render(session.inspectedEvents());
+                }
+            });
+        }
+    }
+
     private void renderSession() {
         var workspace = session.workspace();
         var status = workspace.status();
@@ -356,7 +370,6 @@ public final class WorkspaceController {
         transcriptionSelector.setDisable(state != RealtimeSession.State.DISCONNECTED && state != RealtimeSession.State.ERROR);
         renderAudio(workspace.microphone(), workspace.speaker());
         renderConversation(workspace.turns());
-        eventInspectorController.render(session.inspectedEvents());
     }
 
     private void renderAudio(RealtimeSession.MicrophoneView microphone, RealtimeSession.SpeakerView speaker) {

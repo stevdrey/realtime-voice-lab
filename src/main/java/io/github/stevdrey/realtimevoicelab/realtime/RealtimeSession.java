@@ -742,6 +742,7 @@ public final class RealtimeSession implements AutoCloseable {
     private void receive(Attempt attempt, CharSequence fragment, boolean last) throws IOException {
         if (attempt.discardingMessage) {
             attempt.discardingMessage = !last;
+            checkSessionTime(attempt);
             return;
         }
         int buffered = attempt.message == null ? 0 : attempt.message.length();
@@ -749,7 +750,8 @@ public final class RealtimeSession implements AutoCloseable {
             // Closing sockets drain the rest of an oversized message so its tail cannot start a new one.
             attempt.message = null;
             attempt.discardingMessage = !last;
-            throw new IOException("Realtime message limit exceeded");
+            rejectIncoming(attempt, new IOException("Realtime message limit exceeded"));
+            return;
         }
         String message;
         if (last && attempt.message == null) {
@@ -760,19 +762,27 @@ public final class RealtimeSession implements AutoCloseable {
             }
             attempt.message.append(fragment);
             if (!last) {
+                // No inspector row precedes a partial frame, so the limit can stop the session here.
+                checkSessionTime(attempt);
                 return;
             }
             message = attempt.message.toString();
             attempt.message = null;
         }
 
-        var event = protocol.parse(message);
+        SessionProtocol.Event event;
+        try {
+            event = protocol.parse(message);
+        } catch (IOException invalidEvent) {
+            rejectIncoming(attempt, invalidEvent);
+            return;
+        }
         if ("response.output_audio.delta".equals(event.type())) {
             receiveAudioEvent(attempt, event);
             return;
         }
         inspectIncoming(event, null);
-        if (status.state() == State.CLOSING) {
+        if (!admitIncoming(attempt)) {
             return;
         }
         switch (event.type()) {
@@ -935,20 +945,40 @@ public final class RealtimeSession implements AutoCloseable {
         eventsChanged.run();
     }
 
+    // Record the frame before limits run so a resulting cancellation follows its cause in the inspector.
+    private void rejectIncoming(Attempt attempt, IOException error) throws IOException {
+        inspector.invalidIncoming();
+        eventsChanged.run();
+        if (admitIncoming(attempt)) {
+            throw error;
+        }
+    }
+
+    private boolean admitIncoming(Attempt attempt) {
+        return status.state() != State.CLOSING && withinSessionTime(attempt);
+    }
+
+    private void checkSessionTime(Attempt attempt) {
+        if (status.state() != State.CLOSING) {
+            withinSessionTime(attempt);
+        }
+    }
+
     private void receiveAudioEvent(Attempt attempt, SessionProtocol.Event event) throws IOException {
-        boolean process = status.state() == State.READY && !attempt.finishedResponses.contains(event.responseId());
         byte[] pcm;
         try {
             pcm = protocol.decodeAudio(event.encodedAudio());
         } catch (IOException invalidAudio) {
             inspectIncoming(event, null);
-            if (process) {
+            if (admitIncoming(attempt) && status.state() == State.READY
+                    && !attempt.finishedResponses.contains(event.responseId())) {
                 throw invalidAudio;
             }
             return;
         }
         inspectIncoming(event, pcm.length);
-        if (!process) {
+        if (!admitIncoming(attempt) || status.state() != State.READY
+                || attempt.finishedResponses.contains(event.responseId())) {
             return;
         }
         accountForAudio(attempt, event.responseId(), pcm.length);
@@ -1397,9 +1427,7 @@ public final class RealtimeSession implements AutoCloseable {
         @Override
         public CompletableFuture<Void> onText(WebSocket webSocket, CharSequence fragment, boolean last) {
             synchronized (RealtimeSession.this) {
-                if (active == this && status.state() != State.CLOSING) {
-                    withinSessionTime(this);
-                }
+                // receive checks the session time after inspecting each complete frame.
                 if (active == this) {
                     try {
                         receive(this, fragment, last);

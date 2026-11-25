@@ -87,4 +87,33 @@ class EventInspectorTest {
         transport.attempts.getFirst().text("{\"type\":\"rate_limits.updated\"}", true);
         assertTrue(session.inspectedEvents().isEmpty());
     }
+
+    @Test
+    void recordsTheInvalidEventThatEndsTheSession() {
+        var transport = new FakeTransport();
+        try (var session = new RealtimeSession(transport, () -> {})) {
+            session.connect(RealtimeSession.DEFAULT_MODEL);
+            var socket = transport.attempts.getFirst();
+            socket.ready();
+            socket.text("{\"type\":\"response.output_text.delta\",\"delta\":\"synthetic-private-text\"}", true);
+
+            var invalid = session.inspectedEvents().getLast();
+            assertEquals("Invalid event", invalid.type());
+            assertEquals(EventInspector.Direction.INCOMING, invalid.direction());
+            assertNull(invalid.eventId());
+            assertFalse(invalid.jsonDetail().contains("synthetic-private-text"));
+            assertEquals(new RealtimeSession.Status(RealtimeSession.State.ERROR, RealtimeSession.Failure.PROTOCOL),
+                    session.status());
+        }
+    }
+
+    @Test
+    void commandDiagnosticsExcludeThePayload() {
+        var protocol = new SessionProtocol();
+        var append = protocol.appendAudio("rvl-1-audio-1", new byte[] {1, 2, 3, 4});
+        assertFalse(append.toString().contains(append.message()));
+        assertFalse(append.toString().contains("AQIDBA=="));
+        assertTrue(append.toString().contains("audioBytes=4"));
+        assertFalse(SessionProtocol.CANCEL_RESPONSE.toString().contains(SessionProtocol.CANCEL_RESPONSE.message()));
+    }
 }

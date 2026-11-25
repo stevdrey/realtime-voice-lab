@@ -48,7 +48,7 @@ public final class EventInspectorController {
         eventList.getSelectionModel().selectedItemProperty().addListener((observable, previous, selected) ->
                 eventDetail.setText(selected == null ? "" : selected.jsonDetail()));
         eventFilter.textProperty().addListener((observable, previous, text) -> {
-            var query = text.strip().toLowerCase(Locale.ROOT);
+            var query = text == null ? "" : text.strip().toLowerCase(Locale.ROOT);
             filtered.setPredicate(entry -> matches(entry, query));
             eventEmpty.setText(query.isEmpty() ? "No events yet." : "No matching events.");
         });
@@ -72,7 +72,7 @@ public final class EventInspectorController {
     private boolean matches(Entry entry, String query) {
         return entry.type().toLowerCase(Locale.ROOT).contains(query)
                 || entry.direction().name().toLowerCase(Locale.ROOT).contains(query)
-                || (entry.eventId() != null && entry.eventId().contains(query));
+                || (entry.eventId() != null && entry.eventId().toLowerCase(Locale.ROOT).contains(query));
     }
 
     private static final class EventCell extends ListCell<Entry> {

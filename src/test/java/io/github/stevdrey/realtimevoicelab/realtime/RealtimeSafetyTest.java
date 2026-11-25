@@ -5,6 +5,7 @@ import java.net.http.WebSocket;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 
@@ -72,6 +73,24 @@ class RealtimeSafetyTest {
         functionCall(socket);
 
         assertEquals(State.CLOSING, session.status().state());
+        // The late frame is inspected before the cancellation it triggers.
+        var types = session.inspectedEvents().stream().map(EventInspector.Entry::type).toList();
+        assertEquals(List.of("response.function_call_arguments.done", "response.cancel"),
+                types.subList(types.size() - 2, types.size()));
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        assertLimit(Failure.SESSION_LIMIT);
+    }
+
+    @Test
+    void endsAnExpiredSessionAtTheLimitWhenItsLateFrameIsInvalid() {
+        var socket = connect();
+        socket.ready();
+        clock.elapse(Duration.ofMinutes(5));
+        socket.text("{", true);
+
+        assertEquals(State.CLOSING, session.status().state());
+        var types = session.inspectedEvents().stream().map(EventInspector.Entry::type).toList();
+        assertEquals(List.of("Invalid event", "response.cancel"), types.subList(types.size() - 2, types.size()));
         socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
         assertLimit(Failure.SESSION_LIMIT);
     }
@@ -385,11 +404,18 @@ class RealtimeSafetyTest {
         // The final fragment resembles a standalone event but still belongs to the oversized message.
         socket.text("{\"type\":\"rate_limits.updated\"}", true);
         socket.text("{", true);
-        assertSame(afterFragment, session.inspectedEvents());
+        // One fixed row each for the oversized message and the unparseable one. The tail adds nothing.
+        var afterInvalid = session.inspectedEvents();
+        assertEquals(afterFragment.size() + 2, afterInvalid.size());
+        for (var invalid : afterInvalid.subList(afterFragment.size(), afterInvalid.size())) {
+            assertEquals("Invalid event", invalid.type());
+            assertEquals(null, invalid.eventId());
+            assertFalse(invalid.jsonDetail().contains("rate_limits.updated"));
+        }
 
         socket.text("{\"type\":\"error\",\"error\":{\"message\":\"synthetic-private-error\"}}", true);
         var afterError = session.inspectedEvents();
-        assertEquals(afterFragment.size() + 1, afterError.size());
+        assertEquals(afterInvalid.size() + 1, afterError.size());
         assertEquals("error", afterError.getLast().type());
         assertFalse(afterError.getLast().jsonDetail().contains("synthetic-private-error"));
         assertEquals(State.CLOSING, session.status().state());

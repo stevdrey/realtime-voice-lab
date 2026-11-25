@@ -76,6 +76,11 @@ public final class EventInspector {
                 providerAlias(eventId), audioBytes);
     }
 
+    void invalidIncoming() {
+        // Oversized or unparseable frames keep a fixed label and no ID.
+        append(Direction.INCOMING, "Invalid event", null, null);
+    }
+
     void outgoing(String type, String eventId, Integer audioBytes) {
         append(Direction.OUTGOING, type, eventId, audioBytes);
     }
