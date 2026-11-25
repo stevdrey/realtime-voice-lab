@@ -284,8 +284,14 @@ final class SessionProtocol {
     record Configuration(String sessionId, boolean boundedOutput, boolean pcmOutput, boolean inputConfirmed,
                          String transcriptionModel, String model, String voice, String modality, String instructions) {
         boolean matches(SessionSettings settings) {
-            return settings.model().id().equals(model) && settings.voice().id().equals(voice)
+            return modelMatches(settings.model().id()) && settings.voice().id().equals(voice)
                     && settings.mode().modality().equals(modality) && settings.instructions().equals(instructions);
+        }
+
+        // The provider may report the dated snapshot behind the requested alias.
+        private boolean modelMatches(String alias) {
+            return model != null && (model.equals(alias)
+                    || model.startsWith(alias + "-") && model.substring(alias.length() + 1).matches("\\d{4}-\\d{2}-\\d{2}"));
         }
 
         @Override

@@ -840,9 +840,10 @@ public final class RealtimeSession implements AutoCloseable {
                 var error = protocol.textEvent(message).path("error");
                 var id = error.path("event_id").textValue();
                 var pending = attempt.settingUpdate;
-                if (pending != null && (id == null || pending.eventId.equals(id))) {
+                if (pending != null && pending.eventId.equals(id)) {
                     fail(attempt, Failure.SETTINGS_REJECTED);
-                } else if (status.state() == State.CONNECTING && pending == null) {
+                } else if (status.state() == State.CONNECTING || pending != null && id == null) {
+                    // Setup cannot complete after any error, and an uncorrelated one leaves a live update uncertain.
                     fail(attempt, Failure.PROVIDER);
                 } else if (attempt.turn != null || (attempt.input != null && attempt.input.sentChunks > 0)) {
                     if (attempt.turn != null) {

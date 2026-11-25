@@ -171,6 +171,7 @@ class RealtimeVoiceLabAppTest {
                 assertTrue(stage.getScene().lookup("#settings-button").isDisabled());
                 return null;
             });
+            assertHoveredTooltip(stage, "#settings-button", "Settings (unavailable while busy)");
             var socket = transport.attempts.getFirst();
             assertEquals(Model.STANDARD.id(), socket.model);
             socket.opened();
@@ -230,10 +231,18 @@ class RealtimeVoiceLabAppTest {
                 var dialog = openSettings(stage);
                 assertFalse(combo(dialog, "#settings-model").isDisabled());
                 assertFalse(combo(dialog, "#settings-voice").isDisabled());
-                assertEquals(applied.instructions(),
-                        ((TextArea) dialog.getScene().lookup("#settings-instructions")).getText());
+                var instructions = (TextArea) dialog.getScene().lookup("#settings-instructions");
+                assertEquals(applied.instructions(), instructions.getText());
+                instructions.setText("a".repeat(SessionSettings.MAX_INSTRUCTION_CHARS - 10));
+                instructions.end();
+                instructions.replaceSelection("b".repeat(20));
+                assertEquals(SessionSettings.MAX_INSTRUCTION_CHARS, instructions.getLength());
+                assertEquals(SessionSettings.MAX_INSTRUCTION_CHARS, instructions.getCaretPosition());
+                connectButton(stage).fire();
                 return null;
             });
+            awaitOnFxThread(() -> Window.getWindows().stream().noneMatch(window -> window instanceof Stage dialog
+                    && "Session Settings".equals(dialog.getTitle())), "A session change did not close the settings dialog");
         } finally {
             onFxThread(() -> {
                 stage.close();

@@ -60,6 +60,7 @@ public final class WorkspaceController {
     private final RealtimeSession session;
     private final Tooltip connectTooltip = new Tooltip();
     private final Tooltip micTooltip = new Tooltip();
+    private final Tooltip settingsTooltip = new Tooltip("Settings");
     private final AtomicBoolean renderPending = new AtomicBoolean();
     private final AtomicBoolean inspectorRenderPending = new AtomicBoolean();
     private final EnumMap<KeyCode, MicKeyScope> heldMicKeys = new EnumMap<>(KeyCode.class);
@@ -70,6 +71,7 @@ public final class WorkspaceController {
     private MicGesture activeMicGesture;
     private boolean disposed;
     private Stage settingsDialog;
+    private RealtimeSession.State settingsDialogState;
 
     @FXML
     private VBox root;
@@ -91,6 +93,9 @@ public final class WorkspaceController {
 
     @FXML
     private ProgressIndicator sessionProgress;
+
+    @FXML
+    private StackPane settingsControl;
 
     @FXML
     private Button settingsButton;
@@ -170,7 +175,9 @@ public final class WorkspaceController {
         transcriptionSelector.setTooltip(new Tooltip(transcriptionHelp));
         transcriptionSelector.setAccessibleHelp(transcriptionHelp);
 
-        settingsButton.setTooltip(new Tooltip("Settings"));
+        // Disabled buttons do not receive hover events, so the wrapper shows the same tooltip while disabled.
+        settingsButton.setTooltip(settingsTooltip);
+        Tooltip.install(settingsControl, settingsTooltip);
         settingsButton.setOnAction(event -> showSettings());
         installMicControls();
         connectButton.setTooltip(connectTooltip);
@@ -240,6 +247,7 @@ public final class WorkspaceController {
         dialog.setResizable(false);
         dialog.setOnHidden(event -> settingsDialog = null);
         settingsDialog = dialog;
+        settingsDialogState = state;
         dialog.show();
     }
 
@@ -426,6 +434,11 @@ public final class WorkspaceController {
         sessionMode.setText(mode.toString());
         transcriptionSelector.setDisable(!disconnected);
         settingsButton.setDisable(!settings.canEdit());
+        settingsTooltip.setText(settings.canEdit() ? "Settings" : "Settings (unavailable while busy)");
+        if (settingsDialog != null && state != settingsDialogState) {
+            // The dialog reflects the state it opened in, so a session change closes it.
+            settingsDialog.close();
+        }
         renderAudio(workspace.microphone(), workspace.speaker(), mode, settings.applying());
         renderConversation(workspace.turns(), mode);
     }

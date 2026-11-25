@@ -51,8 +51,17 @@ public final class SessionSettingsController {
         mode.setValue(current.mode());
         preset.getItems().setAll(Preset.values());
         instructions.setText(current.instructions());
-        instructions.setTextFormatter(new TextFormatter<>(change ->
-                change.getControlNewText().length() <= SessionSettings.MAX_INSTRUCTION_CHARS ? change : null));
+        instructions.setTextFormatter(new TextFormatter<>(change -> {
+            int overflow = change.getControlNewText().length() - SessionSettings.MAX_INSTRUCTION_CHARS;
+            if (overflow > 0) {
+                // Keep the part of an insertion that fits instead of silently dropping all of it.
+                var text = change.getText();
+                change.setText(text.substring(0, Math.max(0, text.length() - overflow)));
+                int caret = change.getRangeStart() + change.getText().length();
+                change.selectRange(caret, caret);
+            }
+            return change;
+        }));
         for (var option : Preset.values()) {
             if (option.instructions().equals(current.instructions())) {
                 preset.setValue(option);

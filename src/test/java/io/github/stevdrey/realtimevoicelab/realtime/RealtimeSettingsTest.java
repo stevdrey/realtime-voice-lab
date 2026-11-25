@@ -206,6 +206,58 @@ class RealtimeSettingsTest {
         }
     }
 
+    @Test
+    void acceptsADatedSnapshotOfTheRequestedModelOnly() {
+        try (var session = new RealtimeSession(transport, () -> {})) {
+            var socket = open(session);
+            socket.textWrite.complete(socket);
+            socket.text(acknowledgement("gpt-realtime-2.1-mini-2026-01-01"), true);
+            assertEquals(State.READY, session.status().state());
+        }
+        try (var session = new RealtimeSession(transport, () -> {})) {
+            assertTrue(session.configure(new SessionSettings(Model.STANDARD, Voice.MARIN, Mode.AUDIO,
+                    DEFAULT.instructions()), State.DISCONNECTED));
+            var socket = open(session);
+            socket.textWrite.complete(socket);
+            socket.text(acknowledgement("gpt-realtime-2.1-mini-2026-01-01"), true);
+            assertEquals(new RealtimeSession.Status(State.ERROR, Failure.SETTINGS_MISMATCH), session.status());
+        }
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"\"other\"", "null"})
+    void failsSetupOnAnyProviderErrorWithoutBlamingSettings(String eventId) {
+        try (var session = new RealtimeSession(transport, () -> {})) {
+            var socket = open(session);
+            socket.text("""
+                    {"type":"error","error":{"event_id":%s,"message":"synthetic"}}
+                    """.formatted(eventId), true);
+            assertEquals(new RealtimeSession.Status(State.ERROR, Failure.PROVIDER), session.status());
+            assertTrue(socket.aborted);
+        }
+    }
+
+    @Test
+    void doesNotBlameSettingsForAnUncorrelatedErrorDuringALiveUpdate() {
+        try (var session = new RealtimeSession(transport, () -> {})) {
+            var socket = ready(session);
+            assertTrue(session.configure(new SessionSettings(Model.MINI, Voice.MARIN, Mode.TEXT, ""), State.READY));
+            socket.text("""
+                    {"type":"error","error":{"message":"synthetic"}}
+                    """, true);
+            assertEquals(new RealtimeSession.Status(State.ERROR, Failure.PROVIDER), session.status());
+        }
+    }
+
+    private static String acknowledgement(String model) {
+        return """
+                {"type":"session.updated","session":{"type":"realtime","id":"test-session","max_output_tokens":512,
+                 "model":"%s","instructions":"Respond briefly.","output_modalities":["audio"],
+                 "audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"turn_detection":null,"transcription":null},
+                          "output":{"voice":"marin","format":{"type":"audio/pcm","rate":24000}}}}}
+                """.formatted(model);
+    }
+
     private FakeTransport.Socket open(RealtimeSession session) {
         session.connectSelected(TranscriptionModel.OFF);
         var socket = transport.attempts.getLast();

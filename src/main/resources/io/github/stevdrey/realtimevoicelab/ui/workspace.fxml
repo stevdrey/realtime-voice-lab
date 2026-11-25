@@ -69,14 +69,16 @@
 
         <VBox alignment="CENTER" spacing="6">
             <HBox alignment="CENTER" spacing="16" fillHeight="false">
-                <Button fx:id="settingsButton" id="settings-button" accessibleText="Settings" styleClass="round-control">
-                    <graphic>
-                        <SVGPath styleClass="icon"
-                                 content="M10 2h4l.7 3 2 .9 2.7-1.5 2 3.5-2.2 2.1v3l2.2 2.1-2 3.5
-                                          -2.7-1.5-2 .9-.7 3h-4l-.7-3-2-.9-2.7 1.5-2-3.5L4.8 13v-3L2.6 7.9l2-3.5 2.7 1.5 2-.9z
-                                          M15 11.5a3 3 0 1 1-6 0 3 3 0 1 1 6 0z"/>
-                    </graphic>
-                </Button>
+                <StackPane fx:id="settingsControl">
+                    <Button fx:id="settingsButton" id="settings-button" accessibleText="Settings" styleClass="round-control">
+                        <graphic>
+                            <SVGPath styleClass="icon"
+                                     content="M10 2h4l.7 3 2 .9 2.7-1.5 2 3.5-2.2 2.1v3l2.2 2.1-2 3.5
+                                              -2.7-1.5-2 .9-.7 3h-4l-.7-3-2-.9-2.7 1.5-2-3.5L4.8 13v-3L2.6 7.9l2-3.5 2.7 1.5 2-.9z
+                                              M15 11.5a3 3 0 1 1-6 0 3 3 0 1 1 6 0z"/>
+                        </graphic>
+                    </Button>
+                </StackPane>
                 <StackPane fx:id="micControl">
                     <Button fx:id="micButton" id="mic-button" accessibleText="Microphone"
                             disable="true" styleClass="mic-button">
