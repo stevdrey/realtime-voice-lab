@@ -5,6 +5,7 @@ import java.util.StringJoiner;
 
 import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
 
 import com.fasterxml.jackson.core.Base64Variants;
 import com.fasterxml.jackson.core.JsonFactory;
@@ -40,22 +41,34 @@ final class SessionProtocol {
         var session = update.putObject("session").put("type", "realtime");
         session.put("instructions", requested.instructions());
         session.putArray("output_modalities").add(requested.mode().modality());
-        if (applied == null) {
+        boolean initial = applied == null;
+        boolean updateVoice = initial || requested.voice() != applied.voice();
+        boolean setPcmOutput = initial || applied.mode() == Mode.TEXT && requested.mode() == Mode.AUDIO;
+        if (initial) {
             session.put("max_output_tokens", MAX_OUTPUT_TOKENS);
             var audio = session.putObject("audio");
             var input = audio.putObject("input").putNull("turn_detection");
-            input.putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
+            putPcmFormat(input);
             if (transcription == TranscriptionModel.OFF) {
                 input.putNull("transcription");
             } else {
                 input.putObject("transcription").put("model", transcription.modelId());
             }
-            audio.putObject("output").put("voice", requested.voice().id())
-                    .putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
-        } else if (requested.voice() != applied.voice()) {
-            session.putObject("audio").putObject("output").put("voice", requested.voice().id());
+        }
+        if (updateVoice || setPcmOutput) {
+            var output = session.withObjectProperty("audio").putObject("output");
+            if (updateVoice) {
+                output.put("voice", requested.voice().id());
+            }
+            if (setPcmOutput) {
+                putPcmFormat(output);
+            }
         }
         return command(update, null);
+    }
+
+    private void putPcmFormat(ObjectNode audio) {
+        audio.putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
     }
 
     Command createItem(ConversationTurn turn) {

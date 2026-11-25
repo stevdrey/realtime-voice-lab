@@ -17,6 +17,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Voice;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -83,6 +84,54 @@ class RealtimeSettingsTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void restoresPcmOutputWhenSwitchingFromTextToAudio(boolean voiceLocked) throws Exception {
+        try (var session = new RealtimeSession(transport, () -> {})) {
+            var socket = ready(session);
+            if (voiceLocked) {
+                emitSyntheticAudio(socket);
+            }
+            assertEquals(voiceLocked, session.workspace().settings().voiceLocked());
+            var text = switchToTextWithNonPcmOutput(session, socket);
+            var write = new CompletableFuture<WebSocket>();
+            socket.nextTurnWrite = write;
+
+            assertTrue(session.configure(DEFAULT, State.READY));
+            var update = json.readTree(socket.writes.getLast());
+            assertEquals("audio/pcm", update.at("/session/audio/output/format/type").textValue());
+            assertEquals(24_000, update.at("/session/audio/output/format/rate").intValue());
+            assertTrue(update.at("/session/audio/output/voice").isMissingNode());
+            assertEquals(text, session.workspace().settings().values());
+            assertFalse(session.workspace().microphone().canStart());
+            socket.updated(DEFAULT, null);
+            assertTrue(session.workspace().settings().applying());
+            assertEquals(text, session.workspace().settings().values());
+            write.complete(socket);
+
+            assertEquals(DEFAULT, session.workspace().settings().values());
+            assertFalse(session.workspace().settings().applying());
+            assertEquals(voiceLocked, session.workspace().settings().voiceLocked());
+            assertTrue(session.workspace().microphone().canStart());
+        }
+    }
+
+    @Test
+    void rejectsNonPcmOutputWhenReturningToAudio() {
+        try (var session = new RealtimeSession(transport, () -> {})) {
+            var socket = ready(session);
+            var text = switchToTextWithNonPcmOutput(session, socket);
+
+            assertTrue(session.configure(DEFAULT, State.READY));
+            socket.updated(DEFAULT, null, "audio/pcmu");
+
+            assertEquals(new RealtimeSession.Status(State.ERROR, Failure.PROTOCOL), session.status());
+            assertEquals(text, session.workspace().settings().values());
+            assertTrue(socket.aborted);
+            assertFalse(session.workspace().microphone().canStart());
+        }
+    }
+
     @Test
     void disconnectsDuringASettingsWriteAndIgnoresTheOldSocketsConfirmation() {
         try (var session = new RealtimeSession(transport, () -> {})) {
@@ -111,10 +160,7 @@ class RealtimeSettingsTest {
             var modelChange = new SessionSettings(Model.STANDARD, Voice.CEDAR, Mode.AUDIO, DEFAULT.instructions());
             var voiceChange = new SessionSettings(Model.MINI, Voice.CEDAR, Mode.AUDIO, DEFAULT.instructions());
             assertFalse(session.configure(modelChange, State.READY));
-            socket.text("""
-                    {"type":"response.output_audio.delta","response_id":"synthetic-audio","item_id":"item",
-                     "output_index":0,"content_index":0,"delta":"AAA="}
-                    """, true);
+            emitSyntheticAudio(socket);
             assertTrue(session.workspace().settings().voiceLocked());
             assertFalse(session.configure(voiceChange, State.READY));
             assertEquals(1, socket.writes.size());
@@ -225,7 +271,7 @@ class RealtimeSettingsTest {
     }
 
     @ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"\"other\"", "null"})
+    @ValueSource(strings = {"\"other\"", "null"})
     void failsSetupOnAnyProviderErrorWithoutBlamingSettings(String eventId) {
         try (var session = new RealtimeSession(transport, () -> {})) {
             var socket = open(session);
@@ -272,6 +318,22 @@ class RealtimeSettingsTest {
         socket.updated();
         assertEquals(State.READY, session.status().state());
         return socket;
+    }
+
+    private SessionSettings switchToTextWithNonPcmOutput(RealtimeSession session, FakeTransport.Socket socket) {
+        var text = new SessionSettings(DEFAULT.model(), DEFAULT.voice(), Mode.TEXT, DEFAULT.instructions());
+        assertTrue(session.configure(text, State.READY));
+        socket.updated(text, null, "audio/pcmu");
+        assertEquals(State.READY, session.status().state());
+        assertEquals(text, session.workspace().settings().values());
+        return text;
+    }
+
+    private void emitSyntheticAudio(FakeTransport.Socket socket) {
+        socket.text("""
+                {"type":"response.output_audio.delta","response_id":"synthetic-audio","item_id":"item",
+                 "output_index":0,"content_index":0,"delta":"AAA="}
+                """, true);
     }
 
     private void reject(FakeTransport.Socket socket, String id) {

@@ -13,7 +13,6 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
-import javafx.scene.control.TextFormatter;
 import javafx.stage.Stage;
 
 public final class SessionSettingsController {
@@ -51,17 +50,7 @@ public final class SessionSettingsController {
         mode.setValue(current.mode());
         preset.getItems().setAll(Preset.values());
         instructions.setText(current.instructions());
-        instructions.setTextFormatter(new TextFormatter<>(change -> {
-            int overflow = change.getControlNewText().length() - SessionSettings.MAX_INSTRUCTION_CHARS;
-            if (overflow > 0) {
-                // Keep the part of an insertion that fits instead of silently dropping all of it.
-                var text = change.getText();
-                change.setText(text.substring(0, Math.max(0, text.length() - overflow)));
-                int caret = change.getRangeStart() + change.getText().length();
-                change.selectRange(caret, caret);
-            }
-            return change;
-        }));
+        instructions.setTextFormatter(TextInputLimit.formatter(SessionSettings.MAX_INSTRUCTION_CHARS));
         for (var option : Preset.values()) {
             if (option.instructions().equals(current.instructions())) {
                 preset.setValue(option);

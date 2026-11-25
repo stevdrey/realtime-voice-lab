@@ -251,6 +251,41 @@ class RealtimeVoiceLabAppTest {
         }
     }
 
+    @Test
+    void truncatesInstructionsWithoutSplittingSurrogatePairs() throws Exception {
+        withWindow(stage -> {
+            var dialog = openSettings(stage);
+            try {
+                var instructions = (TextArea) dialog.getScene().lookup("#settings-instructions");
+                int limit = SessionSettings.MAX_INSTRUCTION_CHARS;
+                var emoji = "\uD83C\uDFAF";
+                var oneUnitLeft = "a".repeat(limit - 1);
+                instructions.setText(oneUnitLeft);
+                instructions.end();
+                instructions.replaceSelection(emoji);
+                assertEquals(oneUnitLeft, instructions.getText());
+                assertEquals(limit - 1, instructions.getCaretPosition());
+
+                var twoUnitsLeft = "a".repeat(limit - 2);
+                instructions.setText(twoUnitsLeft);
+                instructions.end();
+                instructions.replaceSelection(emoji + "b");
+                var full = twoUnitsLeft + emoji;
+                assertEquals(full, instructions.getText());
+                assertEquals(limit, instructions.getCaretPosition());
+
+                instructions.selectRange(1, 3);
+                instructions.replaceSelection(emoji + "b");
+                assertEquals("a" + emoji + full.substring(3), instructions.getText());
+                assertEquals(limit, instructions.getLength());
+                assertEquals(3, instructions.getCaretPosition());
+                assertEquals(3, instructions.getAnchor());
+            } finally {
+                dialog.close();
+            }
+        });
+    }
+
     private Stage openSettings(Stage owner) {
         ((Button) owner.getScene().lookup("#settings-button")).fire();
         return Window.getWindows().stream()

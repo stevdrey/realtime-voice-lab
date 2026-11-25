@@ -69,6 +69,10 @@ public final class FakeTransport implements RealtimeTransport {
         }
 
         public void updated(SessionSettings settings, String transcriptionModel) {
+            updated(settings, transcriptionModel, "audio/pcm");
+        }
+
+        void updated(SessionSettings settings, String transcriptionModel, String outputFormat) {
             var event = new ObjectMapper().createObjectNode().put("type", "session.updated");
             var session = event.putObject("session").put("type", "realtime").put("id", "test-session")
                     .put("max_output_tokens", 512).put("model", settings.model().id())
@@ -82,8 +86,11 @@ public final class FakeTransport implements RealtimeTransport {
             } else {
                 input.putObject("transcription").put("model", transcriptionModel);
             }
-            audio.putObject("output").put("voice", settings.voice().id())
-                    .putObject("format").put("type", "audio/pcm").put("rate", 24000);
+            var output = audio.putObject("output").put("voice", settings.voice().id())
+                    .putObject("format").put("type", outputFormat);
+            if ("audio/pcm".equals(outputFormat)) {
+                output.put("rate", 24000);
+            }
             text(event.toString(), true);
         }
 
