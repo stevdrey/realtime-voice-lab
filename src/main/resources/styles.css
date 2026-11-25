@@ -281,6 +281,14 @@
     -fx-background-color: -rv-primary-hover;
 }
 
+.mic-button:waiting-for-speaker {
+    -fx-background-color: -rv-control;
+}
+
+.mic-button:waiting-for-speaker .icon {
+    -fx-stroke: -rv-muted;
+}
+
 .metrics {
     -fx-border-color: -rv-divider transparent transparent transparent;
     -fx-padding: 8 0 0 0;

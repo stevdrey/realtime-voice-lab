@@ -1,7 +1,9 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
 import java.net.http.WebSocket;
+import java.util.ArrayDeque;
 import java.util.Base64;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -18,6 +20,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.css.PseudoClass;
 import javafx.event.Event;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -160,17 +163,7 @@ class RealtimeVoiceLabAppTest {
                     return null;
                 });
                 awaitOnFxThread(() -> socket.writes.size() == previousWrites + 2, "Voice take was not committed");
-                socket.text("""
-                        {"type":"input_audio_buffer.committed","item_id":"input-%d"}
-                        """.formatted(turn), true);
-                socket.text("""
-                        {"type":"response.created","response":{"id":"reply-%1$d","metadata":{"rvl_turn":"rvl-%1$d"}}}
-                        """.formatted(turn), true);
-                var delta = """
-                        {"type":"response.output_audio.delta","response_id":"reply-%d","item_id":"assistant-%d",
-                        "output_index":0,"content_index":0,"delta":"%s"}
-                        """.formatted(turn, turn, Base64.getEncoder().encodeToString(microphone.block(turn)));
-                socket.text(delta, true);
+                sendVoiceReply(socket, turn, microphone.block(turn));
                 awaitOnFxThread(() -> {
                     var level = (ProgressBar) stage.getScene().lookup("#mic-level");
                     return speaker.devices.size() == number && micStatus(stage).equals("Speaking…")
@@ -205,7 +198,7 @@ class RealtimeVoiceLabAppTest {
                         assertFalse(stop.isDisabled());
                         stop.fire();
                         assertEquals("Closing speaker…", micStatus(stage));
-                        assertTrue(stage.getScene().lookup("#mic-button").isDisabled());
+                        assertFalse(stage.getScene().lookup("#mic-button").isDisabled());
                         return null;
                     });
                     allowStop.complete(null);
@@ -234,6 +227,154 @@ class RealtimeVoiceLabAppTest {
                 return null;
             });
         }
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = KeyCode.class, names = {"SPACE", "ENTER"})
+    void keepsKeyboardFocusAndRequiresAFreshPressAfterSpeakerCleanup(KeyCode key) throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var releaseFirstStop = new CompletableFuture<Void>();
+        var releaseSecondStop = new CompletableFuture<Void>();
+        var pendingStops = new ArrayDeque<>(List.of(releaseFirstStop, releaseSecondStop));
+        var speaker = new FakeSpeaker(() -> {}, () -> pendingStops.removeFirst().join());
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone(), speaker.playback(),
+                        stage.focusedProperty());
+                connectButton(stage).fire();
+                stage.requestFocus();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.ready();
+            awaitOnFxThread(stage::isFocused, "Workspace never received window focus");
+            var mic = onFxThread(() -> {
+                var button = stage.getScene().lookup("#mic-button");
+                button.requestFocus();
+                assertTrue(button.isFocused());
+                return button;
+            });
+
+            recordWithKey(stage, microphone, key);
+            awaitOnFxThread(() -> socket.writes.size() == 3, "First key release did not commit the take");
+            finishSyntheticPlayback(stage, socket, speaker, microphone, 1);
+            int writesBeforeCleanup = socket.writes.size();
+            var waitingForSpeaker = PseudoClass.getPseudoClass("waiting-for-speaker");
+
+            onFxThread(() -> {
+                assertTrue(mic.isFocused(), "Speaker cleanup moved keyboard focus away from the microphone");
+                assertFalse(mic.isDisabled());
+                assertTrue(mic.getPseudoClassStates().contains(waitingForSpeaker));
+                assertEquals("Closing speaker…", mic.getAccessibleHelp());
+                new Robot().keyPress(key);
+                repeatFocusedKey(stage, key);
+                return null;
+            });
+            awaitOnFxThread(() -> "Audio unavailable. Waiting for the speaker to close.".equals(micStatus(stage)),
+                    "The speaker cleanup timeout did not appear");
+            onFxThread(() -> {
+                assertTrue(mic.isFocused());
+                assertTrue(mic.getPseudoClassStates().contains(waitingForSpeaker));
+                assertEquals(micStatus(stage), mic.getAccessibleHelp());
+                repeatFocusedKey(stage, key);
+                assertSession(stage, "Connected", "Disconnect", false);
+                assertEquals(1, microphone.opens.get());
+                assertEquals(writesBeforeCleanup, socket.writes.size());
+                return null;
+            });
+
+            releaseFirstStop.complete(null);
+            awaitOnFxThread(() -> "Hold to talk".equals(micStatus(stage)), "Speaker cleanup did not release the microphone");
+            onFxThread(() -> {
+                assertTrue(mic.isFocused());
+                assertFalse(mic.getPseudoClassStates().contains(waitingForSpeaker));
+                repeatFocusedKey(stage, key);
+                assertEquals("Hold to talk", micStatus(stage));
+                assertEquals(1, microphone.opens.get());
+                assertEquals(writesBeforeCleanup, socket.writes.size());
+                new Robot().keyRelease(key);
+                return null;
+            });
+
+            recordWithKey(stage, microphone, key);
+            awaitOnFxThread(() -> socket.writes.size() == writesBeforeCleanup + 2,
+                    "The fresh key press did not submit exactly one take");
+            assertEquals(2, microphone.opens.get());
+            assertTrue(socket.writes.get(writesBeforeCleanup).contains("input_audio_buffer.append"));
+            assertTrue(socket.writes.get(writesBeforeCleanup + 1).contains("input_audio_buffer.commit"));
+            finishSyntheticPlayback(stage, socket, speaker, microphone, 2);
+
+            var composer = onFxThread(() -> {
+                assertTrue(mic.isFocused());
+                var field = stage.getScene().lookup("#text-composer");
+                field.requestFocus();
+                assertTrue(field.isFocused());
+                return field;
+            });
+            releaseSecondStop.complete(null);
+            awaitOnFxThread(() -> "Hold to talk".equals(micStatus(stage)), "Second cleanup did not finish");
+            onFxThread(() -> {
+                assertTrue(composer.isFocused(), "Speaker cleanup stole focus from the composer");
+                assertSession(stage, "Connected", "Disconnect", false);
+                return null;
+            });
+            assertEquals(0, socket.closeWrites);
+            assertFalse(socket.aborted);
+        } finally {
+            releaseFirstStop.complete(null);
+            releaseSecondStop.complete(null);
+            onFxThread(() -> {
+                new Robot().keyRelease(key);
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    private void recordWithKey(Stage stage, FakeMicrophone microphone, KeyCode key) throws Exception {
+        onFxThread(() -> {
+            new Robot().keyPress(key);
+            return null;
+        });
+        microphone.queueBlocks(4);
+        awaitOnFxThread(() -> "Recording · 0.2 s".equals(micStatus(stage)), "Key press did not start recording");
+        onFxThread(() -> {
+            new Robot().keyRelease(key);
+            return null;
+        });
+    }
+
+    private void repeatFocusedKey(Stage stage, KeyCode key) {
+        Event.fireEvent(stage.getScene().getFocusOwner(),
+                new KeyEvent(KeyEvent.KEY_PRESSED, "", "", key, false, false, false, false));
+    }
+
+    private void finishSyntheticPlayback(Stage stage, FakeTransport.Socket socket, FakeSpeaker speaker,
+                                         FakeMicrophone microphone, int turn) throws Exception {
+        var pcm = microphone.block(turn);
+        sendVoiceReply(socket, turn, pcm);
+        awaitOnFxThread(() -> speaker.devices.size() == turn && speaker.devices.getLast().written().length == pcm.length,
+                "The synthetic reply did not reach the speaker");
+        socket.text("""
+                {"type":"response.done","response":{"id":"reply-%d","status":"completed","output":[]}}
+                """.formatted(turn), true);
+        speaker.devices.getLast().playBufferedFrames();
+        awaitOnFxThread(() -> "Closing speaker…".equals(micStatus(stage)), "Speaker cleanup did not become visible");
+    }
+
+    private void sendVoiceReply(FakeTransport.Socket socket, int turn, byte[] pcm) {
+        socket.text("""
+                {"type":"input_audio_buffer.committed","item_id":"input-%d"}
+                """.formatted(turn), true);
+        socket.text("""
+                {"type":"response.created","response":{"id":"reply-%1$d","metadata":{"rvl_turn":"rvl-%1$d"}}}
+                """.formatted(turn), true);
+        socket.text("""
+                {"type":"response.output_audio.delta","response_id":"reply-%d","item_id":"assistant-%d",
+                 "output_index":0,"content_index":0,"delta":"%s"}
+                """.formatted(turn, turn, Base64.getEncoder().encodeToString(pcm)), true);
     }
 
     private boolean showsTurnText(Stage stage, String expected) {

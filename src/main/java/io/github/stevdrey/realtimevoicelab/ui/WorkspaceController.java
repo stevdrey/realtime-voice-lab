@@ -44,6 +44,7 @@ public final class WorkspaceController {
     private static final PseudoClass ERROR = PseudoClass.getPseudoClass("session-error");
     private static final PseudoClass DISCONNECT = PseudoClass.getPseudoClass("disconnect");
     private static final PseudoClass RECORDING = PseudoClass.getPseudoClass("recording");
+    private static final PseudoClass WAITING_FOR_SPEAKER = PseudoClass.getPseudoClass("waiting-for-speaker");
 
     private final RealtimeSession session;
     private final Tooltip connectTooltip = new Tooltip();
@@ -351,9 +352,10 @@ public final class WorkspaceController {
             case CLEANUP_TIMEOUT -> "Audio unavailable. Waiting for the speaker to close.";
             case UNAVAILABLE -> "Speaker unavailable. Check your output device.";
         };
-        // Keep focus while capturing. The session ignores gestures while processing a turn.
+        // Keep keyboard focus during speaker cleanup. The session prevents capture until the speaker is released.
         micButton.setDisable(renderedState != RealtimeSession.State.READY
-                || state == RealtimeSession.MicState.UNCONFIRMED || cleaningSpeaker);
+                || state == RealtimeSession.MicState.UNCONFIRMED);
+        micButton.pseudoClassStateChanged(WAITING_FOR_SPEAKER, cleaningSpeaker);
         micTooltip.setText(state == RealtimeSession.MicState.UNCONFIRMED ? "Manual PCM microphone input was not confirmed"
                 : cleaningSpeaker ? audioStatus
                 : renderedState == RealtimeSession.State.READY
