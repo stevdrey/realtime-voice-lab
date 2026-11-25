@@ -21,6 +21,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.Transcriptio
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.InputTranscriptState.*;
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.SpeakerState.*;
@@ -152,6 +153,58 @@ class RealtimeAudioOutputTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void exposesAutomaticCleanupWhileTheDeviceIsStillStopping(boolean framesStall) throws Exception {
+        var clock = new AtomicLong();
+        var stopping = new CompletableFuture<Void>();
+        var allowStop = new CompletableFuture<Void>();
+        var delayedSpeaker = new FakeSpeaker(() -> {}, () -> {
+            stopping.complete(null);
+            allowStop.join();
+        });
+        var deadlines = new CopyOnWriteArrayList<Deadline>();
+        try (var session = session(delayedSpeaker.playback(clock::get), () -> {}, deadlines)) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "response-1");
+            var pcm = microphone.block(1);
+            socket.text(audio("response-1", pcm), true);
+            await(() -> !delayedSpeaker.devices.isEmpty()
+                    && delayedSpeaker.devices.getFirst().written().length == pcm.length);
+            var device = delayedSpeaker.devices.getFirst();
+            responseDone(socket, "response-1", "completed");
+            awaitFinalBufferPlayback(device);
+
+            if (framesStall) {
+                clock.set(Duration.ofSeconds(3).toNanos());
+            } else {
+                device.playBufferedFrames();
+            }
+            await(stopping::isDone);
+            assertEquals(CLEANING_UP, session.workspace().speaker().state());
+            assertTrue(session.workspace().canSend());
+            assertFalse(session.workspace().canCancel());
+            assertFalse(session.startAudio());
+
+            expire(deadlines, RealtimeSession.SPEAKER_CLEANUP_TIMEOUT);
+            assertEquals(CLEANUP_TIMEOUT, session.workspace().speaker().state());
+            assertFalse(device.closed);
+            assertFalse(session.startAudio());
+            assertTrue(session.sendText("Synthetic text during automatic speaker cleanup."));
+            completeTextTurn(socket, "text-during-cleanup");
+            assertTrue(session.workspace().canSend());
+            assertEquals(1, delayedSpeaker.devices.size());
+
+            allowStop.complete(null);
+            await(() -> session.workspace().microphone().canStart());
+            assertTrue(device.closed);
+            assertEquals(framesStall, device.flushed);
+            assertEquals(framesStall ? UNAVAILABLE : IDLE, session.workspace().speaker().state());
+        } finally {
+            allowStop.complete(null);
+        }
+    }
+
     @Test
     void audioBudgetClosesTheSessionEvenWhileTheSpeakerIsOpening() throws Exception {
         var opening = new CompletableFuture<Void>();
@@ -249,14 +302,7 @@ class RealtimeAudioOutputTest {
                 assertEquals(CLEANUP_TIMEOUT, session.workspace().speaker().state());
                 assertFalse(session.startAudio());
                 assertTrue(session.sendText("Synthetic text while closing the speaker."));
-                var itemId = json.readTree(socket.writes.getLast()).at("/item/id").asText();
-                socket.text("""
-                        {"type":"conversation.item.added","item":{"id":"%s","role":"user","type":"message"}}
-                        """.formatted(itemId), true);
-                socket.text("""
-                        {"type":"response.done","response":{"id":"text-%d","status":"completed",
-                         "metadata":{"rvl_turn":"%s"},"output":[]}}
-                        """.formatted(reconnects, itemId), true);
+                completeTextTurn(socket, "text-" + reconnects);
                 socket.text(audio("late-voice-response", pcm), true);
                 assertTrue(session.workspace().canSend());
                 assertEquals(1, delayedSpeaker.devices.size());
@@ -526,6 +572,17 @@ class RealtimeAudioOutputTest {
         socket.text("""
                 {"type":"response.done","response":{"id":"%s","status":"%s","output":[]}}
                 """.formatted(responseId, status), true);
+    }
+
+    private void completeTextTurn(FakeTransport.Socket socket, String responseId) throws Exception {
+        var itemId = json.readTree(socket.writes.getLast()).at("/item/id").asText();
+        socket.text("""
+                {"type":"conversation.item.added","item":{"id":"%s","role":"user","type":"message"}}
+                """.formatted(itemId), true);
+        socket.text("""
+                {"type":"response.done","response":{"id":"%s","status":"completed",
+                 "metadata":{"rvl_turn":"%s"},"output":[]}}
+                """.formatted(responseId, itemId), true);
     }
 
     private String audio(String responseId, byte[] pcm) {

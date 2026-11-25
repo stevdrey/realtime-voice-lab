@@ -170,7 +170,7 @@ public final class RealtimeSession implements AutoCloseable {
         boolean ready = status.state() == State.READY;
         var input = ready ? active.input : null;
         var micState = ready ? active.micState : MicState.IDLE;
-        var output = ready ? active.output : null;
+        var output = ready && hasPendingPlayback(active) ? active.output : null;
         var speakerState = ready ? speakerState(active) : SpeakerState.IDLE;
         return new Workspace(status, history.stream().map(ConversationTurn::view).toList(),
                 ready && canStartTurn(active),
@@ -183,14 +183,18 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private SpeakerState speakerState(Attempt attempt) {
-        if (attempt.output == null && playbackWorker != null) {
+        if (playbackWorker != null && playbackWorker.cleanupDeadline != null) {
             return playbackWorker.cleanupTimedOut ? SpeakerState.CLEANUP_TIMEOUT : SpeakerState.CLEANING_UP;
         }
         return attempt.speakerState;
     }
 
+    private boolean hasPendingPlayback(Attempt attempt) {
+        return attempt.output != null && attempt.output.cleanupDeadline == null;
+    }
+
     private boolean canStartTurn(Attempt attempt) {
-        return attempt.turn == null && attempt.input == null && attempt.output == null && !attempt.writing;
+        return attempt.turn == null && attempt.input == null && !hasPendingPlayback(attempt) && !attempt.writing;
     }
 
     private boolean canStartAudio(Attempt attempt) {
@@ -228,7 +232,7 @@ public final class RealtimeSession implements AutoCloseable {
         }
         if (active.input != null) {
             cancelAudio();
-        } else if (active.turn == null && active.output != null && withinSessionTime(active)) {
+        } else if (active.turn == null && hasPendingPlayback(active) && withinSessionTime(active)) {
             stopPlayback(active);
             statusChanged.run();
         } else {
@@ -912,7 +916,7 @@ public final class RealtimeSession implements AutoCloseable {
 
     private void queuePlayback(Attempt attempt, byte[] pcm) {
         if (attempt.output != null) {
-            if (!attempt.output.stream.offer(pcm)) {
+            if (hasPendingPlayback(attempt) && !attempt.output.stream.offer(pcm)) {
                 playbackUnavailable(attempt);
             }
             return;
@@ -943,7 +947,7 @@ public final class RealtimeSession implements AutoCloseable {
             var result = SpeakerPlayback.Result.UNAVAILABLE;
             try {
                 result = speaker.play(output.stream, () -> playbackStarted(attempt, output),
-                        level -> playbackLevel(attempt, output, level));
+                        level -> playbackLevel(attempt, output, level), () -> playbackCleaningUp(output));
             } finally {
                 playbackEnded(attempt, output, result);
             }
@@ -951,7 +955,8 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private synchronized void playbackOpenExpired(Attempt attempt, AudioOutput output) {
-        if (active == attempt && attempt.output == output && withinSessionTime(attempt)) {
+        if (active == attempt && attempt.output == output && hasPendingPlayback(attempt)
+                && withinSessionTime(attempt)) {
             playbackUnavailable(attempt);
         }
     }
@@ -971,6 +976,15 @@ public final class RealtimeSession implements AutoCloseable {
         if (active == attempt && attempt.output == output && output.level != level) {
             output.level = level;
             statusChanged.run();
+        }
+    }
+
+    private synchronized void playbackCleaningUp(AudioOutput output) {
+        if (watchPlaybackCleanup(output)) {
+            output.openDeadline.complete(null);
+            if (status.state() == State.READY) {
+                statusChanged.run();
+            }
         }
     }
 
@@ -1008,16 +1022,22 @@ public final class RealtimeSession implements AutoCloseable {
         if (output != null) {
             output.stream.stop();
             output.openDeadline.complete(null);
-            if (playbackWorker == output) {
-                var cleanup = scheduleTimeout.apply(SPEAKER_CLEANUP_TIMEOUT.toNanos());
-                output.cleanupDeadline = cleanup;
-                cleanup.whenComplete((ignored, error) -> {
-                    if (error != null) {
-                        playbackCleanupExpired(output);
-                    }
-                });
-            }
+            watchPlaybackCleanup(output);
         }
+    }
+
+    private boolean watchPlaybackCleanup(AudioOutput output) {
+        if (playbackWorker != output || output.cleanupDeadline != null) {
+            return false;
+        }
+        var cleanup = scheduleTimeout.apply(SPEAKER_CLEANUP_TIMEOUT.toNanos());
+        output.cleanupDeadline = cleanup;
+        cleanup.whenComplete((ignored, error) -> {
+            if (error != null) {
+                playbackCleanupExpired(output);
+            }
+        });
+        return true;
     }
 
     private synchronized void playbackCleanupExpired(AudioOutput output) {

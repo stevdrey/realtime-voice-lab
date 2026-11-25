@@ -44,36 +44,52 @@ public final class SpeakerPlayback {
     }
 
     /** Owns the line on the playback worker. No device method uses the session or queue lock. */
-    public Result play(Stream stream, Runnable started, DoubleConsumer meter) {
+    public Result play(Stream stream, Runnable started, DoubleConsumer meter, Runnable cleaningUp) {
         if (stream.stopped) {
             return Result.STOPPED;
         }
         try (var line = source.open()) {
-            var actualFormat = line.getFormat();
-            if (!FORMAT.matches(actualFormat) || !actualFormat.matches(FORMAT)
-                    || line.getBufferSize() < Short.BYTES) {
-                return Result.UNAVAILABLE;
-            }
-            if (stream.stopped) {
-                return Result.STOPPED;
-            }
             var result = Result.UNAVAILABLE;
+            boolean startAttempted = false;
             try {
+                var actualFormat = line.getFormat();
+                if (!FORMAT.matches(actualFormat) || !actualFormat.matches(FORMAT)
+                        || line.getBufferSize() < Short.BYTES) {
+                    return result;
+                }
+                if (stream.stopped) {
+                    result = Result.STOPPED;
+                    return result;
+                }
+                startAttempted = true;
                 line.start();
                 started.run();
                 result = writeStream(stream, line, meter);
                 return result;
             } finally {
                 try {
-                    line.stop();
+                    if (result != Result.COMPLETED) {
+                        stream.stop();
+                    }
+                    cleaningUp.run();
                 } finally {
-                    if (result != Result.COMPLETED || stream.stopped) {
-                        line.flush();
+                    if (startAttempted) {
+                        stopLine(line, stream, result);
                     }
                 }
             }
         } catch (LineUnavailableException | RuntimeException unavailable) {
             return Result.UNAVAILABLE;
+        }
+    }
+
+    private void stopLine(SourceDataLine line, Stream stream, Result result) {
+        try {
+            line.stop();
+        } finally {
+            if (result != Result.COMPLETED || stream.stopped) {
+                line.flush();
+            }
         }
     }
 
