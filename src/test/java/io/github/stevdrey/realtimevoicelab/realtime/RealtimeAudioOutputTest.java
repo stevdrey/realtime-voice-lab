@@ -8,6 +8,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
 import javax.sound.sampled.LineUnavailableException;
@@ -18,6 +19,8 @@ import io.github.stevdrey.realtimevoicelab.audio.FakeSpeaker;
 import io.github.stevdrey.realtimevoicelab.audio.SpeakerPlayback;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.InputTranscriptState.*;
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.SpeakerState.*;
@@ -28,6 +31,10 @@ class RealtimeAudioOutputTest {
     private final FakeMicrophone microphone = new FakeMicrophone();
     private final FakeSpeaker speaker = new FakeSpeaker();
     private final ObjectMapper json = new ObjectMapper();
+
+    private enum PlaybackExit {
+        STOP, DISCONNECT, CLOSE
+    }
 
     @Test
     void playsFragmentedPcmProgressivelyInOrderAndFinishesAfterDeviceDrains() throws Exception {
@@ -71,12 +78,77 @@ class RealtimeAudioOutputTest {
             device.playBufferedFrames();
             await(() -> session.workspace().speaker().state() == IDLE);
             assertTrue(device.closed);
+            assertFalse(device.flushed);
             assertTrue(session.workspace().canSend());
             assertFalse(session.workspace().canCancel());
 
             socket.text(output("response.output_audio.delta", "response-1", 0, ",\"delta\":\"invalid!\""), true);
             assertEquals(RealtimeSession.State.READY, session.status().state());
             assertEquals(1, speaker.devices.size());
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(PlaybackExit.class)
+    void stopsDuringFinalDeviceBufferPlayback(PlaybackExit exit) throws Exception {
+        try (var session = session(speaker.playback())) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "response-1");
+            var pcm = microphone.block(1);
+            socket.text(audio("response-1", pcm), true);
+            await(() -> !speaker.devices.isEmpty() && speaker.devices.getFirst().written().length == pcm.length);
+            var device = speaker.devices.getFirst();
+            try {
+                responseDone(socket, "response-1", "completed");
+                awaitFinalBufferPlayback(device);
+                assertFalse(device.closed);
+
+                switch (exit) {
+                    case STOP -> session.cancelTurn();
+                    case DISCONNECT -> session.disconnect();
+                    case CLOSE -> session.close();
+                }
+                socket.text(audio("response-1", pcm), true);
+                await(() -> device.closed);
+                assertTrue(device.stopped);
+                assertTrue(device.flushed);
+                assertArrayEquals(pcm, device.written());
+            } finally {
+                device.playBufferedFrames();
+            }
+        }
+    }
+
+    private void awaitFinalBufferPlayback(FakeSpeaker.Device device) throws InterruptedException {
+        int reads = device.positionReads();
+        // Two samples after response.done rule out a poll that was already in progress.
+        await(() -> device.draining || device.positionReads() >= reads + 2);
+    }
+
+    @Test
+    void flushesAndClosesWhenFinalDeviceFrameProgressStalls() throws Exception {
+        var clock = new AtomicLong();
+        try (var session = session(speaker.playback(clock::get))) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "response-1");
+            var pcm = microphone.block(1);
+            socket.text(audio("response-1", pcm), true);
+            await(() -> !speaker.devices.isEmpty() && speaker.devices.getFirst().written().length == pcm.length);
+            var device = speaker.devices.getFirst();
+            try {
+                responseDone(socket, "response-1", "completed");
+                awaitFinalBufferPlayback(device);
+                assertFalse(device.closed);
+
+                clock.set(Duration.ofSeconds(3).toNanos());
+                await(() -> session.workspace().speaker().state() == UNAVAILABLE);
+                assertTrue(device.stopped);
+                assertTrue(device.flushed);
+                assertTrue(device.closed);
+                assertTrue(session.workspace().microphone().canStart());
+            } finally {
+                device.playBufferedFrames();
+            }
         }
     }
 
@@ -143,8 +215,8 @@ class RealtimeAudioOutputTest {
             allowStop.join();
         });
         var statusChanges = new AtomicInteger();
-        try (var session = new RealtimeSession(transport, statusChanges::incrementAndGet,
-                microphone.microphone(), delayedSpeaker.playback())) {
+        var deadlines = new CopyOnWriteArrayList<Deadline>();
+        try (var session = session(delayedSpeaker.playback(), statusChanges::incrementAndGet, deadlines)) {
             var socket = ready(session, TranscriptionModel.OFF);
             startVoice(session, socket, "input-1", "response-1");
             var pcm = microphone.block(1);
@@ -152,22 +224,52 @@ class RealtimeAudioOutputTest {
             await(() -> !delayedSpeaker.devices.isEmpty()
                     && delayedSpeaker.devices.getFirst().written().length == pcm.length);
             var device = delayedSpeaker.devices.getFirst();
-            responseDone(socket, "response-1", "completed");
             session.cancelTurn();
+            responseDone(socket, "response-1", "cancelled");
             await(stopping::isDone);
 
             int previousOpens = microphone.opens.get();
+            assertEquals(CLEANING_UP, session.workspace().speaker().state());
             assertFalse(device.flushed);
             assertTrue(session.workspace().canSend());
             assertFalse(session.workspace().microphone().canStart());
             assertFalse(session.startAudio());
             assertEquals(previousOpens, microphone.opens.get());
 
+            expire(deadlines, RealtimeSession.SPEAKER_CLEANUP_TIMEOUT);
+            assertEquals(CLEANUP_TIMEOUT, session.workspace().speaker().state());
+            assertFalse(session.workspace().microphone().canStart());
+            assertFalse(session.startAudio());
+            assertTrue(session.workspace().canSend());
+
+            for (int reconnects = 0; reconnects < 2; reconnects++) {
+                session.disconnect();
+                socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+                socket = ready(session, TranscriptionModel.OFF);
+                assertEquals(CLEANUP_TIMEOUT, session.workspace().speaker().state());
+                assertFalse(session.startAudio());
+                assertTrue(session.sendText("Synthetic text while closing the speaker."));
+                var itemId = json.readTree(socket.writes.getLast()).at("/item/id").asText();
+                socket.text("""
+                        {"type":"conversation.item.added","item":{"id":"%s","role":"user","type":"message"}}
+                        """.formatted(itemId), true);
+                socket.text("""
+                        {"type":"response.done","response":{"id":"text-%d","status":"completed",
+                         "metadata":{"rvl_turn":"%s"},"output":[]}}
+                        """.formatted(reconnects, itemId), true);
+                socket.text(audio("late-voice-response", pcm), true);
+                assertTrue(session.workspace().canSend());
+                assertEquals(1, delayedSpeaker.devices.size());
+                assertEquals(previousOpens, microphone.opens.get());
+                assertFalse(device.closed);
+            }
+
             int previousChanges = statusChanges.get();
             allowStop.complete(null);
             await(() -> statusChanges.get() > previousChanges && session.workspace().microphone().canStart());
             assertTrue(device.flushed);
             assertTrue(device.closed);
+            assertEquals(IDLE, session.workspace().speaker().state());
             assertTrue(session.startAudio());
             await(() -> microphone.opens.get() == previousOpens + 1);
         } finally {
@@ -331,7 +433,7 @@ class RealtimeAudioOutputTest {
     }
 
     @Test
-    void detachesAStuckSpeakerSoPushToTalkRecovers() throws Exception {
+    void keepsAudioBlockedUntilAStalledSpeakerOpenUnwinds() throws Exception {
         var unblock = new CompletableFuture<Void>();
         var opening = new CompletableFuture<Void>();
         var stuckSpeaker = new FakeSpeaker(() -> {
@@ -339,25 +441,27 @@ class RealtimeAudioOutputTest {
             unblock.join();
         });
         var deadlines = new CopyOnWriteArrayList<Deadline>();
-        try (var session = new RealtimeSession(transport, () -> {}, Duration.ofSeconds(15), Duration.ofSeconds(3),
-                System::nanoTime, nanos -> {
-                    var future = new CompletableFuture<Void>();
-                    deadlines.add(new Deadline(nanos, future));
-                    return future;
-                }, microphone.microphone(), stuckSpeaker.playback())) {
+        try (var session = session(stuckSpeaker.playback(), () -> {}, deadlines)) {
             var socket = ready(session, TranscriptionModel.OFF);
             startVoice(session, socket, "input-1", "response-1");
             socket.text(audio("response-1", microphone.block(1)), true);
             await(opening::isDone);
 
             expire(deadlines, RealtimeSession.OPEN_TIMEOUT);
-            assertEquals(UNAVAILABLE, session.workspace().speaker().state());
+            assertEquals(CLEANING_UP, session.workspace().speaker().state());
             responseDone(socket, "response-1", "completed");
-            assertEquals(IDLE, session.workspace().speaker().state());
+            assertTrue(session.workspace().canSend());
             assertFalse(session.workspace().microphone().canStart());
 
-            expire(deadlines, RealtimeSession.SPEAKER_RELEASE_TIMEOUT);
-            assertTrue(session.workspace().microphone().canStart());
+            expire(deadlines, RealtimeSession.SPEAKER_CLEANUP_TIMEOUT);
+            assertEquals(CLEANUP_TIMEOUT, session.workspace().speaker().state());
+            assertFalse(session.startAudio());
+            unblock.complete(null);
+            await(() -> session.workspace().microphone().canStart());
+            var device = stuckSpeaker.devices.getFirst();
+            assertTrue(device.closed);
+            assertEquals(0, device.written().length);
+            assertEquals(IDLE, session.workspace().speaker().state());
         } finally {
             unblock.complete(null);
         }
@@ -373,6 +477,15 @@ class RealtimeAudioOutputTest {
 
     private RealtimeSession session(SpeakerPlayback playback) {
         return new RealtimeSession(transport, () -> {}, microphone.microphone(), playback);
+    }
+
+    private RealtimeSession session(SpeakerPlayback playback, Runnable changed, List<Deadline> deadlines) {
+        return new RealtimeSession(transport, changed, Duration.ofSeconds(15), Duration.ofSeconds(3),
+                System::nanoTime, nanos -> {
+                    var future = new CompletableFuture<Void>();
+                    deadlines.add(new Deadline(nanos, future));
+                    return future;
+                }, microphone.microphone(), playback);
     }
 
     private FakeTransport.Socket ready(RealtimeSession session, TranscriptionModel transcription) {

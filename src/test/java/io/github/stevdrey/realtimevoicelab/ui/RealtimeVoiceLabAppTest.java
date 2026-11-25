@@ -3,6 +3,7 @@ package io.github.stevdrey.realtimevoicelab.ui;
 import java.net.http.WebSocket;
 import java.util.Base64;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
@@ -127,7 +128,8 @@ class RealtimeVoiceLabAppTest {
     void showsVoiceTranscriptsAndStopsPlaybackWithoutBlockingTheWorkspace() throws Exception {
         var transport = new FakeTransport();
         var microphone = new FakeMicrophone();
-        var speaker = new FakeSpeaker();
+        var allowStop = new CompletableFuture<Void>();
+        var speaker = new FakeSpeaker(() -> {}, allowStop::join);
         var stage = onFxThread(Stage::new);
         try {
             onFxThread(() -> {
@@ -202,8 +204,14 @@ class RealtimeVoiceLabAppTest {
                         assertEquals("Stop playback", stop.getAccessibleText());
                         assertFalse(stop.isDisabled());
                         stop.fire();
+                        assertEquals("Closing speaker…", micStatus(stage));
+                        assertTrue(stage.getScene().lookup("#mic-button").isDisabled());
                         return null;
                     });
+                    allowStop.complete(null);
+                    awaitOnFxThread(() -> "Hold to talk".equals(micStatus(stage))
+                                    && !stage.getScene().lookup("#mic-button").isDisabled(),
+                            "Microphone did not become available after speaker cleanup");
                 } else {
                     socket.text("""
                             {"type":"conversation.item.input_audio_transcription.failed","item_id":"input-2",
@@ -220,6 +228,7 @@ class RealtimeVoiceLabAppTest {
             }
             assertTrue(socket.aborted);
         } finally {
+            allowStop.complete(null);
             onFxThread(() -> {
                 stage.close();
                 return null;

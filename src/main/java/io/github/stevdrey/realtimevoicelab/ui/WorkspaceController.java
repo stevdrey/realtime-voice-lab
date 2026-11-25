@@ -341,28 +341,33 @@ public final class WorkspaceController {
 
     private void renderAudio(RealtimeSession.MicrophoneView microphone, RealtimeSession.SpeakerView speaker) {
         var state = microphone.state();
-        // Stay enabled while busy so focus does not jump to Disconnect. Busy presses are ignored by the session.
+        var speakerState = speaker.state();
+        boolean cleaningSpeaker = speakerState == SpeakerState.CLEANING_UP || speakerState == SpeakerState.CLEANUP_TIMEOUT;
+        var audioStatus = switch (speakerState) {
+            case IDLE -> microphone.canStart() ? "Hold to talk" : "";
+            case OPENING -> "Opening speaker…";
+            case SPEAKING -> "Speaking…";
+            case CLEANING_UP -> "Closing speaker…";
+            case CLEANUP_TIMEOUT -> "Audio unavailable. Waiting for the speaker to close.";
+            case UNAVAILABLE -> "Speaker unavailable. Check your output device.";
+        };
+        // Keep focus while capturing. The session ignores gestures while processing a turn.
         micButton.setDisable(renderedState != RealtimeSession.State.READY
-                || state == RealtimeSession.MicState.UNCONFIRMED);
+                || state == RealtimeSession.MicState.UNCONFIRMED || cleaningSpeaker);
         micTooltip.setText(state == RealtimeSession.MicState.UNCONFIRMED ? "Manual PCM microphone input was not confirmed"
+                : cleaningSpeaker ? audioStatus
                 : renderedState == RealtimeSession.State.READY
                 ? "Hold the microphone or Space to record. Release to send. Esc cancels."
                 : "Microphone (connect to record)");
         boolean recording = state == RealtimeSession.MicState.RECORDING;
-        boolean speaking = speaker.state() == SpeakerState.SPEAKING;
-        boolean playing = speaking || speaker.state() == SpeakerState.OPENING;
+        boolean speaking = speakerState == SpeakerState.SPEAKING;
+        boolean playing = speaking || speakerState == SpeakerState.OPENING;
         micButton.pseudoClassStateChanged(RECORDING, recording);
         micLevel.setVisible(recording || speaking);
         micLevel.setAccessibleText(speaking ? "Speaker level" : "Microphone level");
         micLevel.setProgress(speaking ? speaker.level() : microphone.level());
         cancelButton.setText(playing ? "Stop" : "Cancel");
         cancelButton.setAccessibleText(playing ? "Stop playback" : "Cancel turn");
-        var audioStatus = switch (speaker.state()) {
-            case IDLE -> microphone.canStart() ? "Hold to talk" : "";
-            case OPENING -> "Opening speaker…";
-            case SPEAKING -> "Speaking…";
-            case UNAVAILABLE -> "Speaker unavailable. Check your output device.";
-        };
         micStatus.setText(switch (state) {
             case IDLE -> audioStatus;
             case UNCONFIRMED -> "Manual PCM microphone input was not confirmed";

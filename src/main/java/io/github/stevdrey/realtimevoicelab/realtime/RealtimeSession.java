@@ -32,8 +32,7 @@ public final class RealtimeSession implements AutoCloseable {
     static final Duration CANCEL_TIMEOUT = Duration.ofSeconds(5);
     static final Duration MAX_AUDIO_TIME = Duration.ofSeconds(30);
     static final Duration OPEN_TIMEOUT = Duration.ofSeconds(5);
-    // A Java Sound call cannot be interrupted. Detach a stopped speaker worker that has not returned by then.
-    static final Duration SPEAKER_RELEASE_TIMEOUT = Duration.ofSeconds(4);
+    static final Duration SPEAKER_CLEANUP_TIMEOUT = Duration.ofSeconds(4);
     static final int MAX_INPUT_AUDIO_BYTES = (int) (SessionProtocol.PCM_BYTES_PER_SECOND * MAX_AUDIO_TIME.toSeconds());
     private static final int MAX_OUTPUT_AUDIO_BYTES = MAX_INPUT_AUDIO_BYTES;
     // Ignore very short taps instead of asking the provider to commit a sub-100 ms buffer.
@@ -90,7 +89,7 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     public enum SpeakerState {
-        IDLE, OPENING, SPEAKING, UNAVAILABLE
+        IDLE, OPENING, SPEAKING, CLEANING_UP, CLEANUP_TIMEOUT, UNAVAILABLE
     }
 
     public record SpeakerView(SpeakerState state, double level) {
@@ -172,7 +171,7 @@ public final class RealtimeSession implements AutoCloseable {
         var input = ready ? active.input : null;
         var micState = ready ? active.micState : MicState.IDLE;
         var output = ready ? active.output : null;
-        var speakerState = ready ? active.speakerState : SpeakerState.IDLE;
+        var speakerState = ready ? speakerState(active) : SpeakerState.IDLE;
         return new Workspace(status, history.stream().map(ConversationTurn::view).toList(),
                 ready && canStartTurn(active),
                 ready && (input != null && !input.discard
@@ -181,6 +180,13 @@ public final class RealtimeSession implements AutoCloseable {
                         input == null ? 0 : (double) input.size / SessionProtocol.PCM_BYTES_PER_SECOND,
                         micState == MicState.RECORDING ? input.level : 0),
                 new SpeakerView(speakerState, output == null ? 0 : output.level));
+    }
+
+    private SpeakerState speakerState(Attempt attempt) {
+        if (attempt.output == null && playbackWorker != null) {
+            return playbackWorker.cleanupTimedOut ? SpeakerState.CLEANUP_TIMEOUT : SpeakerState.CLEANING_UP;
+        }
+        return attempt.speakerState;
     }
 
     private boolean canStartTurn(Attempt attempt) {
@@ -969,11 +975,12 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private synchronized void playbackEnded(Attempt attempt, AudioOutput output, SpeakerPlayback.Result result) {
-        if (output.releaseDeadline != null) {
-            output.releaseDeadline.complete(null);
+        if (playbackWorker != output) {
+            return;
         }
-        if (playbackWorker == output) {
-            playbackWorker = null;
+        playbackWorker = null;
+        if (output.cleanupDeadline != null) {
+            output.cleanupDeadline.complete(null);
         }
         if (active == attempt && attempt.output == output) {
             if (result == SpeakerPlayback.Result.UNAVAILABLE) {
@@ -982,7 +989,7 @@ public final class RealtimeSession implements AutoCloseable {
                 stopPlayback(attempt);
                 statusChanged.run();
             }
-        } else if (status.state() == State.READY && canStartAudio(active)) {
+        } else if (status.state() == State.READY) {
             statusChanged.run();
         }
         startPlaybackIfAvailable();
@@ -1001,27 +1008,27 @@ public final class RealtimeSession implements AutoCloseable {
         if (output != null) {
             output.stream.stop();
             output.openDeadline.complete(null);
-            if (playbackWorker == output && output.releaseDeadline == null) {
-                var release = scheduleTimeout.apply(SPEAKER_RELEASE_TIMEOUT.toNanos());
-                output.releaseDeadline = release;
-                release.whenComplete((ignored, error) -> {
+            if (playbackWorker == output) {
+                var cleanup = scheduleTimeout.apply(SPEAKER_CLEANUP_TIMEOUT.toNanos());
+                output.cleanupDeadline = cleanup;
+                cleanup.whenComplete((ignored, error) -> {
                     if (error != null) {
-                        releasePlayback(output);
+                        playbackCleanupExpired(output);
                     }
                 });
             }
         }
     }
 
-    private synchronized void releasePlayback(AudioOutput output) {
+    private synchronized void playbackCleanupExpired(AudioOutput output) {
         if (playbackWorker != output) {
             return;
         }
-        playbackWorker = null;
-        if (status.state() == State.READY && canStartAudio(active)) {
+        // A slow native call still owns the line. Only the worker's return can release it.
+        output.cleanupTimedOut = true;
+        if (status.state() == State.READY) {
             statusChanged.run();
         }
-        startPlaybackIfAvailable();
     }
 
     private void accountForAudio(Attempt attempt, String responseId, int bytes) throws IOException {
@@ -1261,7 +1268,8 @@ public final class RealtimeSession implements AutoCloseable {
     private static final class AudioOutput {
         private final SpeakerPlayback.Stream stream = new SpeakerPlayback.Stream(MAX_OUTPUT_AUDIO_BYTES);
         private CompletableFuture<Void> openDeadline;
-        private CompletableFuture<Void> releaseDeadline;
+        private CompletableFuture<Void> cleanupDeadline;
+        private boolean cleanupTimedOut;
         private double level;
     }
 

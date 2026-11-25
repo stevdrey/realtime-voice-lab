@@ -3,6 +3,7 @@ package io.github.stevdrey.realtimevoicelab.audio;
 import java.time.Duration;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.DoubleConsumer;
+import java.util.function.LongSupplier;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
@@ -27,13 +28,19 @@ public final class SpeakerPlayback {
     }
 
     private final Source source;
+    private final LongSupplier nanoTime;
 
     public SpeakerPlayback() {
         this(SpeakerPlayback::openDefaultLine);
     }
 
     public SpeakerPlayback(Source source) {
+        this(source, System::nanoTime);
+    }
+
+    SpeakerPlayback(Source source, LongSupplier nanoTime) {
         this.source = source;
+        this.nanoTime = nanoTime;
     }
 
     /** Owns the line on the playback worker. No device method uses the session or queue lock. */
@@ -55,16 +62,12 @@ public final class SpeakerPlayback {
                 line.start();
                 started.run();
                 result = writeStream(stream, line, meter);
-                if (result == Result.COMPLETED) {
-                    // Let the device play out its buffer. Only stopped or failed playback discards queued audio.
-                    line.drain();
-                }
                 return result;
             } finally {
                 try {
                     line.stop();
                 } finally {
-                    if (result != Result.COMPLETED) {
+                    if (result != Result.COMPLETED || stream.stopped) {
                         line.flush();
                     }
                 }
@@ -79,10 +82,10 @@ public final class SpeakerPlayback {
         long firstFrame = line.getLongFramePosition();
         long playedFrames = 0;
         long writtenFrames = 0;
-        long progressAt = System.nanoTime();
+        long progressAt = nanoTime.getAsLong();
         long meterAt = progressAt - METER_INTERVAL_NANOS;
         while (!stream.stopped) {
-            long now = System.nanoTime();
+            long now = nanoTime.getAsLong();
             long position = line.getLongFramePosition() - firstFrame;
             if (position > playedFrames) {
                 playedFrames = position;
@@ -104,7 +107,8 @@ public final class SpeakerPlayback {
                 }
                 continue;
             }
-            if (stream.isComplete()) {
+            // Keep checking cancellation and device progress until the last written frame has played.
+            if (playedFrames >= writtenFrames && stream.isComplete()) {
                 return Result.COMPLETED;
             }
             if (playedFrames >= writtenFrames && stream.isEmpty()) {

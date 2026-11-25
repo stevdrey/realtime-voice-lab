@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.LongSupplier;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.SourceDataLine;
@@ -28,22 +29,27 @@ public final class FakeSpeaker {
     }
 
     public SpeakerPlayback playback() {
+        return playback(System::nanoTime);
+    }
+
+    public SpeakerPlayback playback(LongSupplier nanoTime) {
         return new SpeakerPlayback(() -> {
             beforeOpen.run();
             var device = new Device(beforeStop);
             devices.add(device);
             return device.line();
-        });
+        }, nanoTime);
     }
 
     public static final class Device {
         private final ByteArrayOutputStream written = new ByteArrayOutputStream();
         private final Runnable beforeStop;
         private long framesPlayed;
+        private int positionReads;
         private boolean started;
         public volatile boolean stopped;
         public volatile boolean flushed;
-        public volatile boolean drained;
+        public volatile boolean draining;
         public volatile boolean closed;
         public volatile boolean wroteOnFxThread;
 
@@ -98,7 +104,12 @@ public final class FakeSpeaker {
         }
 
         private synchronized long position() {
+            positionReads++;
             return framesPlayed;
+        }
+
+        public synchronized int positionReads() {
+            return positionReads;
         }
 
         public synchronized byte[] written() {
@@ -111,10 +122,10 @@ public final class FakeSpeaker {
         }
 
         private synchronized void drain() throws InterruptedException {
+            draining = true;
             while (framesPlayed * Short.BYTES < written.size()) {
                 wait();
             }
-            drained = true;
         }
     }
 }
