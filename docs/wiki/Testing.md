@@ -41,6 +41,12 @@ env -u OPENAI_API_KEY -u DISPLAY -u WAYLAND_DISPLAY ./gradlew --offline test --t
 
 The fake socket and speaker verify playback starts before `response.done`, PCM stays in order across fragmented events, and late events cannot restart a finished or cancelled reply. The headless workspace exercises the speaker meter, Stop after generation, window-close cleanup and transcript updates while the device is active. Input results are matched to committed recordings, including out-of-order results and a redacted failure.
 
+## RVL-006 event inspector verification
+
+- With dependencies cached, run `env -u OPENAI_API_KEY -u DISPLAY -u WAYLAND_DISPLAY ./gradlew --offline test --tests '*EventInspectorTest' --tests '*RealtimeAudioInputTest' --tests '*RealtimeVoiceLabAppTest.inspectsFiltersAndBatchesSyntheticEventsInTheWorkspace'`.
+- The synthetic workspace test covers both directions, filtering, selection, redacted JSON, a batched burst of unknown events, and cleanup on window close. Session tests cover fragmented messages, ring eviction, and decoded audio byte counts in both directions.
+- The inspector retains the last 256 entries in memory until window close. It shows exact client-generated event IDs and app-local aliases for provider event IDs. Outgoing entries indicate attempted writes. Unknown server types use a fixed label. The JSON view contains timestamps, directions, types, IDs when available, and decoded byte counts for audio chunks. Payloads and credentials are excluded, and the inspector has no disk or network export.
+
 ## Opt-in manual smoke across MVP features
 Use a dedicated restricted API key, headphones and own adult or synthetic speech.
 - Connect mini; verify session acknowledgment and text two-turn exchange.

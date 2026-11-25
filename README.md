@@ -4,6 +4,8 @@ A small JavaFX desktop playground for learning OpenAI Realtime API directly from
 
 **Status:** Connect and Disconnect manage a GA Realtime session. Typed messages receive streaming text replies. Hold the microphone to record a voice turn and release it to hear a streamed reply with an assistant transcript. To display approximate microphone transcripts, select an input transcription model before connecting. Transcription of microphone input is off by default. See [RVL-005](../../issues/11).
 
+The Event Inspector shows the latest 256 Realtime events in memory. Filter by type, direction or displayed event ID, then select a row and expand **Redacted JSON**. Audio chunks show their decoded byte counts. See [RVL-006](../../issues/12).
+
 ## Goals
 - Inspect GA WebSocket events and learn the session lifecycle.
 - Talk to `gpt-realtime-2.1-mini` using text and push-to-talk audio.

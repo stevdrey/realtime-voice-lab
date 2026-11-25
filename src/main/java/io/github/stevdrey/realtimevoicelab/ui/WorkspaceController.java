@@ -119,8 +119,11 @@ public final class WorkspaceController {
     @FXML
     private Button cancelButton;
 
+    @FXML
+    private EventInspectorController eventInspectorController;
+
     WorkspaceController(RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker) {
-        session = new RealtimeSession(transport, this::scheduleRender, microphone, speaker);
+        session = new RealtimeSession(transport, this::scheduleRender, microphone, speaker, this::scheduleRender);
     }
 
     @FXML
@@ -303,6 +306,9 @@ public final class WorkspaceController {
         if (turnRows != null) {
             turnRows.getChildren().clear();
         }
+        if (eventInspectorController != null) {
+            eventInspectorController.render(List.of());
+        }
         renderedTurns = List.of();
     }
 
@@ -350,6 +356,7 @@ public final class WorkspaceController {
         transcriptionSelector.setDisable(state != RealtimeSession.State.DISCONNECTED && state != RealtimeSession.State.ERROR);
         renderAudio(workspace.microphone(), workspace.speaker());
         renderConversation(workspace.turns());
+        eventInspectorController.render(session.inspectedEvents());
     }
 
     private void renderAudio(RealtimeSession.MicrophoneView microphone, RealtimeSession.SpeakerView speaker) {

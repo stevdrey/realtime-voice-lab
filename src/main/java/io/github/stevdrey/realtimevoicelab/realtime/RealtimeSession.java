@@ -5,6 +5,7 @@ import java.net.http.HttpTimeoutException;
 import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.HashMap;
@@ -103,12 +104,14 @@ public final class RealtimeSession implements AutoCloseable {
     private final MicrophoneCapture microphone;
     private final SpeakerPlayback speaker;
     private final Runnable statusChanged;
+    private final Runnable eventsChanged;
     private final Duration setupTimeout;
     private final Duration closeTimeout;
     private final LongSupplier nanoTime;
     // The timer completes exceptionally on expiry. Normal completion cancels the timeout.
     private final LongFunction<CompletableFuture<Void>> scheduleTimeout;
     private final SessionProtocol protocol = new SessionProtocol();
+    private final EventInspector inspector = new EventInspector(Clock.systemUTC());
 
     // Commands, listener callbacks, write completions and deadlines share this monitor.
     private Status status = new Status(State.DISCONNECTED, null);
@@ -129,8 +132,13 @@ public final class RealtimeSession implements AutoCloseable {
 
     public RealtimeSession(RealtimeTransport transport, Runnable statusChanged, MicrophoneCapture microphone,
                            SpeakerPlayback speaker) {
+        this(transport, statusChanged, microphone, speaker, () -> {});
+    }
+
+    public RealtimeSession(RealtimeTransport transport, Runnable statusChanged, MicrophoneCapture microphone,
+                           SpeakerPlayback speaker, Runnable eventsChanged) {
         this(transport, statusChanged, Duration.ofSeconds(15), Duration.ofSeconds(3),
-                System::nanoTime, RealtimeSession::timeoutAfter, microphone, speaker);
+                System::nanoTime, RealtimeSession::timeoutAfter, microphone, speaker, eventsChanged);
     }
 
     RealtimeSession(RealtimeTransport transport, Runnable statusChanged, Duration setupTimeout, Duration closeTimeout) {
@@ -152,10 +160,19 @@ public final class RealtimeSession implements AutoCloseable {
     RealtimeSession(RealtimeTransport transport, Runnable statusChanged, Duration setupTimeout,
                     Duration closeTimeout, LongSupplier nanoTime, LongFunction<CompletableFuture<Void>> scheduleTimeout,
                     MicrophoneCapture microphone, SpeakerPlayback speaker) {
+        this(transport, statusChanged, setupTimeout, closeTimeout, nanoTime, scheduleTimeout, microphone, speaker,
+                () -> {});
+    }
+
+    private RealtimeSession(RealtimeTransport transport, Runnable statusChanged, Duration setupTimeout,
+                            Duration closeTimeout, LongSupplier nanoTime,
+                            LongFunction<CompletableFuture<Void>> scheduleTimeout, MicrophoneCapture microphone,
+                            SpeakerPlayback speaker, Runnable eventsChanged) {
         this.transport = transport;
         this.microphone = microphone;
         this.speaker = speaker;
         this.statusChanged = statusChanged;
+        this.eventsChanged = eventsChanged;
         this.setupTimeout = setupTimeout;
         this.closeTimeout = closeTimeout;
         this.nanoTime = nanoTime;
@@ -164,6 +181,10 @@ public final class RealtimeSession implements AutoCloseable {
 
     public synchronized Status status() {
         return status;
+    }
+
+    public synchronized List<EventInspector.Entry> inspectedEvents() {
+        return inspector.snapshot();
     }
 
     public synchronized Workspace workspace() {
@@ -552,7 +573,7 @@ public final class RealtimeSession implements AutoCloseable {
             return;
         }
         try {
-            attempt.socket.sendText(SessionProtocol.CANCEL_RESPONSE, true)
+            sendEvent(attempt, SessionProtocol.CANCEL_RESPONSE)
                     .whenComplete((socket, error) -> cancelWritten(attempt, error));
         } catch (RuntimeException error) {
             fail(attempt, attempt.closeFailure);
@@ -609,6 +630,7 @@ public final class RealtimeSession implements AutoCloseable {
         }
         disposed = true;
         history.clear();
+        inspector.clear();
         if (active != null) {
             finish(active, null, true);
         }
@@ -740,6 +762,11 @@ public final class RealtimeSession implements AutoCloseable {
         }
 
         var event = protocol.parse(message);
+        if ("response.output_audio.delta".equals(event.type())) {
+            receiveAudioEvent(attempt, event);
+            return;
+        }
+        inspectIncoming(event, null);
         switch (event.type()) {
             case "error" -> {
                 // Setup cannot complete after a rejected configuration.
@@ -816,11 +843,6 @@ public final class RealtimeSession implements AutoCloseable {
                 // Replays and rejected requests also consume budget. Dispatch remains a separate check.
                 if (status.state() == State.READY && ++attempt.toolCalls > MAX_TOOL_CALLS) {
                     stopAtLimit(attempt, Failure.TOOL_LIMIT);
-                }
-            }
-            case "response.output_audio.delta" -> {
-                if (status.state() == State.READY && !attempt.finishedResponses.contains(event.responseId())) {
-                    receiveOutputAudio(attempt, event);
                 }
             }
             case "response.output_audio.done", "response.output_audio_transcript.delta",
@@ -900,8 +922,27 @@ public final class RealtimeSession implements AutoCloseable {
         }
     }
 
-    private void receiveOutputAudio(Attempt attempt, SessionProtocol.Event event) throws IOException {
-        var pcm = protocol.decodeAudio(event.encodedAudio());
+    private void inspectIncoming(SessionProtocol.Event event, Integer audioBytes) {
+        inspector.incoming(event.type(), event.eventId(), audioBytes);
+        eventsChanged.run();
+    }
+
+    private void receiveAudioEvent(Attempt attempt, SessionProtocol.Event event) throws IOException {
+        boolean process = status.state() == State.READY && !attempt.finishedResponses.contains(event.responseId());
+        byte[] pcm;
+        try {
+            pcm = protocol.decodeAudio(event.encodedAudio());
+        } catch (IOException invalidAudio) {
+            inspectIncoming(event, null);
+            if (process) {
+                throw invalidAudio;
+            }
+            return;
+        }
+        inspectIncoming(event, pcm.length);
+        if (!process) {
+            return;
+        }
         accountForAudio(attempt, event.responseId(), pcm.length);
         var turn = attempt.turn;
         if (status.state() == State.READY && pcm.length != 0 && isVoiceResponse(turn, event.responseId())
@@ -1205,10 +1246,16 @@ public final class RealtimeSession implements AutoCloseable {
         }
     }
 
-    private void writeTurnEvent(Attempt attempt, String event) {
+    private CompletableFuture<WebSocket> sendEvent(Attempt attempt, SessionProtocol.Command event) {
+        inspector.outgoing(event.type(), event.eventId(), event.audioBytes());
+        eventsChanged.run();
+        return attempt.socket.sendText(event.message(), true);
+    }
+
+    private void writeTurnEvent(Attempt attempt, SessionProtocol.Command event) {
         attempt.writing = true;
         try {
-            attempt.socket.sendText(event, true).whenComplete((socket, error) -> turnEventWritten(attempt, error));
+            sendEvent(attempt, event).whenComplete((socket, error) -> turnEventWritten(attempt, error));
         } catch (RuntimeException error) {
             fail(attempt, Failure.CONNECTION);
         }
@@ -1236,7 +1283,7 @@ public final class RealtimeSession implements AutoCloseable {
             return;
         }
         try {
-            attempt.socket.sendText(protocol.configuration(attempt.transcriptionModel), true).whenComplete((socket, error) -> {
+            sendEvent(attempt, protocol.configuration(attempt.transcriptionModel)).whenComplete((socket, error) -> {
                 synchronized (RealtimeSession.this) {
                     if (active != attempt) {
                         return;

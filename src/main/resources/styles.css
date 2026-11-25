@@ -12,6 +12,7 @@
     -rv-primary: #6366f1;
     -rv-primary-hover: #5558db;
     -rv-success: #4ade80;
+    -rv-outgoing: #60a5fa;
     -rv-danger: #f87171;
 
     -fx-background-color: -rv-app;
@@ -164,6 +165,65 @@
 
 .text-field:focus-visible, .text-action:focus-visible {
     -fx-border-color: -rv-accent;
+}
+
+.event-inspector .list-cell {
+    -fx-font-family: "Monospaced";
+    -fx-font-size: 12px;
+    -fx-text-overrun: ellipsis;
+}
+
+.event-inspector .list-cell:incoming {
+    -fx-text-fill: -rv-success;
+}
+
+.event-inspector .list-cell:outgoing {
+    -fx-text-fill: -rv-outgoing;
+}
+
+.event-inspector .list-cell:filled:hover,
+.event-inspector .list-cell:filled:selected {
+    -fx-background-color: -rv-control;
+}
+
+.event-inspector .list-cell:filled:selected {
+    -fx-border-color: -rv-accent;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+}
+
+.event-inspector .titled-pane {
+    -fx-text-fill: -rv-secondary;
+    -fx-font-size: 12px;
+}
+
+.event-inspector .titled-pane > .title {
+    -fx-background-color: -rv-control;
+    -fx-background-radius: 6;
+    -fx-border-color: transparent;
+    -fx-border-radius: 6;
+}
+
+.event-inspector .titled-pane:focus-visible > .title,
+.event-inspector .text-area:focus-visible {
+    -fx-border-color: -rv-accent;
+}
+
+.event-inspector .titled-pane > .title .arrow {
+    -fx-background-color: -rv-secondary;
+}
+
+.event-inspector .titled-pane > .content,
+.event-inspector .text-area,
+.event-inspector .text-area .content {
+    -fx-background-color: -rv-panel;
+    -fx-border-color: transparent;
+}
+
+.event-inspector .text-area {
+    -fx-font-family: "Monospaced";
+    -fx-text-fill: -rv-text;
+    -fx-prompt-text-fill: -rv-muted;
 }
 
 .scroll-bar, .scroll-bar > .increment-button, .scroll-bar > .decrement-button {

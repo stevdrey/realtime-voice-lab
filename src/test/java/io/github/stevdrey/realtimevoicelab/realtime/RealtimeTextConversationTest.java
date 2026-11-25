@@ -233,7 +233,7 @@ class RealtimeTextConversationTest {
         session.disconnect();
         assertEquals(State.CLOSING, session.status().state());
         assertEquals(4, socket.writes.size());
-        assertEquals(SessionProtocol.CANCEL_RESPONSE, socket.writes.getLast());
+        assertEquals(SessionProtocol.CANCEL_RESPONSE.message(), socket.writes.getLast());
         assertEquals(1, socket.closeWrites);
         socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
         assertEquals(new RealtimeSession.Status(State.DISCONNECTED, null), session.status());

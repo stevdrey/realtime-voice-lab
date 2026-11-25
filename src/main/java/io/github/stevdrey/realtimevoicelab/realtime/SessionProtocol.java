@@ -23,7 +23,8 @@ final class SessionProtocol {
     private static final String PCM_AUDIO_TYPE = "audio/pcm";
     private static final int PCM_SAMPLE_RATE = MicrophoneCapture.SAMPLE_RATE;
     static final int PCM_BYTES_PER_SECOND = MicrophoneCapture.BYTES_PER_SECOND;
-    static final String CANCEL_RESPONSE = "{\"type\":\"response.cancel\"}";
+    static final Command CANCEL_RESPONSE = new Command("response.cancel", null,
+            "{\"type\":\"response.cancel\"}", null);
     static final String TURN_METADATA = "rvl_turn";
 
     private final JsonFactory factory = JsonFactory.builder()
@@ -33,7 +34,7 @@ final class SessionProtocol {
             .build();
     private final ObjectMapper mapper = new ObjectMapper(factory);
 
-    String configuration(TranscriptionModel transcription) {
+    Command configuration(TranscriptionModel transcription) {
         var update = mapper.createObjectNode().put("type", "session.update");
         var session = update.putObject("session").put("type", "realtime");
         session.put("instructions", "Respond briefly.");
@@ -49,46 +50,52 @@ final class SessionProtocol {
         }
         audio.putObject("output").put("voice", "marin")
                 .putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
-        return update.toString();
+        return command(update, null);
     }
 
-    String createItem(ConversationTurn turn) {
+    Command createItem(ConversationTurn turn) {
         var event = command("conversation.item.create", turn.itemEventId());
         event.putObject("item").put("id", turn.id).put("type", "message").put("role", "user")
                 .putArray("content").addObject().put("type", "input_text").put("text", turn.input);
-        return event.toString();
+        return command(event, null);
     }
 
-    String appendAudio(String id, byte[] pcm) {
-        return command("input_audio_buffer.append", id).put("audio", pcm).toString();
+    Command appendAudio(String id, byte[] pcm) {
+        return command(command("input_audio_buffer.append", id).put("audio", pcm), pcm.length);
     }
 
-    String commitAudio(String id) {
-        return command("input_audio_buffer.commit", id).toString();
+    Command commitAudio(String id) {
+        return command(command("input_audio_buffer.commit", id), null);
     }
 
-    String clearAudio(String id) {
-        return command("input_audio_buffer.clear", id).toString();
+    Command clearAudio(String id) {
+        return command(command("input_audio_buffer.clear", id), null);
     }
 
-    String deleteItem(String eventId, String itemId) {
-        return command("conversation.item.delete", eventId).put("item_id", itemId).toString();
+    Command deleteItem(String eventId, String itemId) {
+        return command(command("conversation.item.delete", eventId).put("item_id", itemId), null);
     }
 
-    String createResponse(ConversationTurn turn) {
+    Command createResponse(ConversationTurn turn) {
         var event = command("response.create", turn.responseEventId());
         var response = event.putObject("response").put("max_output_tokens", MAX_OUTPUT_TOKENS);
         response.putArray("output_modalities").add(turn.isVoice() ? "audio" : "text");
         response.putObject("metadata").put(TURN_METADATA, turn.id);
-        return event.toString();
+        return command(event, null);
     }
 
-    String cancelResponse(ConversationTurn turn) {
-        return command("response.cancel", turn.cancelEventId()).put("response_id", turn.responseId).toString();
+    Command cancelResponse(ConversationTurn turn) {
+        var event = command("response.cancel", turn.cancelEventId()).put("response_id", turn.responseId);
+        return command(event, null);
     }
 
     private ObjectNode command(String type, String id) {
         return mapper.createObjectNode().put("type", type).put("event_id", id);
+    }
+
+    private Command command(ObjectNode event, Integer audioBytes) {
+        return new Command(event.path("type").textValue(), event.path("event_id").textValue(),
+                event.toString(), audioBytes);
     }
 
     JsonNode textEvent(String message) throws IOException {
@@ -132,6 +139,7 @@ final class SessionProtocol {
     // Read lifecycle fields and stream payloads without building a tree for every event.
     Event parse(String message) throws IOException {
         String type = null;
+        String eventId = null;
         String sessionType = null;
         String sessionId = null;
         int outputCap = 0;
@@ -153,6 +161,8 @@ final class SessionProtocol {
                 var value = parser.nextToken();
                 if ("type".equals(field)) {
                     type = textValue(parser, value);
+                } else if ("event_id".equals(field)) {
+                    eventId = textValue(parser, value);
                 } else if ("response_id".equals(field)) {
                     responseId = textValue(parser, value);
                 } else if ("item_id".equals(field)) {
@@ -207,24 +217,24 @@ final class SessionProtocol {
                 if (!"realtime".equals(sessionType)) {
                     throw new IOException("Invalid session type");
                 }
-                yield new Event(type, new Configuration(requiredText(sessionId),
+                yield new Event(type, eventId, new Configuration(requiredText(sessionId),
                         pcmOutput && outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS, manualPcmInput,
                         transcriptionModel), null, null, null, null);
             }
             case "response.output_audio.delta" ->
-                    new Event(type, null, requiredId(responseId), itemId, delta,
+                    new Event(type, eventId, null, requiredId(responseId), itemId, delta,
                             new OutputPart(outputIndex, contentIndex, null));
             case "response.output_text.delta", "response.output_audio_transcript.delta" ->
-                    new Event(type, null, requiredId(responseId), itemId, null,
+                    new Event(type, eventId, null, requiredId(responseId), itemId, null,
                             new OutputPart(outputIndex, contentIndex, delta));
             case "response.output_audio.done", "response.output_audio_transcript.done" ->
-                    new Event(type, null, requiredId(responseId), itemId, null,
+                    new Event(type, eventId, null, requiredId(responseId), itemId, null,
                             new OutputPart(outputIndex, contentIndex, transcript));
             case "conversation.item.input_audio_transcription.completed",
                  "conversation.item.input_audio_transcription.failed" ->
-                    new Event(type, null, null, itemId, null, new OutputPart(-1, contentIndex, transcript));
-            case "input_audio_buffer.committed" -> new Event(type, null, null, itemId, null, null);
-            default -> new Event(type, null, null, null, null, null);
+                    new Event(type, eventId, null, null, itemId, null, new OutputPart(-1, contentIndex, transcript));
+            case "input_audio_buffer.committed" -> new Event(type, eventId, null, null, itemId, null, null);
+            default -> new Event(type, eventId, null, null, null, null, null);
         };
     }
 
@@ -279,8 +289,11 @@ final class SessionProtocol {
     record Configuration(String sessionId, boolean outputConfirmed, boolean inputConfirmed, String transcriptionModel) {
     }
 
-    record Event(String type, Configuration configuration, String responseId, String itemId, String encodedAudio,
-                 OutputPart part) {
+    record Command(String type, String eventId, String message, Integer audioBytes) {
+    }
+
+    record Event(String type, String eventId, Configuration configuration, String responseId, String itemId,
+                 String encodedAudio, OutputPart part) {
     }
 
     record OutputPart(int outputIndex, int contentIndex, String text) {

@@ -463,7 +463,7 @@ class RealtimeSafetyTest {
     private void assertOnlyCancelAfterSetup(FakeTransport.Socket socket) {
         // Only the configuration precedes the generic cancellation in these audio and tool scenarios.
         assertEquals(2, socket.writes.size());
-        assertEquals(SessionProtocol.CANCEL_RESPONSE, socket.writes.getLast());
+        assertEquals(SessionProtocol.CANCEL_RESPONSE.message(), socket.writes.getLast());
     }
 
     private void assertLimit(Failure expected) {
