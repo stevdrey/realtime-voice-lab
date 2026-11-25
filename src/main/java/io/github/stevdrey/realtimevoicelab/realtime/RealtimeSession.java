@@ -550,7 +550,6 @@ public final class RealtimeSession implements AutoCloseable {
     private void beginClose(Attempt attempt, Failure limit) {
         attempt.sessionDeadline.complete(null);
         attempt.closeFailure = limit;
-        attempt.message = null;
         resetInput(attempt, MicState.IDLE);
         stopPlayback(attempt);
         // OUTPUT_LIMIT arrives after the provider has already stopped generation.
@@ -741,9 +740,15 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private void receive(Attempt attempt, CharSequence fragment, boolean last) throws IOException {
+        if (attempt.discardingMessage) {
+            attempt.discardingMessage = !last;
+            return;
+        }
         int buffered = attempt.message == null ? 0 : attempt.message.length();
         if (fragment.length() > SessionProtocol.MAX_MESSAGE_CHARS - buffered) {
-            // There may be an active response, so abort immediately if a frame exceeds the buffer.
+            // Closing sockets drain the rest of an oversized message so its tail cannot start a new one.
+            attempt.message = null;
+            attempt.discardingMessage = !last;
             throw new IOException("Realtime message limit exceeded");
         }
         String message;
@@ -767,6 +772,9 @@ public final class RealtimeSession implements AutoCloseable {
             return;
         }
         inspectIncoming(event, null);
+        if (status.state() == State.CLOSING) {
+            return;
+        }
         switch (event.type()) {
             case "error" -> {
                 // Setup cannot complete after a rejected configuration.
@@ -1348,6 +1356,7 @@ public final class RealtimeSession implements AutoCloseable {
         private CompletableFuture<Void> sessionDeadline;
         private WebSocket socket;
         private StringBuilder message;
+        private boolean discardingMessage;
         private String sessionId;
         private ConversationTurn turn;
         private AudioInput input;
@@ -1388,11 +1397,17 @@ public final class RealtimeSession implements AutoCloseable {
         @Override
         public CompletableFuture<Void> onText(WebSocket webSocket, CharSequence fragment, boolean last) {
             synchronized (RealtimeSession.this) {
-                if (active == this && status.state() != State.CLOSING && withinSessionTime(this)) {
+                if (active == this && status.state() != State.CLOSING) {
+                    withinSessionTime(this);
+                }
+                if (active == this) {
                     try {
                         receive(this, fragment, last);
                     } catch (IOException error) {
-                        fail(this, Failure.PROTOCOL);
+                        // The peer acknowledgment and close deadline still govern shutdown.
+                        if (status.state() != State.CLOSING) {
+                            fail(this, Failure.PROTOCOL);
+                        }
                     }
                 }
                 // Demand must continue during close so a peer close frame can be delivered.
