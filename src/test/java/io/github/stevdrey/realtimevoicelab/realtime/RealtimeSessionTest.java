@@ -68,7 +68,8 @@ class RealtimeSessionTest {
         assertEquals(State.CONNECTING, session.status().state());
         socket.text("""
                 "session":{"type":"realtime","id":"test-session","max_output_tokens":512,
-                 "audio":{"output":{"format":{"type":"audio/pcm","rate":24000}}}}}
+                 "model":"gpt-realtime-2.1-mini","instructions":"Respond briefly.","output_modalities":["audio"],
+                 "audio":{"output":{"voice":"marin","format":{"type":"audio/pcm","rate":24000}}}}}
                 """, true);
         assertEquals(State.CONNECTING, session.status().state());
         socket.textWrite.complete(socket);

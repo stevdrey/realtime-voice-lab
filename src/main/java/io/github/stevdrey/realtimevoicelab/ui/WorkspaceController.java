@@ -1,5 +1,6 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
+import java.io.IOException;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
@@ -11,12 +12,16 @@ import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.SpeakerState;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeTransport;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.value.ObservableBooleanValue;
 import javafx.css.PseudoClass;
 import javafx.fxml.FXML;
-import javafx.scene.Node;
+import javafx.fxml.FXMLLoader;
+import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -33,6 +38,8 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
 import javafx.util.StringConverter;
 
 public final class WorkspaceController {
@@ -62,12 +69,16 @@ public final class WorkspaceController {
     private boolean mouseHeld;
     private MicGesture activeMicGesture;
     private boolean disposed;
+    private Stage settingsDialog;
 
     @FXML
     private VBox root;
 
     @FXML
-    private ComboBox<String> modelSelector;
+    private ComboBox<Model> modelSelector;
+
+    @FXML
+    private Label sessionMode;
 
     @FXML
     private ComboBox<TranscriptionModel> transcriptionSelector;
@@ -80,9 +91,6 @@ public final class WorkspaceController {
 
     @FXML
     private ProgressIndicator sessionProgress;
-
-    @FXML
-    private StackPane settingsControl;
 
     @FXML
     private Button settingsButton;
@@ -130,11 +138,20 @@ public final class WorkspaceController {
 
     @FXML
     private void initialize() {
-        modelSelector.getItems().setAll(RealtimeSession.DEFAULT_MODEL);
-        modelSelector.setValue(RealtimeSession.DEFAULT_MODEL);
+        modelSelector.getItems().setAll(Model.values());
         sessionProgress.managedProperty().bind(sessionProgress.visibleProperty());
         modelSelector.accessibleTextProperty().bind(Bindings.createStringBinding(
                 () -> "Model: " + modelSelector.getValue(), modelSelector.valueProperty()));
+        modelSelector.setOnAction(event -> {
+            var workspace = session.workspace();
+            var saved = workspace.settings().values();
+            var selected = modelSelector.getValue();
+            if (selected != null && selected != saved.model()) {
+                session.configure(new SessionSettings(selected, saved.voice(), saved.mode(),
+                        saved.instructions()), workspace.status().state());
+                renderSession();
+            }
+        });
         transcriptionSelector.getItems().setAll(TranscriptionModel.values());
         transcriptionSelector.setConverter(new StringConverter<>() {
             @Override
@@ -153,12 +170,13 @@ public final class WorkspaceController {
         transcriptionSelector.setTooltip(new Tooltip(transcriptionHelp));
         transcriptionSelector.setAccessibleHelp(transcriptionHelp);
 
-        installUnavailableTooltip(settingsControl, settingsButton);
+        settingsButton.setTooltip(new Tooltip("Settings"));
+        settingsButton.setOnAction(event -> showSettings());
         installMicControls();
         connectButton.setTooltip(connectTooltip);
         connectButton.setOnAction(event -> {
             switch (renderedState) {
-                case DISCONNECTED, ERROR -> session.connect(modelSelector.getValue(), transcriptionSelector.getValue());
+                case DISCONNECTED, ERROR -> session.connectSelected(transcriptionSelector.getValue());
                 case CONNECTING, READY -> session.disconnect();
                 case CLOSING -> { }
             }
@@ -193,6 +211,36 @@ public final class WorkspaceController {
             renderSession();
         });
         renderSession();
+    }
+
+    private void showSettings() {
+        var workspace = session.workspace();
+        if (!workspace.settings().canEdit() || settingsDialog != null) {
+            return;
+        }
+        var state = workspace.status().state();
+        var dialog = new Stage();
+        dialog.initOwner(root.getScene().getWindow());
+        dialog.initModality(Modality.WINDOW_MODAL);
+        dialog.setTitle("Session Settings");
+        var loader = new FXMLLoader(getClass().getResource("session-settings.fxml"));
+        loader.setController(new SessionSettingsController(dialog, workspace.settings(),
+                state == RealtimeSession.State.READY, requested -> {
+                    boolean applied = session.configure(requested, state);
+                    renderSession();
+                    return applied;
+                }));
+        try {
+            var scene = new Scene(loader.load());
+            scene.getStylesheets().setAll(root.getScene().getStylesheets());
+            dialog.setScene(scene);
+        } catch (IOException error) {
+            throw new IllegalStateException("Session settings could not be loaded", error);
+        }
+        dialog.setResizable(false);
+        dialog.setOnHidden(event -> settingsDialog = null);
+        settingsDialog = dialog;
+        dialog.show();
     }
 
     void watchFocus(ObservableBooleanValue windowFocus) {
@@ -301,6 +349,9 @@ public final class WorkspaceController {
             return;
         }
         disposed = true;
+        if (settingsDialog != null) {
+            settingsDialog.close();
+        }
         session.close();
         if (composer != null) {
             composer.clear();
@@ -341,17 +392,20 @@ public final class WorkspaceController {
         var workspace = session.workspace();
         var status = workspace.status();
         var state = status.state();
+        var settings = workspace.settings();
+        var mode = settings.values().mode();
+        boolean disconnected = state == RealtimeSession.State.DISCONNECTED || state == RealtimeSession.State.ERROR;
         renderedState = state;
         sessionStatus.setText(switch (state) {
             case DISCONNECTED -> "Disconnected";
             case CONNECTING -> "Connecting…";
-            case READY -> "Connected";
+            case READY -> settings.applying() ? "Applying settings…" : "Connected";
             case CLOSING -> "Disconnecting…";
             case ERROR -> failureText(status.failure());
         });
         statusDot.pseudoClassStateChanged(CONNECTED, state == RealtimeSession.State.READY);
         statusDot.pseudoClassStateChanged(ERROR, state == RealtimeSession.State.ERROR);
-        sessionProgress.setVisible(state == RealtimeSession.State.CONNECTING
+        sessionProgress.setVisible(settings.applying() || state == RealtimeSession.State.CONNECTING
                 || state == RealtimeSession.State.CLOSING);
         var action = switch (state) {
             case DISCONNECTED, ERROR -> "Connect";
@@ -367,12 +421,17 @@ public final class WorkspaceController {
         canSendText = workspace.canSend();
         updateSendButton();
         cancelButton.setDisable(!workspace.canCancel());
-        transcriptionSelector.setDisable(state != RealtimeSession.State.DISCONNECTED && state != RealtimeSession.State.ERROR);
-        renderAudio(workspace.microphone(), workspace.speaker());
-        renderConversation(workspace.turns());
+        modelSelector.setValue(settings.values().model());
+        modelSelector.setDisable(!disconnected);
+        sessionMode.setText(mode.toString());
+        transcriptionSelector.setDisable(!disconnected);
+        settingsButton.setDisable(!settings.canEdit());
+        renderAudio(workspace.microphone(), workspace.speaker(), mode, settings.applying());
+        renderConversation(workspace.turns(), mode);
     }
 
-    private void renderAudio(RealtimeSession.MicrophoneView microphone, RealtimeSession.SpeakerView speaker) {
+    private void renderAudio(RealtimeSession.MicrophoneView microphone, RealtimeSession.SpeakerView speaker,
+                             Mode mode, boolean applyingSettings) {
         var state = microphone.state();
         var speakerState = speaker.state();
         boolean cleaningSpeaker = speakerState == SpeakerState.CLEANING_UP || speakerState == SpeakerState.CLEANUP_TIMEOUT;
@@ -385,10 +444,11 @@ public final class WorkspaceController {
             case UNAVAILABLE -> "Speaker unavailable. Check your output device.";
         };
         // Keep keyboard focus during speaker cleanup. The session prevents capture until the speaker is released.
-        micButton.setDisable(renderedState != RealtimeSession.State.READY
+        micButton.setDisable(renderedState != RealtimeSession.State.READY || mode == Mode.TEXT || applyingSettings
                 || state == RealtimeSession.MicState.UNCONFIRMED);
         micButton.pseudoClassStateChanged(WAITING_FOR_SPEAKER, cleaningSpeaker);
-        micTooltip.setText(state == RealtimeSession.MicState.UNCONFIRMED ? "Manual PCM microphone input was not confirmed"
+        micTooltip.setText(mode == Mode.TEXT ? "Microphone unavailable in Text mode"
+                : state == RealtimeSession.MicState.UNCONFIRMED ? "Manual PCM microphone input was not confirmed"
                 : cleaningSpeaker ? audioStatus
                 : renderedState == RealtimeSession.State.READY
                 ? "Hold the microphone or Space to record. Release to send. Esc cancels."
@@ -402,7 +462,7 @@ public final class WorkspaceController {
         micLevel.setProgress(speaking ? speaker.level() : microphone.level());
         cancelButton.setText(playing ? "Stop" : "Cancel");
         cancelButton.setAccessibleText(playing ? "Stop playback" : "Cancel turn");
-        micStatus.setText(switch (state) {
+        micStatus.setText(mode == Mode.TEXT ? audioStatus : switch (state) {
             case IDLE -> audioStatus;
             case UNCONFIRMED -> "Manual PCM microphone input was not confirmed";
             case OPENING -> "Opening microphone…";
@@ -427,9 +487,10 @@ public final class WorkspaceController {
         sendButton.setDisable(!canSendText || composer.getText().isBlank());
     }
 
-    private void renderConversation(List<RealtimeSession.TurnView> turns) {
+    private void renderConversation(List<RealtimeSession.TurnView> turns, Mode mode) {
         conversationEmpty.setText(renderedState == RealtimeSession.State.READY
-                ? "Send a message or hold the microphone to talk." : "Connect to start a conversation.");
+                ? mode == Mode.TEXT ? "Send a message." : "Send a message or hold the microphone to talk."
+                : "Connect to start a conversation.");
         conversationEmpty.setVisible(turns.isEmpty());
         if (turns.equals(renderedTurns)) {
             return;
@@ -515,6 +576,9 @@ public final class WorkspaceController {
             case PROTOCOL -> "Invalid Realtime event";
             case PROVIDER -> "Realtime session failed";
             case REMOTE_CLOSE -> "Server closed the session";
+            case SETTINGS_REJECTED -> "Settings rejected. Review them and reconnect.";
+            case SETTINGS_MISMATCH -> "Settings confirmation did not match. Reconnect to retry.";
+            case SETTINGS_TIMEOUT -> "Settings were not acknowledged. Reconnect to retry.";
             case SESSION_LIMIT -> "Session time limit reached";
             case AUDIO_LIMIT -> "Audio turn limit reached";
             case OUTPUT_LIMIT -> "Response output limit reached";
@@ -522,8 +586,4 @@ public final class WorkspaceController {
         };
     }
 
-    private void installUnavailableTooltip(Node target, Button button) {
-        // Disabled buttons do not receive hover events, so the tooltip goes on the button's hoverable wrapper.
-        Tooltip.install(target, new Tooltip(button.getAccessibleText() + " (unavailable)"));
-    }
 }

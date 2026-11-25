@@ -47,6 +47,14 @@ The fake socket and speaker verify playback starts before `response.done`, PCM s
 - The synthetic workspace test covers both directions, filtering, selection, redacted JSON, a batched burst of unknown events, and cleanup on window close. Session tests cover fragmented messages, ring eviction, and decoded audio byte counts in both directions.
 - The inspector retains the last 256 entries in memory until window close. It shows exact client-generated event IDs and app-local aliases for provider event IDs. Outgoing entries indicate attempted writes. Unknown server types use a fixed label. The JSON view contains timestamps, directions, types, IDs when available, and decoded byte counts for audio chunks. Payloads and credentials are excluded, and the inspector has no disk or network export.
 
+## RVL-007 session settings verification
+
+```sh
+env -u OPENAI_API_KEY -u DISPLAY -u WAYLAND_DISPLAY ./gradlew --offline test --tests '*RealtimeSettingsTest' --tests '*RealtimeVoiceLabAppTest.editsSessionSettingsAndShowsOnlyAcknowledgedChangesInTheWorkspace'
+```
+
+The headless dialog journey selects both presets, edits the instructions, saves the model, voice and Text mode, and connects over a fake socket. It checks that Audio mode becomes available only after acknowledgment, that the model is fixed while connected, and that a synthetic audio event locks the voice. It also exercises sanitized rejection and the return to editable settings after the session ends. Protocol tests cover acknowledgment and write ordering, mismatched settings, timeouts, allowlists and explicit reconnect. Use synthetic instructions and PCM in any captured evidence.
+
 ## Opt-in manual smoke across MVP features
 Use a dedicated restricted API key, headphones and own adult or synthetic speech.
 - Connect mini; verify session acknowledgment and text two-turn exchange.

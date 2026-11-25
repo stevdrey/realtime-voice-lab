@@ -452,7 +452,7 @@ class RealtimeAudioOutputTest {
     @Test
     void rejectsUnexpectedTranscriptionConfigurationAndUnalignedPcm() throws Exception {
         try (var session = session(speaker.playback())) {
-            session.connect("test-model");
+            session.connectSelected(TranscriptionModel.OFF);
             var socket = transport.attempts.getLast();
             socket.ready(TranscriptionModel.LIVE_TRANSCRIBE.modelId());
             assertEquals(RealtimeSession.Failure.PROTOCOL, session.status().failure());
@@ -472,7 +472,7 @@ class RealtimeAudioOutputTest {
     @Test
     void acceptsAProviderNormalizedTranscriptionModel() {
         try (var session = session(speaker.playback())) {
-            session.connect("test-model", TranscriptionModel.TRANSCRIBE);
+            session.connectSelected(TranscriptionModel.TRANSCRIBE);
             transport.attempts.getLast().ready("gpt-transcribe-2026-01-01");
             assertEquals(RealtimeSession.State.READY, session.status().state());
         }
@@ -535,7 +535,7 @@ class RealtimeAudioOutputTest {
     }
 
     private FakeTransport.Socket ready(RealtimeSession session, TranscriptionModel transcription) {
-        session.connect("test-model", transcription);
+        session.connectSelected(transcription);
         var socket = transport.attempts.getLast();
         socket.ready(transcription == TranscriptionModel.OFF ? null : transcription.modelId());
         assertEquals(RealtimeSession.State.READY, session.status().state());

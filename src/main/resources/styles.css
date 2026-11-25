@@ -167,6 +167,25 @@
     -fx-border-color: -rv-accent;
 }
 
+.settings-dialog .text-area, .settings-dialog .text-area .content {
+    -fx-background-color: -rv-control;
+    -fx-background-radius: 6;
+}
+
+.settings-dialog .text-area {
+    -fx-border-color: transparent;
+    -fx-border-radius: 6;
+    -fx-text-fill: -rv-text;
+}
+
+.settings-dialog .text-area:focus-visible {
+    -fx-border-color: -rv-accent;
+}
+
+.settings-error {
+    -fx-text-fill: -rv-danger;
+}
+
 .event-inspector .list-cell {
     -fx-font-family: "Monospaced";
     -fx-font-size: 12px;

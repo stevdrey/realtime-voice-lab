@@ -34,22 +34,27 @@ final class SessionProtocol {
             .build();
     private final ObjectMapper mapper = new ObjectMapper(factory);
 
-    Command configuration(TranscriptionModel transcription) {
-        var update = mapper.createObjectNode().put("type", "session.update");
+    Command configuration(String eventId, SessionSettings requested, SessionSettings applied,
+                          TranscriptionModel transcription) {
+        var update = command("session.update", eventId);
         var session = update.putObject("session").put("type", "realtime");
-        session.put("instructions", "Respond briefly.");
-        session.put("max_output_tokens", MAX_OUTPUT_TOKENS);
-        session.putArray("output_modalities").add("audio");
-        var audio = session.putObject("audio");
-        var input = audio.putObject("input").putNull("turn_detection");
-        input.putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
-        if (transcription == TranscriptionModel.OFF) {
-            input.putNull("transcription");
-        } else {
-            input.putObject("transcription").put("model", transcription.modelId());
+        session.put("instructions", requested.instructions());
+        session.putArray("output_modalities").add(requested.mode().modality());
+        if (applied == null) {
+            session.put("max_output_tokens", MAX_OUTPUT_TOKENS);
+            var audio = session.putObject("audio");
+            var input = audio.putObject("input").putNull("turn_detection");
+            input.putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
+            if (transcription == TranscriptionModel.OFF) {
+                input.putNull("transcription");
+            } else {
+                input.putObject("transcription").put("model", transcription.modelId());
+            }
+            audio.putObject("output").put("voice", requested.voice().id())
+                    .putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
+        } else if (requested.voice() != applied.voice()) {
+            session.putObject("audio").putObject("output").put("voice", requested.voice().id());
         }
-        audio.putObject("output").put("voice", "marin")
-                .putObject("format").put("type", PCM_AUDIO_TYPE).put("rate", PCM_SAMPLE_RATE);
         return command(update, null);
     }
 
@@ -140,12 +145,7 @@ final class SessionProtocol {
     Event parse(String message) throws IOException {
         String type = null;
         String eventId = null;
-        String sessionType = null;
-        String sessionId = null;
-        int outputCap = 0;
-        boolean pcmOutput = false;
-        boolean manualPcmInput = false;
-        String transcriptionModel = "";
+        JsonNode session = null;
         String responseId = null;
         String itemId = null;
         String delta = null;
@@ -177,31 +177,7 @@ final class SessionProtocol {
                 } else if ("content_index".equals(field) && value == JsonToken.VALUE_NUMBER_INT) {
                     contentIndex = partIndex(parser);
                 } else if ("session".equals(field) && value == JsonToken.START_OBJECT) {
-                    while (parser.nextToken() == JsonToken.FIELD_NAME) {
-                        var sessionField = parser.currentName();
-                        var sessionValue = parser.nextToken();
-                        if ("type".equals(sessionField)) {
-                            sessionType = textValue(parser, sessionValue);
-                        } else if ("id".equals(sessionField)) {
-                            sessionId = textValue(parser, sessionValue);
-                        } else if ("max_output_tokens".equals(sessionField) && sessionValue == JsonToken.VALUE_NUMBER_INT) {
-                            outputCap = parser.getIntValue();
-                        } else if ("audio".equals(sessionField) && sessionValue == JsonToken.START_OBJECT) {
-                            JsonNode audio = mapper.readTree(parser);
-                            pcmOutput = isPcmFormat(audio.path("output").path("format"));
-                            var input = audio.path("input");
-                            manualPcmInput = input.path("turn_detection").isNull() && isPcmFormat(input.path("format"));
-                            var transcription = input.path("transcription");
-                            if (!transcription.isNull() && !transcription.isMissingNode()) {
-                                transcriptionModel = transcription.path("model").textValue();
-                                if ("".equals(transcriptionModel)) {
-                                    transcriptionModel = null;
-                                }
-                            }
-                        } else {
-                            parser.skipChildren();
-                        }
-                    }
+                    session = mapper.readTree(parser);
                 } else {
                     parser.skipChildren();
                 }
@@ -213,14 +189,8 @@ final class SessionProtocol {
 
         type = requiredText(type);
         return switch (type) {
-            case "session.created", "session.updated" -> {
-                if (!"realtime".equals(sessionType)) {
-                    throw new IOException("Invalid session type");
-                }
-                yield new Event(type, eventId, new Configuration(requiredText(sessionId),
-                        pcmOutput && outputCap > 0 && outputCap <= MAX_OUTPUT_TOKENS, manualPcmInput,
-                        transcriptionModel), null, null, null, null);
-            }
+            case "session.created", "session.updated" ->
+                    new Event(type, eventId, readConfiguration(session), null, null, null, null);
             case "response.output_audio.delta" ->
                     new Event(type, eventId, null, requiredId(responseId), itemId, delta,
                             new OutputPart(outputIndex, contentIndex, null));
@@ -236,6 +206,31 @@ final class SessionProtocol {
             case "input_audio_buffer.committed" -> new Event(type, eventId, null, null, itemId, null, null);
             default -> new Event(type, eventId, null, null, null, null, null);
         };
+    }
+
+    private Configuration readConfiguration(JsonNode session) throws IOException {
+        if (session == null || !"realtime".equals(session.path("type").textValue())) {
+            throw new IOException("Invalid session type");
+        }
+        var audio = session.path("audio");
+        var input = audio.path("input");
+        var output = audio.path("output");
+        var transcription = input.path("transcription");
+        var transcriptionModel = transcription.isNull() || transcription.isMissingNode()
+                ? "" : transcription.path("model").textValue();
+        if ("".equals(transcriptionModel) && transcription.isObject()) {
+            transcriptionModel = null;
+        }
+        var cap = session.path("max_output_tokens");
+        boolean bounded = cap.isIntegralNumber() && cap.canConvertToInt()
+                && cap.intValue() > 0 && cap.intValue() <= MAX_OUTPUT_TOKENS;
+        var modalities = session.path("output_modalities");
+        var modality = modalities.isArray() && modalities.size() == 1 ? modalities.get(0).textValue() : null;
+        return new Configuration(requiredText(session.path("id").textValue()), bounded,
+                isPcmFormat(output.path("format")),
+                input.path("turn_detection").isNull() && isPcmFormat(input.path("format")), transcriptionModel,
+                session.path("model").textValue(), output.path("voice").textValue(),
+                modality, session.path("instructions").textValue());
     }
 
     private int partIndex(JsonParser parser) throws IOException {
@@ -286,7 +281,17 @@ final class SessionProtocol {
         return requiredText(value);
     }
 
-    record Configuration(String sessionId, boolean outputConfirmed, boolean inputConfirmed, String transcriptionModel) {
+    record Configuration(String sessionId, boolean boundedOutput, boolean pcmOutput, boolean inputConfirmed,
+                         String transcriptionModel, String model, String voice, String modality, String instructions) {
+        boolean matches(SessionSettings settings) {
+            return settings.model().id().equals(model) && settings.voice().id().equals(voice)
+                    && settings.mode().modality().equals(modality) && settings.instructions().equals(instructions);
+        }
+
+        @Override
+        public String toString() {
+            return "Configuration[sessionId=" + sessionId + "]";
+        }
     }
 
     record Command(String type, String eventId, String message, Integer audioBytes) {
