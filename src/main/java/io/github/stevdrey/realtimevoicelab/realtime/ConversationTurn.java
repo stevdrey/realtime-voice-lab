@@ -21,6 +21,8 @@ final class ConversationTurn {
     TurnState state = TurnState.WAITING;
     boolean itemAcknowledged;
     boolean responseRequested;
+    boolean followingTools;
+    ToolExchange toolExchange;
     int cancelRequests;
     boolean cancelSent;
     String responseId;
@@ -33,6 +35,7 @@ final class ConversationTurn {
     private final Set<Integer> finalAudio = new HashSet<>();
     private int streamedChars;
     private String finishedText;
+    private String earlierText = "";
     private InputTranscriptState inputTranscriptState;
     private String inputTranscript;
 
@@ -61,7 +64,11 @@ final class ConversationTurn {
     }
 
     String responseEventId() {
-        return id + "-response";
+        return responseRequestKey() + "-response";
+    }
+
+    String responseRequestKey() {
+        return followingTools ? id + "-follow-up" : id;
     }
 
     String cancelEventId() {
@@ -142,7 +149,21 @@ final class ConversationTurn {
         parts.clear();
         finalTranscripts.clear();
         streamedChars = 0;
+        earlierText = "";
         finishedText = "";
+    }
+
+    void prepareToolFollowUp(ToolExchange exchange) {
+        earlierText = finishedText == null ? streamedText() : finishedText;
+        finishedText = null;
+        parts.clear();
+        finalTranscripts.clear();
+        finalAudio.clear();
+        streamedChars = 0;
+        responseRequested = false;
+        responseId = null;
+        followingTools = true;
+        toolExchange = exchange;
     }
 
     void reconcile(String terminalText) throws IOException {
@@ -163,8 +184,12 @@ final class ConversationTurn {
     }
 
     TurnView view() {
+        var reply = finishedText == null ? streamedText() : finishedText;
+        if (!earlierText.isEmpty()) {
+            reply = reply.isEmpty() ? earlierText : earlierText + "\n" + reply;
+        }
         return new TurnView(number, inputTranscript == null ? input : inputTranscript,
-                finishedText == null ? streamedText() : finishedText, state, isVoice(), inputTranscriptState);
+                reply, state, isVoice(), inputTranscriptState);
     }
 
     private String streamedText() {
@@ -172,7 +197,8 @@ final class ConversationTurn {
     }
 
     private void checkLength(int length) throws IOException {
-        if (length > MAX_TEXT_CHARS) {
+        int prefix = earlierText.isEmpty() || length == 0 ? 0 : earlierText.length() + 1;
+        if (length > MAX_TEXT_CHARS - prefix) {
             throw new IOException("Realtime text limit exceeded");
         }
     }

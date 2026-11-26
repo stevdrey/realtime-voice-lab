@@ -7,11 +7,23 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 public final class FakeTransport implements RealtimeTransport {
     public final List<Socket> attempts = new ArrayList<>();
     public boolean closed;
+
+    static String withToolConfiguration(String json) {
+        try {
+            var event = new ObjectMapper().readTree(json);
+            new LocalTools().declare((ObjectNode) event.path("session"));
+            return event.toString();
+        } catch (JsonProcessingException error) {
+            throw new AssertionError("Invalid session fixture", error);
+        }
+    }
 
     @Override
     public CompletableFuture<WebSocket> open(String model, WebSocket.Listener listener) {
@@ -77,6 +89,7 @@ public final class FakeTransport implements RealtimeTransport {
             var session = event.putObject("session").put("type", "realtime").put("id", "test-session")
                     .put("max_output_tokens", 512).put("model", settings.model().id())
                     .put("instructions", settings.instructions());
+            new LocalTools().declare(session);
             session.putArray("output_modalities").add(settings.mode().modality());
             var audio = session.putObject("audio");
             var input = audio.putObject("input");

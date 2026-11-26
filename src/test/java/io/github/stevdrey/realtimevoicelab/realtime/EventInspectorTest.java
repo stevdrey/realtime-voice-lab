@@ -109,7 +109,7 @@ class EventInspectorTest {
 
     @Test
     void commandDiagnosticsExcludeThePayload() {
-        var protocol = new SessionProtocol();
+        var protocol = new SessionProtocol(new LocalTools());
         var append = protocol.appendAudio("rvl-1-audio-1", new byte[] {1, 2, 3, 4});
         assertFalse(append.toString().contains(append.message()));
         assertFalse(append.toString().contains("AQIDBA=="));

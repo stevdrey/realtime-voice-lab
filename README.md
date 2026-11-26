@@ -10,6 +10,8 @@ Open **Settings** to choose a model, voice and mode or edit instructions from th
 
 In Audio mode, **Turn detection** offers **Push to talk**, **Server VAD** and **Semantic VAD**. Push to talk is the default. In either VAD mode, click the microphone to start a listening window of up to 30 seconds. Speaking during an assistant reply interrupts playback. The input and output work best with headphones. See [RVL-008](../../issues/14).
 
+The Realtime session offers a local demo counter function in text and audio turns. Ask it to use the demo counter with a current value of 40 and a change of 2. It calculates the next value without changing the workspace. See [RVL-009](../../issues/15).
+
 ## Goals
 - Inspect GA WebSocket events and learn the session lifecycle.
 - Talk to `gpt-realtime-2.1-mini` using text and push-to-talk audio.

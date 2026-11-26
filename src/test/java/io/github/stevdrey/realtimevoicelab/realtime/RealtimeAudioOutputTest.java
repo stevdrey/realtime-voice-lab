@@ -118,6 +118,57 @@ class RealtimeAudioOutputTest {
         }
     }
 
+    @Test
+    void playsBothVoiceResponsesAndKeepsTheirTranscriptsInOneTurnAfterAToolCall() throws Exception {
+        try (var session = session(speaker.playback())) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "initial");
+            var first = microphone.block(0);
+            var second = microphone.block(1);
+            socket.text(audio("initial", first), true);
+            transcript(socket, "done", 0, "First.", "initial");
+            socket.text(output("response.output_audio.done", "initial", 0, ""), true);
+            socket.text("""
+                    {"type":"response.done","response":{"id":"initial","status":"completed","output":[
+                     {"id":"assistant-item","type":"message","role":"assistant","content":[{"type":"output_audio",
+                      "transcript":"First."}]},
+                     {"type":"function_call","status":"completed","call_id":"call_audio",
+                      "name":"calculate_workspace_counter","arguments":%s}]}}
+                    """.formatted(json.writeValueAsString("{\"current\":3,\"delta\":4}")), true);
+            var toolItem = json.readTree(socket.writes.getLast()).path("item");
+            assertEquals("function_call_output", toolItem.path("type").textValue());
+            assertEquals("call_audio", toolItem.path("call_id").textValue());
+            assertEquals(7, json.readTree(toolItem.path("output").textValue()).path("value").intValue());
+            assertFalse(session.workspace().canSend());
+            socket.text("""
+                    {"type":"conversation.item.added","item":%s}
+                    """.formatted(toolItem), true);
+            var response = json.readTree(socket.writes.getLast()).path("response");
+            assertEquals("audio", response.at("/output_modalities/0").textValue());
+            socket.text("""
+                    {"type":"response.created","response":{"id":"follow_up","metadata":%s}}
+                    """.formatted(response.path("metadata")), true);
+            socket.text(audio("follow_up", second).replace("assistant-item", "second-assistant-item"), true);
+            transcript(socket, "done", 0, "Seven.", "follow_up");
+            responseDone(socket, "follow_up", "completed");
+
+            await(() -> !speaker.devices.isEmpty() && speaker.devices.getFirst().written().length == first.length);
+            var device = speaker.devices.getFirst();
+            device.playBufferedFrames();
+            await(() -> device.written().length == first.length + second.length);
+            var expected = new byte[first.length + second.length];
+            System.arraycopy(first, 0, expected, 0, first.length);
+            System.arraycopy(second, 0, expected, first.length, second.length);
+            assertArrayEquals(expected, device.written());
+            device.playBufferedFrames();
+            await(() -> session.workspace().canSend());
+            assertEquals(1, speaker.devices.size());
+            assertEquals(1, session.workspace().turns().size());
+            assertEquals("First.\nSeven.", session.workspace().turns().getFirst().output());
+            assertEquals(RealtimeSession.TurnState.COMPLETED, session.workspace().turns().getFirst().state());
+        }
+    }
+
     private void awaitFinalBufferPlayback(FakeSpeaker.Device device) throws InterruptedException {
         int reads = device.positionReads();
         // Two samples after response.done rule out a poll that was already in progress.

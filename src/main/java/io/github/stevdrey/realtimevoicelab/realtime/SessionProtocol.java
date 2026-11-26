@@ -21,7 +21,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 final class SessionProtocol {
     static final int MAX_MESSAGE_CHARS = 256 * 1024;
     static final int MAX_OUTPUT_TOKENS = 512;
-    private static final int MAX_ID_CHARS = 512;
+    static final int MAX_ID_CHARS = 512;
     private static final String PCM_AUDIO_TYPE = "audio/pcm";
     private static final int PCM_SAMPLE_RATE = MicrophoneCapture.SAMPLE_RATE;
     static final int PCM_BYTES_PER_SECOND = MicrophoneCapture.BYTES_PER_SECOND;
@@ -35,6 +35,11 @@ final class SessionProtocol {
             .disable(StreamReadFeature.INCLUDE_SOURCE_IN_LOCATION)
             .build();
     private final ObjectMapper mapper = new ObjectMapper(factory);
+    private final LocalTools tools;
+
+    SessionProtocol(LocalTools tools) {
+        this.tools = tools;
+    }
 
     Command configuration(String eventId, SessionSettings requested, SessionSettings applied,
                           TranscriptionModel transcription) {
@@ -47,6 +52,7 @@ final class SessionProtocol {
         boolean setPcmOutput = initial || applied.mode() == Mode.TEXT && requested.mode() == Mode.AUDIO;
         if (initial) {
             session.put("max_output_tokens", MAX_OUTPUT_TOKENS);
+            tools.declare(session);
         }
         var detection = requested.effectiveTurnDetection();
         if (initial || detection != applied.effectiveTurnDetection()) {
@@ -110,7 +116,17 @@ final class SessionProtocol {
         var event = command("response.create", turn.responseEventId());
         var response = event.putObject("response").put("max_output_tokens", MAX_OUTPUT_TOKENS);
         response.putArray("output_modalities").add(turn.isVoice() ? "audio" : "text");
-        response.putObject("metadata").put(TURN_METADATA, turn.id);
+        response.putObject("metadata").put(TURN_METADATA, turn.responseRequestKey());
+        if (turn.followingTools) {
+            response.put("tool_choice", "none");
+        }
+        return command(event, null);
+    }
+
+    Command functionOutput(String eventId, String itemId, String callId, String output) {
+        var event = command("conversation.item.create", eventId);
+        event.putObject("item").put("type", "function_call_output").put("id", itemId)
+                .put("call_id", callId).put("output", output);
         return command(event, null);
     }
 
@@ -261,7 +277,7 @@ final class SessionProtocol {
                 isPcmFormat(output.path("format")),
                 isPcmFormat(input.path("format")), readTurnDetection(input.path("turn_detection")), transcriptionModel,
                 session.path("model").textValue(), output.path("voice").textValue(),
-                modality, session.path("instructions").textValue());
+                modality, session.path("instructions").textValue(), tools.confirmed(session));
     }
 
     private TurnDetection readTurnDetection(JsonNode node) {
@@ -329,7 +345,7 @@ final class SessionProtocol {
 
     record Configuration(String sessionId, boolean boundedOutput, boolean pcmOutput, boolean pcmInput,
                          TurnDetection turnDetection, String transcriptionModel, String model, String voice,
-                         String modality, String instructions) {
+                         String modality, String instructions, boolean toolsConfirmed) {
         boolean matches(SessionSettings settings) {
             return modelMatches(settings.model().id()) && settings.voice().id().equals(voice)
                     && settings.mode().modality().equals(modality) && settings.instructions().equals(instructions);
