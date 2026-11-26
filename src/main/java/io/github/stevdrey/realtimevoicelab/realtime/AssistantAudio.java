@@ -3,8 +3,10 @@ package io.github.stevdrey.realtimevoicelab.realtime;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
@@ -14,6 +16,7 @@ final class AssistantAudio {
     private static final int MAX_SPANS = 256;
     private final List<Span> spans = new ArrayList<>();
     private final LinkedHashMap<String, Integer> receivedFrames = new LinkedHashMap<>();
+    private final Set<String> completedItems = new HashSet<>();
     private int totalFrames;
 
     void receive(String itemId, int contentIndex, int frames) throws IOException {
@@ -52,6 +55,11 @@ final class AssistantAudio {
         }
     }
 
+    void completeFirstResponse(JsonNode response, SessionProtocol protocol) throws IOException {
+        reconcile(response, protocol);
+        completedItems.addAll(receivedFrames.keySet());
+    }
+
     ArrayDeque<Cut> cuts(long playedFrames, boolean interruptedGeneration) {
         var playedByItem = new LinkedHashMap<String, Integer>();
         for (var span : spans) {
@@ -62,7 +70,8 @@ final class AssistantAudio {
         receivedFrames.forEach((itemId, received) -> {
             int played = playedByItem.getOrDefault(itemId, 0);
             // Cancellation can leave generated audio that was never delivered as a delta.
-            if (interruptedGeneration || received == 0 || played < received) {
+            boolean mayHaveMoreFrames = interruptedGeneration && !completedItems.contains(itemId);
+            if (mayHaveMoreFrames || received == 0 || played < received) {
                 cuts.addLast(new Cut(itemId, (int) (played * 1000L / MicrophoneCapture.SAMPLE_RATE)));
             }
         });

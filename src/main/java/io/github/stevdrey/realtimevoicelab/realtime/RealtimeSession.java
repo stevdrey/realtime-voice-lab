@@ -1302,16 +1302,17 @@ public final class RealtimeSession implements AutoCloseable {
         }
         var output = attempt.output;
         var turn = attempt.turn == null ? output.turn : attempt.turn;
-        boolean generating = attempt.turn != null;
+        boolean turnPending = attempt.turn != null;
+        boolean generating = turnPending && turn.responseRequested;
         if (output == null && playbackWorker != null && playbackWorker.turn == turn) {
             output = playbackWorker;
         }
         turn.discardAudioTranscript();
-        turn.state = generating ? TurnState.CANCELLING : TurnState.INTERRUPTED;
+        turn.state = turnPending ? TurnState.CANCELLING : TurnState.INTERRUPTED;
         stopVoiceOutput(attempt, turn, output, generating);
         startDeadline(attempt, CANCEL_TIMEOUT, Failure.CANCEL_TIMEOUT);
         if (active == attempt) {
-            if (generating) {
+            if (turnPending) {
                 advanceTurn(attempt);
             } else {
                 advanceInterruption(attempt);
@@ -1438,6 +1439,12 @@ public final class RealtimeSession implements AutoCloseable {
         if (active == attempt && attempt.output == output && output.level != level) {
             output.level = level;
             statusChanged.run();
+        }
+    }
+
+    private synchronized void playbackQueueEmpty(Attempt attempt, AudioOutput output) {
+        if (active == attempt && attempt.output == output && status.state() == State.READY) {
+            advanceTurn(attempt);
         }
     }
 
@@ -1623,8 +1630,7 @@ public final class RealtimeSession implements AutoCloseable {
             if (turn.assistantAudio == null) {
                 turn.assistantAudio = new AssistantAudio();
             }
-            // Keep one ordered playback stream and frame map across both responses.
-            turn.assistantAudio.reconcile(response, protocol);
+            turn.assistantAudio.completeFirstResponse(response, protocol);
         } else {
             turn.reconcile(protocol.terminalText(response));
         }
@@ -1782,7 +1788,16 @@ public final class RealtimeSession implements AutoCloseable {
                 writeTurnEvent(attempt, command);
             }
         } else if (turn.itemAcknowledged && !turn.responseRequested) {
-            turn.toolExchange = null;
+            if (turn.toolExchange != null) {
+                turn.toolExchange = null;
+                clearPhaseDeadline(attempt);
+            }
+            var output = attempt.output;
+            // Reserve the entire bounded queue for the follow-up. The line can finish playing its own buffer.
+            if (turn.followingTools && output != null
+                    && output.stream.waitForEmptyQueue(() -> playbackQueueEmpty(attempt, output))) {
+                return;
+            }
             turn.responseRequested = true;
             // An unidentified response may still be running. Abort on timeout before allowing a new session.
             startDeadline(attempt, RESPONSE_CORRELATION_TIMEOUT, Failure.RESPONSE_TIMEOUT);
