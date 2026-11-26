@@ -18,6 +18,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.Transcriptio
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.TurnDetection;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -269,6 +270,63 @@ class RealtimeBargeInTest {
                     """, true);
             assertFalse(socket.aborted);
             assertEquals(2, count(socket, "response.create"));
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"incomplete, INCOMPLETE", "cancelled, CANCELLED", "failed, FAILED"})
+    void truncatesUnplayedAudioAfterUnexpectedTerminalResponse(String outcome, RealtimeSession.TurnState state)
+            throws Exception {
+        try (var session = session()) {
+            var socket = listen(session, TurnDetection.SERVER_VAD);
+            utterance(socket, "input-1");
+            bindResponse(socket, "reply-1");
+            audio(socket, "reply-1", "assistant-1");
+            await(() -> !speaker.devices.isEmpty()
+                    && speaker.devices.getFirst().written().length == FakeSpeaker.BUFFER_BYTES);
+            var device = speaker.devices.getFirst();
+            device.playFrames(601);
+            done(socket, "reply-1", outcome, assistant("assistant-1"));
+            utterance(socket, "input-2");
+            await(() -> count(socket, "conversation.item.truncate") != 0 || count(socket, "response.create") > 1);
+            assertEquals(1, count(socket, "response.create"));
+            assertCut(last(socket), "assistant-1", 25);
+            assertTrue(device.closed && device.flushed);
+            assertEquals(state, session.workspace().turns().getFirst().state());
+
+            audio(socket, "reply-1", "assistant-1");
+            transcript(socket, "reply-1", "Stale transcript");
+            assertEquals("", session.workspace().turns().getFirst().output());
+            assertEquals(1, speaker.devices.size());
+            assertEquals(0, count(socket, "response.cancel"));
+            assertEquals(1, count(socket, "response.create"));
+            socket.truncated("assistant-1", 25);
+            assertEquals(2, count(socket, "response.create"));
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"25, true", "24, true", "0, true", "26, false", "-1, false"})
+    void validatesRoundedTruncationAcknowledgments(int acknowledged, boolean accepted) throws Exception {
+        try (var session = session()) {
+            var socket = listen(session, TurnDetection.SERVER_VAD);
+            utterance(socket, "input-1");
+            bindResponse(socket, "reply-1");
+            audio(socket, "reply-1", "assistant-1");
+            await(() -> !speaker.devices.isEmpty()
+                    && speaker.devices.getFirst().written().length == FakeSpeaker.BUFFER_BYTES);
+            speaker.devices.getFirst().playFrames(601);
+            utterance(socket, "input-2");
+            done(socket, "reply-1", "cancelled", assistant("assistant-1"));
+            await(() -> count(socket, "conversation.item.truncate") == 1);
+            assertCut(last(socket), "assistant-1", 25);
+
+            socket.truncated("assistant-1", acknowledged);
+            assertEquals(accepted ? 2 : 1, count(socket, "response.create"));
+            if (!accepted) {
+                socket.truncated("assistant-1", 25);
+                assertEquals(2, count(socket, "response.create"));
+            }
         }
     }
 

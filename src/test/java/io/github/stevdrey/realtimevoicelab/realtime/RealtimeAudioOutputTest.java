@@ -11,8 +11,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
-import javax.sound.sampled.LineUnavailableException;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.stevdrey.realtimevoicelab.audio.FakeMicrophone;
 import io.github.stevdrey.realtimevoicelab.audio.FakeSpeaker;
@@ -126,8 +124,9 @@ class RealtimeAudioOutputTest {
         await(() -> device.draining || device.positionReads() >= reads + 2);
     }
 
-    @Test
-    void flushesAndClosesWhenFinalDeviceFrameProgressStalls() throws Exception {
+    @ParameterizedTest
+    @ValueSource(ints = {0, 601})
+    void truncatesUnheardAudioAfterSpeakerFailureInPushToTalk(int playedFrames) throws Exception {
         var clock = new AtomicLong();
         try (var session = session(speaker.playback(clock::get))) {
             var socket = ready(session, TranscriptionModel.OFF);
@@ -137,15 +136,22 @@ class RealtimeAudioOutputTest {
             await(() -> !speaker.devices.isEmpty() && speaker.devices.getFirst().written().length == pcm.length);
             var device = speaker.devices.getFirst();
             try {
+                device.playFrames(playedFrames);
                 responseDone(socket, "response-1", "completed");
                 awaitFinalBufferPlayback(device);
                 assertFalse(device.closed);
+                int writes = socket.writes.size();
 
                 clock.set(Duration.ofSeconds(3).toNanos());
                 await(() -> session.workspace().speaker().state() == UNAVAILABLE);
                 assertTrue(device.stopped);
                 assertTrue(device.flushed);
                 assertTrue(device.closed);
+                int playedMs = playedFrames / 24;
+                assertEquals(writes + 1, socket.writes.size());
+                assertTruncate(socket, playedMs);
+                assertFalse(session.workspace().microphone().canStart());
+                socket.truncated("assistant-item", playedMs);
                 assertTrue(session.workspace().microphone().canStart());
             } finally {
                 device.playBufferedFrames();
@@ -155,7 +161,7 @@ class RealtimeAudioOutputTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void exposesAutomaticCleanupWhileTheDeviceIsStillStopping(boolean framesStall) throws Exception {
+    void blocksTypedTurnsUntilFailedPlaybackIsReconciled(boolean framesStall) throws Exception {
         var clock = new AtomicLong();
         var stopping = new CompletableFuture<Void>();
         var allowStop = new CompletableFuture<Void>();
@@ -182,7 +188,7 @@ class RealtimeAudioOutputTest {
             }
             await(stopping::isDone);
             assertEquals(CLEANING_UP, session.workspace().speaker().state());
-            assertTrue(session.workspace().canSend());
+            assertEquals(!framesStall, session.workspace().canSend());
             assertFalse(session.workspace().canCancel());
             assertFalse(session.startAudio());
 
@@ -190,16 +196,28 @@ class RealtimeAudioOutputTest {
             assertEquals(CLEANUP_TIMEOUT, session.workspace().speaker().state());
             assertFalse(device.closed);
             assertFalse(session.startAudio());
-            assertTrue(session.sendText("Synthetic text during automatic speaker cleanup."));
-            completeTextTurn(socket, "text-during-cleanup");
-            assertTrue(session.workspace().canSend());
+            assertEquals(!framesStall, session.sendText("Synthetic text during automatic speaker cleanup."));
+            if (!framesStall) {
+                completeTextTurn(socket, "text-during-cleanup");
+                assertTrue(session.workspace().canSend());
+            }
             assertEquals(1, delayedSpeaker.devices.size());
 
+            int writes = socket.writes.size();
             allowStop.complete(null);
+            if (framesStall) {
+                await(() -> socket.writes.size() > writes);
+                assertTruncate(socket, 0);
+                assertFalse(session.sendText("Synthetic text before truncation acknowledgment."));
+                socket.truncated("assistant-item", 0);
+            }
             await(() -> session.workspace().microphone().canStart());
+            assertEquals(framesStall ? writes + 1 : writes, socket.writes.size());
             assertTrue(device.closed);
             assertEquals(framesStall, device.flushed);
             assertEquals(framesStall ? UNAVAILABLE : IDLE, session.workspace().speaker().state());
+            assertTrue(session.sendText("Synthetic text after speaker cleanup."));
+            completeTextTurn(socket, "text-after-cleanup");
         } finally {
             allowStop.complete(null);
         }
@@ -383,12 +401,10 @@ class RealtimeAudioOutputTest {
     }
 
     @Test
-    void finalizesOutputPartsOnceAndKeepsTheTranscriptWhenTheSpeakerIsUnavailable() throws Exception {
-        try (var session = session(new SpeakerPlayback(() -> { throw new LineUnavailableException(); }))) {
+    void finalizesOutputPartsOnce() throws Exception {
+        try (var session = session(speaker.playback())) {
             var socket = ready(session, TranscriptionModel.OFF);
             startVoice(session, socket, "input-1", "response-1");
-            socket.text(audio("response-1", microphone.block(1)), true);
-            await(() -> session.workspace().speaker().state() == UNAVAILABLE);
             transcript(socket, "delta", 0, "Partial ", "response-1");
             assertEquals("Partial ", session.workspace().turns().getFirst().output());
             transcript(socket, "done", 0, "First sentence.", "response-1");
@@ -501,14 +517,20 @@ class RealtimeAudioOutputTest {
 
             expire(deadlines, RealtimeSession.OPEN_TIMEOUT);
             assertEquals(CLEANING_UP, session.workspace().speaker().state());
+            assertEquals("response.cancel", json.readTree(socket.writes.getLast()).path("type").asText());
             responseDone(socket, "response-1", "completed");
-            assertTrue(session.workspace().canSend());
+            assertFalse(session.workspace().canSend());
             assertFalse(session.workspace().microphone().canStart());
 
             expire(deadlines, RealtimeSession.SPEAKER_CLEANUP_TIMEOUT);
             assertEquals(CLEANUP_TIMEOUT, session.workspace().speaker().state());
             assertFalse(session.startAudio());
+            int writes = socket.writes.size();
             unblock.complete(null);
+            await(() -> socket.writes.size() > writes);
+            assertTruncate(socket, 0);
+            assertFalse(session.workspace().microphone().canStart());
+            socket.truncated("assistant-item", 0);
             await(() -> session.workspace().microphone().canStart());
             var device = stuckSpeaker.devices.getFirst();
             assertTrue(device.closed);
@@ -517,6 +539,13 @@ class RealtimeAudioOutputTest {
         } finally {
             unblock.complete(null);
         }
+    }
+
+    private void assertTruncate(FakeTransport.Socket socket, int milliseconds) throws Exception {
+        var truncate = json.readTree(socket.writes.getLast());
+        assertEquals("conversation.item.truncate", truncate.path("type").asText());
+        assertEquals("assistant-item", truncate.path("item_id").asText());
+        assertEquals(milliseconds, truncate.path("audio_end_ms").asInt(-1));
     }
 
     private record Deadline(long nanos, CompletableFuture<Void> future) {

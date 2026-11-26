@@ -2,6 +2,7 @@ package io.github.stevdrey.realtimevoicelab.audio;
 
 import java.time.Duration;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.function.LongSupplier;
 
@@ -44,7 +45,7 @@ public final class SpeakerPlayback {
     }
 
     /** Owns the line on the playback worker. No device method uses the session or queue lock. */
-    public Result play(Stream stream, Runnable started, DoubleConsumer meter, Runnable cleaningUp) {
+    public Result play(Stream stream, Runnable started, DoubleConsumer meter, Consumer<Result> cleaningUp) {
         if (stream.stopped) {
             return Result.STOPPED;
         }
@@ -73,7 +74,7 @@ public final class SpeakerPlayback {
                     if (result != Result.COMPLETED) {
                         stream.stop();
                     }
-                    cleaningUp.run();
+                    cleaningUp.accept(result);
                 } finally {
                     if (startAttempted) {
                         stopLine(line, stream, result, progress);

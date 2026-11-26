@@ -42,7 +42,7 @@ final class AssistantAudio {
             }
             var content = item.path("content");
             for (int index = 0; index < content.size(); index++) {
-                if ("output_audio".equals(content.get(index).path("type").textValue())) {
+                if ("output_audio".equals(content.path(index).path("type").textValue())) {
                     if (index != 0) {
                         throw new IOException("Unsupported Realtime audio content index");
                     }
