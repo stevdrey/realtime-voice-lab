@@ -2,16 +2,21 @@ package io.github.stevdrey.realtimevoicelab.realtime;
 
 import java.util.Objects;
 
-public record SessionSettings(Model model, Voice voice, Mode mode, String instructions) {
+public record SessionSettings(Model model, Voice voice, Mode mode, String instructions, TurnDetection turnDetection) {
     public static final int MAX_INSTRUCTION_CHARS = 4_000;
     public static final SessionSettings DEFAULT = new SessionSettings(
             Model.MINI, Voice.MARIN, Mode.AUDIO, Preset.FREE_CONVERSATION.instructions());
+
+    public SessionSettings(Model model, Voice voice, Mode mode, String instructions) {
+        this(model, voice, mode, instructions, TurnDetection.MANUAL);
+    }
 
     public SessionSettings {
         Objects.requireNonNull(model);
         Objects.requireNonNull(voice);
         Objects.requireNonNull(mode);
         Objects.requireNonNull(instructions);
+        Objects.requireNonNull(turnDetection);
         if (instructions.length() > MAX_INSTRUCTION_CHARS) {
             throw new IllegalArgumentException("Instructions exceed the session limit");
         }
@@ -68,6 +73,36 @@ public record SessionSettings(Model model, Voice voice, Mode mode, String instru
 
         String modality() {
             return modality;
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    public TurnDetection effectiveTurnDetection() {
+        return mode == Mode.AUDIO ? turnDetection : TurnDetection.MANUAL;
+    }
+
+    public enum TurnDetection {
+        MANUAL("Push to talk", null), SERVER_VAD("Server VAD", "server_vad"),
+        SEMANTIC_VAD("Semantic VAD", "semantic_vad");
+
+        private final String label;
+        private final String type;
+
+        TurnDetection(String label, String type) {
+            this.label = label;
+            this.type = type;
+        }
+
+        public boolean automatic() {
+            return type != null;
+        }
+
+        String type() {
+            return type;
         }
 
         @Override

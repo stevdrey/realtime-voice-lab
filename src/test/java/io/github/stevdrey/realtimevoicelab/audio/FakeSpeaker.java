@@ -116,6 +116,13 @@ public final class FakeSpeaker {
             return written.toByteArray();
         }
 
+        public synchronized void playFrames(long frames) {
+            if (frames < framesPlayed || frames > written.size() / Short.BYTES) {
+                throw new IllegalArgumentException("Playback position outside queued PCM");
+            }
+            framesPlayed = frames;
+        }
+
         public synchronized void playBufferedFrames() {
             framesPlayed = written.size() / Short.BYTES;
             notifyAll();

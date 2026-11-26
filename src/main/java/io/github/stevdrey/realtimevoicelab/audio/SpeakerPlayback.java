@@ -2,6 +2,7 @@ package io.github.stevdrey.realtimevoicelab.audio;
 
 import java.time.Duration;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.function.LongSupplier;
 
@@ -44,13 +45,14 @@ public final class SpeakerPlayback {
     }
 
     /** Owns the line on the playback worker. No device method uses the session or queue lock. */
-    public Result play(Stream stream, Runnable started, DoubleConsumer meter, Runnable cleaningUp) {
+    public Result play(Stream stream, Runnable started, DoubleConsumer meter, Consumer<Result> cleaningUp) {
         if (stream.stopped) {
             return Result.STOPPED;
         }
         try (var line = source.open()) {
             var result = Result.UNAVAILABLE;
             boolean startAttempted = false;
+            var progress = new Progress();
             try {
                 var actualFormat = line.getFormat();
                 if (!FORMAT.matches(actualFormat) || !actualFormat.matches(FORMAT)
@@ -64,17 +66,18 @@ public final class SpeakerPlayback {
                 startAttempted = true;
                 line.start();
                 started.run();
-                result = writeStream(stream, line, meter);
+                progress.firstFrame = line.getLongFramePosition();
+                result = writeStream(stream, line, meter, progress);
                 return result;
             } finally {
                 try {
                     if (result != Result.COMPLETED) {
                         stream.stop();
                     }
-                    cleaningUp.run();
+                    cleaningUp.accept(result);
                 } finally {
                     if (startAttempted) {
-                        stopLine(line, stream, result);
+                        stopLine(line, stream, result, progress);
                     }
                 }
             }
@@ -83,9 +86,12 @@ public final class SpeakerPlayback {
         }
     }
 
-    private void stopLine(SourceDataLine line, Stream stream, Result result) {
+    private void stopLine(SourceDataLine line, Stream stream, Result result, Progress progress) {
         try {
             line.stop();
+            // Sample after stop, before flush removes the device's remaining buffered frames.
+            stream.playedFrames = Math.clamp(line.getLongFramePosition() - progress.firstFrame, 0,
+                    progress.writtenFrames);
         } finally {
             if (result != Result.COMPLETED || stream.stopped) {
                 line.flush();
@@ -93,16 +99,14 @@ public final class SpeakerPlayback {
         }
     }
 
-    private Result writeStream(Stream stream, SourceDataLine line, DoubleConsumer meter) {
+    private Result writeStream(Stream stream, SourceDataLine line, DoubleConsumer meter, Progress progress) {
         var block = new byte[BLOCK_BYTES];
-        long firstFrame = line.getLongFramePosition();
         long playedFrames = 0;
-        long writtenFrames = 0;
         long progressAt = nanoTime.getAsLong();
         long meterAt = progressAt - METER_INTERVAL_NANOS;
         while (!stream.stopped) {
             long now = nanoTime.getAsLong();
-            long position = line.getLongFramePosition() - firstFrame;
+            long position = line.getLongFramePosition() - progress.firstFrame;
             if (position > playedFrames) {
                 playedFrames = position;
                 progressAt = now;
@@ -112,10 +116,12 @@ public final class SpeakerPlayback {
             if (count > 0 && !stream.stopped) {
                 // Write only complete frames the line can accept without blocking for space.
                 int written = line.write(block, 0, count);
+                if (written > 0 && written <= count) {
+                    progress.writtenFrames += written / Short.BYTES;
+                }
                 if (written != count) {
                     return Result.UNAVAILABLE;
                 }
-                writtenFrames += written / Short.BYTES;
                 progressAt = now;
                 if (now - meterAt >= METER_INTERVAL_NANOS) {
                     meter.accept(level(block, written));
@@ -124,10 +130,10 @@ public final class SpeakerPlayback {
                 continue;
             }
             // Keep checking cancellation and device progress until the last written frame has played.
-            if (playedFrames >= writtenFrames && stream.isComplete()) {
+            if (playedFrames >= progress.writtenFrames && stream.isComplete()) {
                 return Result.COMPLETED;
             }
-            if (playedFrames >= writtenFrames && stream.isEmpty()) {
+            if (playedFrames >= progress.writtenFrames && stream.isEmpty()) {
                 progressAt = now;
                 if (now - meterAt >= METER_INTERVAL_NANOS) {
                     meter.accept(0);
@@ -165,6 +171,11 @@ public final class SpeakerPlayback {
         }
     }
 
+    private static final class Progress {
+        private long firstFrame;
+        private long writtenFrames;
+    }
+
     /** Single producer and consumer, with a byte bound independent of the number of deltas. */
     public static final class Stream {
         private byte[] queue;
@@ -172,6 +183,12 @@ public final class SpeakerPlayback {
         private int size;
         private boolean complete;
         private volatile boolean stopped;
+        // A stopped device position is published before the playback worker returns.
+        private volatile long playedFrames;
+
+        public long playedFrames() {
+            return playedFrames;
+        }
 
         public Stream(int capacity) {
             if (capacity <= 0 || capacity % Short.BYTES != 0) {

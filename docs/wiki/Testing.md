@@ -55,6 +55,18 @@ env -u OPENAI_API_KEY -u DISPLAY -u WAYLAND_DISPLAY ./gradlew --offline test --t
 
 The headless dialog journey selects both presets, edits the instructions, saves the model, voice and Text mode, and connects over a fake socket. It checks that Audio mode becomes available only after acknowledgment, that the model is fixed while connected, and that a synthetic audio event locks the voice. It also exercises sanitized rejection and the return to editable settings after the session ends. Protocol tests cover acknowledgment and write ordering, mismatched settings, timeouts, allowlists and explicit reconnect. Use synthetic instructions and PCM in any captured evidence.
 
+## RVL-008 VAD and barge-in verification
+
+In Audio mode, select **Server VAD** or **Semantic VAD** under **Turn detection**. Click the microphone or press Space or Enter with the microphone focused to start listening. Click again, press Escape, or leave the window to stop listening and clear partial input. Each listening window lasts up to 30 seconds. Stop listening before sending a typed turn or changing settings. For `gpt-realtime-whisper` input transcription, use **Push to talk**.
+
+```sh
+env -u OPENAI_API_KEY -u DISPLAY -u WAYLAND_DISPLAY ./gradlew --offline test --tests '*RealtimeBargeInTest' --tests '*RealtimeAudioInputTest' --tests '*RealtimeAudioOutputTest' --tests '*RealtimeVoiceLabAppTest'
+```
+
+Synthetic tests cover both VAD modes, interruption during generation, queued playback after `response.done`, and interruption before the speaker opens. They also cover unexpected terminal voice responses, failed speaker cleanup in manual PTT, and a complete VAD turn arriving while the client clears partial input. Replies wait for a valid `conversation.item.truncated` acknowledgment when playback leaves unheard audio. The requested duration comes from the Java Sound frame position after stopping the line, rounded down to whole milliseconds. The tests check exact and rounded-down acknowledgments, invalid durations, overlapping WebSocket writes, duplicate speech events, stale deltas, and normal PTT completion. The headless JavaFX journey verifies explicit start and stop on window blur.
+
+The client disables automatic response creation and cancellation in both VAD modes. It sends a targeted `response.cancel` when generation is still active and clears the local transcript for an interrupted assistant audio reply because the stream has no word-level playback timing. This verification uses synthetic PCM and devices. The live service and physical audio timing require an explicitly authorized manual smoke. [OpenAI VAD guide](https://developers.openai.com/api/docs/guides/realtime-vad) · [Realtime client event reference](https://developers.openai.com/api/reference/resources/realtime/client-events#conversation-item-truncate)
+
 ## Opt-in manual smoke across MVP features
 Use a dedicated restricted API key, headphones and own adult or synthetic speech.
 - Connect mini; verify session acknowledgment and text two-turn exchange.

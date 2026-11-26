@@ -8,6 +8,8 @@ The Event Inspector shows the latest 256 Realtime events in memory. Filter by ty
 
 Open **Settings** to choose a model, voice and mode or edit instructions from the Free Conversation and English Coach presets. In Text mode, the microphone is disabled. Typed messages receive text replies in both modes. See [RVL-007](../../issues/13).
 
+In Audio mode, **Turn detection** offers **Push to talk**, **Server VAD** and **Semantic VAD**. Push to talk is the default. In either VAD mode, click the microphone to start a listening window of up to 30 seconds. Speaking during an assistant reply interrupts playback. The input and output work best with headphones. See [RVL-008](../../issues/14).
+
 ## Goals
 - Inspect GA WebSocket events and learn the session lifecycle.
 - Talk to `gpt-realtime-2.1-mini` using text and push-to-talk audio.

@@ -25,6 +25,8 @@ final class ConversationTurn {
     boolean cancelSent;
     String responseId;
     boolean playbackStopped;
+    AssistantAudio assistantAudio;
+    long playedFrames;
 
     private final TreeMap<Integer, StringBuilder> parts = new TreeMap<>();
     private final Set<Integer> finalTranscripts = new HashSet<>();
@@ -134,6 +136,13 @@ final class ConversationTurn {
         if (inputTranscriptState == InputTranscriptState.PENDING) {
             inputTranscriptState = InputTranscriptState.FAILED;
         }
+    }
+
+    void discardAudioTranscript() {
+        parts.clear();
+        finalTranscripts.clear();
+        streamedChars = 0;
+        finishedText = "";
     }
 
     void reconcile(String terminalText) throws IOException {
