@@ -121,7 +121,7 @@ class RealtimeVoiceLabAppTest {
                 robot.keyRelease(KeyCode.SPACE);
                 return null;
             });
-            microphone.queueBlocks(1);
+            microphone.queueBlocks(5);
             awaitOnFxThread(() -> micStatus(stage).startsWith("Listening")
                             && socket.writes.getLast().contains("input_audio_buffer.append"),
                     "VAD listening did not continue after key release");

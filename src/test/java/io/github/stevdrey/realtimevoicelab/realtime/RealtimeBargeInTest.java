@@ -235,7 +235,7 @@ class RealtimeBargeInTest {
             bindResponse(socket, "reply-1");
             var append = new CompletableFuture<WebSocket>();
             socket.nextTurnWrite = append;
-            microphone.queueBlocks(1);
+            microphone.queueBlocks(5);
             await(() -> count(socket, "input_audio_buffer.append") == 2);
             utterance(socket, "input-2");
             assertEquals(0, count(socket, "response.cancel"));
@@ -252,6 +252,33 @@ class RealtimeBargeInTest {
             var turns = session.workspace().turns();
             assertEquals(RealtimeSession.TurnState.INTERRUPTED, turns.get(1).state());
             assertEquals("rvl-" + turns.getLast().number(), last(socket).at("/response/metadata/rvl_turn").asText());
+        }
+    }
+
+    @Test
+    void acceptsATruncateAcknowledgmentWithoutContentIndex() throws Exception {
+        try (var session = session()) {
+            var socket = listen(session, TurnDetection.SERVER_VAD);
+            utterance(socket, "input-1");
+            bindResponse(socket, "reply-1");
+            utterance(socket, "input-2");
+            done(socket, "reply-1", "cancelled", assistant("assistant-1"));
+            assertCut(last(socket), "assistant-1", 0);
+            socket.text("""
+                    {"type":"conversation.item.truncated","item_id":"assistant-1","audio_end_ms":0}
+                    """, true);
+            assertFalse(socket.aborted);
+            assertEquals(2, count(socket, "response.create"));
+        }
+    }
+
+    @Test
+    void reportsTheVadAndWhisperConflictBeforeConnecting() {
+        try (var session = session()) {
+            assertTrue(session.configure(settings(TurnDetection.SERVER_VAD), RealtimeSession.State.DISCONNECTED));
+            session.connectSelected(TranscriptionModel.REALTIME_WHISPER);
+            assertEquals(RealtimeSession.Failure.TRANSCRIPTION_CONFLICT, session.status().failure());
+            assertTrue(transport.attempts.isEmpty());
         }
     }
 
@@ -334,7 +361,7 @@ class RealtimeBargeInTest {
         socket.updated(settings, null);
         assertEquals(0, microphone.opens.get());
         assertTrue(session.startAudio());
-        microphone.queueBlocks(1);
+        microphone.queueBlocks(5);
         await(() -> count(socket, "input_audio_buffer.append") == 1);
         assertEquals(0, count(socket, "response.create"));
         return socket;

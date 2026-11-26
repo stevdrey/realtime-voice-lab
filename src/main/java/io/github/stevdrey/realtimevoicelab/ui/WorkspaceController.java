@@ -494,6 +494,7 @@ public final class WorkspaceController {
             case TOO_SHORT -> "Recording too short. Hold to talk.";
             case UNSUPPORTED -> "Microphone requires mono PCM16 at 24 kHz";
             case UNAVAILABLE -> "Microphone unavailable. Check your input device.";
+            case BACKLOG -> "Audio upload fell behind. Listening stopped.";
         });
     }
 
@@ -605,6 +606,7 @@ public final class WorkspaceController {
             case AUDIO_LIMIT -> "Audio turn limit reached";
             case OUTPUT_LIMIT -> "Response output limit reached";
             case TOOL_LIMIT -> "Session tool-call limit reached";
+            case TRANSCRIPTION_CONFLICT -> "VAD needs Push to talk with gpt-realtime-whisper. Change turn detection or transcription.";
         };
     }
 
