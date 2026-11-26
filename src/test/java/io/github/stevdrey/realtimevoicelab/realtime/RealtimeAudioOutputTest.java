@@ -254,7 +254,13 @@ class RealtimeAudioOutputTest {
             assertTrue(device.stopped);
             assertTrue(device.flushed);
             assertArrayEquals(pcm, device.written());
-            assertEquals(writes, socket.writes.size());
+            await(() -> socket.writes.size() == writes + 1);
+            var truncate = json.readTree(socket.writes.getLast());
+            assertEquals("conversation.item.truncate", truncate.path("type").asText());
+            assertEquals("assistant-item", truncate.path("item_id").asText());
+            assertEquals(0, truncate.path("audio_end_ms").asInt(-1));
+            assertFalse(session.workspace().canSend());
+            socket.truncated("assistant-item", 0);
             assertTrue(session.workspace().canSend());
         }
     }
@@ -284,7 +290,7 @@ class RealtimeAudioOutputTest {
             int previousOpens = microphone.opens.get();
             assertEquals(CLEANING_UP, session.workspace().speaker().state());
             assertFalse(device.flushed);
-            assertTrue(session.workspace().canSend());
+            assertFalse(session.workspace().canSend());
             assertFalse(session.workspace().microphone().canStart());
             assertFalse(session.startAudio());
             assertEquals(previousOpens, microphone.opens.get());
@@ -293,7 +299,7 @@ class RealtimeAudioOutputTest {
             assertEquals(CLEANUP_TIMEOUT, session.workspace().speaker().state());
             assertFalse(session.workspace().microphone().canStart());
             assertFalse(session.startAudio());
-            assertTrue(session.workspace().canSend());
+            assertFalse(session.workspace().canSend());
 
             for (int reconnects = 0; reconnects < 2; reconnects++) {
                 session.disconnect();

@@ -6,6 +6,7 @@ import java.util.StringJoiner;
 import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.TurnDetection;
 
 import com.fasterxml.jackson.core.Base64Variants;
 import com.fasterxml.jackson.core.JsonFactory;
@@ -46,12 +47,23 @@ final class SessionProtocol {
         boolean setPcmOutput = initial || applied.mode() == Mode.TEXT && requested.mode() == Mode.AUDIO;
         if (initial) {
             session.put("max_output_tokens", MAX_OUTPUT_TOKENS);
-            var audio = session.putObject("audio");
-            var input = audio.putObject("input").putNull("turn_detection");
-            putPcmFormat(input);
-            if (transcription == TranscriptionModel.OFF) {
-                input.putNull("transcription");
+        }
+        var detection = requested.effectiveTurnDetection();
+        if (initial || detection != applied.effectiveTurnDetection()) {
+            var input = session.withObjectProperty("audio").putObject("input");
+            if (detection.automatic()) {
+                var vad = input.putObject("turn_detection").put("type", detection.type())
+                        .put("create_response", false).put("interrupt_response", false);
+                if (detection == TurnDetection.SERVER_VAD) {
+                    vad.putNull("idle_timeout_ms");
+                }
             } else {
+                input.putNull("turn_detection");
+            }
+            putPcmFormat(input);
+            if (initial && transcription == TranscriptionModel.OFF) {
+                input.putNull("transcription");
+            } else if (initial) {
                 input.putObject("transcription").put("model", transcription.modelId());
             }
         }
@@ -105,6 +117,11 @@ final class SessionProtocol {
     Command cancelResponse(ConversationTurn turn) {
         var event = command("response.cancel", turn.cancelEventId()).put("response_id", turn.responseId);
         return command(event, null);
+    }
+
+    Command truncateAudio(String eventId, String itemId, int milliseconds) {
+        return command(command("conversation.item.truncate", eventId).put("item_id", itemId)
+                .put("content_index", 0).put("audio_end_ms", milliseconds), null);
     }
 
     private ObjectNode command(String type, String id) {
@@ -216,7 +233,8 @@ final class SessionProtocol {
             case "conversation.item.input_audio_transcription.completed",
                  "conversation.item.input_audio_transcription.failed" ->
                     new Event(type, eventId, null, null, itemId, null, new OutputPart(-1, contentIndex, transcript));
-            case "input_audio_buffer.committed" -> new Event(type, eventId, null, null, itemId, null, null);
+            case "input_audio_buffer.committed", "input_audio_buffer.speech_started",
+                 "input_audio_buffer.speech_stopped" -> new Event(type, eventId, null, null, itemId, null, null);
             default -> new Event(type, eventId, null, null, null, null, null);
         };
     }
@@ -241,9 +259,24 @@ final class SessionProtocol {
         var modality = modalities.isArray() && modalities.size() == 1 ? modalities.get(0).textValue() : null;
         return new Configuration(requiredText(session.path("id").textValue()), bounded,
                 isPcmFormat(output.path("format")),
-                input.path("turn_detection").isNull() && isPcmFormat(input.path("format")), transcriptionModel,
+                isPcmFormat(input.path("format")), readTurnDetection(input.path("turn_detection")), transcriptionModel,
                 session.path("model").textValue(), output.path("voice").textValue(),
                 modality, session.path("instructions").textValue());
+    }
+
+    private TurnDetection readTurnDetection(JsonNode node) {
+        if (node.isNull()) {
+            return TurnDetection.MANUAL;
+        }
+        if (!node.path("create_response").isBoolean() || node.path("create_response").booleanValue()
+                || !node.path("interrupt_response").isBoolean() || node.path("interrupt_response").booleanValue()) {
+            return null;
+        }
+        return switch (node.path("type").asText()) {
+            case "server_vad" -> node.hasNonNull("idle_timeout_ms") ? null : TurnDetection.SERVER_VAD;
+            case "semantic_vad" -> TurnDetection.SEMANTIC_VAD;
+            default -> null;
+        };
     }
 
     private int partIndex(JsonParser parser) throws IOException {
@@ -294,8 +327,9 @@ final class SessionProtocol {
         return requiredText(value);
     }
 
-    record Configuration(String sessionId, boolean boundedOutput, boolean pcmOutput, boolean inputConfirmed,
-                         String transcriptionModel, String model, String voice, String modality, String instructions) {
+    record Configuration(String sessionId, boolean boundedOutput, boolean pcmOutput, boolean pcmInput,
+                         TurnDetection turnDetection, String transcriptionModel, String model, String voice,
+                         String modality, String instructions) {
         boolean matches(SessionSettings settings) {
             return modelMatches(settings.model().id()) && settings.voice().id().equals(voice)
                     && settings.mode().modality().equals(modality) && settings.instructions().equals(instructions);

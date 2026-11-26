@@ -79,7 +79,14 @@ public final class FakeTransport implements RealtimeTransport {
                     .put("instructions", settings.instructions());
             session.putArray("output_modalities").add(settings.mode().modality());
             var audio = session.putObject("audio");
-            var input = audio.putObject("input").putNull("turn_detection");
+            var input = audio.putObject("input");
+            var detection = settings.effectiveTurnDetection();
+            if (detection.automatic()) {
+                input.putObject("turn_detection").put("type", detection.type())
+                        .put("create_response", false).put("interrupt_response", false);
+            } else {
+                input.putNull("turn_detection");
+            }
             input.putObject("format").put("type", "audio/pcm").put("rate", 24000);
             if (transcriptionModel == null) {
                 input.putNull("transcription");
@@ -103,6 +110,12 @@ public final class FakeTransport implements RealtimeTransport {
             created();
             textWrite.complete(this);
             updated(transcriptionModel);
+        }
+
+        public void truncated(String itemId, int audioEndMs) {
+            text("""
+                    {"type":"conversation.item.truncated","item_id":"%s","content_index":0,"audio_end_ms":%d}
+                    """.formatted(itemId, audioEndMs), true);
         }
 
         public void peerClose(int code, String detail) {

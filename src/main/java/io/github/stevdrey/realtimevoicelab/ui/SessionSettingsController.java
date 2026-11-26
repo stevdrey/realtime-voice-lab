@@ -7,6 +7,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Preset;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.TurnDetection;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Voice;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
@@ -24,6 +25,7 @@ public final class SessionSettingsController {
     @FXML private ComboBox<Model> model;
     @FXML private ComboBox<Voice> voice;
     @FXML private ComboBox<Mode> mode;
+    @FXML private ComboBox<TurnDetection> turnDetection;
     @FXML private ComboBox<Preset> preset;
     @FXML private TextArea instructions;
     @FXML private Label reconnectHelp;
@@ -48,6 +50,9 @@ public final class SessionSettingsController {
         voice.setDisable(settings.voiceLocked());
         mode.getItems().setAll(Mode.values());
         mode.setValue(current.mode());
+        turnDetection.getItems().setAll(TurnDetection.values());
+        turnDetection.setValue(current.turnDetection());
+        turnDetection.disableProperty().bind(mode.valueProperty().isEqualTo(Mode.TEXT));
         preset.getItems().setAll(Preset.values());
         instructions.setText(current.instructions());
         instructions.setTextFormatter(TextInputLimit.formatter(SessionSettings.MAX_INSTRUCTION_CHARS));
@@ -79,7 +84,8 @@ public final class SessionSettingsController {
 
     @FXML
     private void apply() {
-        var requested = new SessionSettings(model.getValue(), voice.getValue(), mode.getValue(), instructions.getText());
+        var requested = new SessionSettings(model.getValue(), voice.getValue(), mode.getValue(),
+                instructions.getText(), turnDetection.getValue());
         if (apply.test(requested)) {
             dialog.close();
         } else {

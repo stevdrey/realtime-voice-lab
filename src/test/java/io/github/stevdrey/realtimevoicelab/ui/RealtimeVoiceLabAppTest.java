@@ -22,6 +22,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Preset;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.TurnDetection;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Voice;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -79,6 +80,71 @@ class RealtimeVoiceLabAppTest {
             Platform.runLater(keepRunning);
         }
         assertTrue(ready.await(10, TimeUnit.SECONDS), "JavaFX toolkit did not start");
+    }
+
+    @Test
+    void selectsVadAndStopsListeningOnWindowBlurWithoutCommittingPartialAudio() throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var speaker = new FakeSpeaker();
+        var focused = new SimpleBooleanProperty(true);
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone(), speaker.playback(), focused);
+                ((Button) stage.getScene().lookup("#settings-button")).fire();
+                var dialog = Window.getWindows().stream()
+                        .filter(window -> window instanceof Stage child && child.getOwner() == stage)
+                        .findFirst().orElseThrow();
+                @SuppressWarnings("unchecked")
+                var detection = (ComboBox<TurnDetection>) dialog.getScene().lookup("#settings-turn-detection");
+                assertEquals(TurnDetection.MANUAL, detection.getValue());
+                detection.setValue(TurnDetection.SEMANTIC_VAD);
+                ((Button) dialog.getScene().lookup("#apply-settings")).fire();
+                connectButton(stage).fire();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.opened();
+            socket.created();
+            socket.textWrite.complete(socket);
+            var defaults = SessionSettings.DEFAULT;
+            socket.updated(new SessionSettings(defaults.model(), defaults.voice(), defaults.mode(),
+                    defaults.instructions(), TurnDetection.SEMANTIC_VAD), null);
+
+            awaitOnFxThread(() -> "Start listening".equals(micStatus(stage)), "VAD microphone was unavailable");
+            assertEquals(0, microphone.opens.get());
+            onFxThread(() -> {
+                stage.getScene().lookup("#mic-button").requestFocus();
+                var robot = new Robot();
+                robot.keyPress(KeyCode.SPACE);
+                robot.keyRelease(KeyCode.SPACE);
+                return null;
+            });
+            microphone.queueBlocks(1);
+            awaitOnFxThread(() -> micStatus(stage).startsWith("Listening")
+                            && socket.writes.getLast().contains("input_audio_buffer.append"),
+                    "VAD listening did not continue after key release");
+            onFxThread(() -> {
+                assertEquals("Stop listening", stage.getScene().lookup("#mic-button").getAccessibleText());
+                focused.set(false);
+                return null;
+            });
+            awaitOnFxThread(() -> microphone.closes.get() == 1
+                            && socket.writes.getLast().contains("input_audio_buffer.clear"),
+                    "Window blur did not stop the microphone and clear partial VAD input");
+            socket.text("""
+                    {"type":"input_audio_buffer.cleared"}
+                    """, true);
+            awaitOnFxThread(() -> "Start listening".equals(micStatus(stage)), "VAD microphone did not become available");
+            assertTrue(socket.writes.stream().noneMatch(write ->
+                    write.contains("input_audio_buffer.commit") || write.contains("response.create")));
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
     }
 
     @Test
@@ -460,6 +526,9 @@ class RealtimeVoiceLabAppTest {
                         return null;
                     });
                     allowStop.complete(null);
+                    awaitOnFxThread(() -> socket.writes.getLast().contains("conversation.item.truncate"),
+                            "The stopped reply was not truncated");
+                    socket.truncated("assistant-1", 0);
                     awaitOnFxThread(() -> "Hold to talk".equals(micStatus(stage))
                                     && !stage.getScene().lookup("#mic-button").isDisabled(),
                             "Microphone did not become available after speaker cleanup");

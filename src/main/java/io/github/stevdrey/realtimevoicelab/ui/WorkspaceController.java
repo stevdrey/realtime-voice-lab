@@ -152,7 +152,7 @@ public final class WorkspaceController {
             var selected = modelSelector.getValue();
             if (selected != null && selected != saved.model()) {
                 session.configure(new SessionSettings(selected, saved.voice(), saved.mode(),
-                        saved.instructions()), workspace.status().state());
+                        saved.instructions(), saved.turnDetection()), workspace.status().state());
                 renderSession();
             }
         });
@@ -237,6 +237,7 @@ public final class WorkspaceController {
                 // A release can occur outside this window. Keep only the microphone's repeat guard.
                 heldMicKeys.replaceAll((key, scope) -> MicKeyScope.MICROPHONE_ONLY);
                 finishMicGesture(false);
+                session.stopListening();
                 mouseHeld = false;
             }
         });
@@ -245,6 +246,11 @@ public final class WorkspaceController {
     private void installMicControls() {
         Tooltip.install(micControl, micTooltip);
         micButton.accessibleHelpProperty().bind(micTooltip.textProperty());
+        micButton.setOnAction(event -> {
+            if (session.workspace().settings().values().effectiveTurnDetection().automatic()) {
+                toggleListening();
+            }
+        });
         micLevel.managedProperty().bind(micLevel.visibleProperty());
         micButton.addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
             if (event.getButton() == MouseButton.PRIMARY) {
@@ -292,9 +298,13 @@ public final class WorkspaceController {
             // Consume repeats across controls while the window retains focus.
             if (heldMicKeys.get(key) == MicKeyScope.WORKSPACE) {
                 event.consume();
-            } else if (key == KeyCode.ESCAPE && activeMicGesture != null) {
-                finishMicGesture(false);
-                event.consume();
+            } else if (key == KeyCode.ESCAPE) {
+                if (activeMicGesture != null) {
+                    finishMicGesture(false);
+                    event.consume();
+                } else if (session.stopListening()) {
+                    event.consume();
+                }
             }
         });
         micButton.focusedProperty().addListener((observable, previous, focused) -> {
@@ -313,8 +323,18 @@ public final class WorkspaceController {
     }
 
     private void startMicGesture(MicGesture gesture) {
-        if (session.startAudio()) {
+        if (session.workspace().settings().values().effectiveTurnDetection().automatic()) {
+            toggleListening();
+            return;
+        } else if (session.startAudio()) {
             activeMicGesture = gesture;
+        }
+        renderSession();
+    }
+
+    private void toggleListening() {
+        if (!session.stopListening()) {
+            session.startAudio();
         }
         renderSession();
     }
@@ -419,17 +439,20 @@ public final class WorkspaceController {
             // The dialog reflects the state it opened in, so a session change closes it.
             settingsDialog.close();
         }
-        renderAudio(workspace.microphone(), workspace.speaker(), mode, settings.applying());
-        renderConversation(workspace.turns(), mode);
+        boolean vad = settings.values().effectiveTurnDetection().automatic();
+        renderAudio(workspace.microphone(), workspace.speaker(), mode, vad, settings.applying());
+        renderConversation(workspace.turns(), mode, vad);
     }
 
     private void renderAudio(RealtimeSession.MicrophoneView microphone, RealtimeSession.SpeakerView speaker,
-                             Mode mode, boolean applyingSettings) {
+                             Mode mode, boolean vad, boolean applyingSettings) {
         var state = microphone.state();
         var speakerState = speaker.state();
+        boolean listening = vad && (state == RealtimeSession.MicState.OPENING
+                || state == RealtimeSession.MicState.RECORDING);
         boolean cleaningSpeaker = speakerState == SpeakerState.CLEANING_UP || speakerState == SpeakerState.CLEANUP_TIMEOUT;
         var audioStatus = switch (speakerState) {
-            case IDLE -> microphone.canStart() ? "Hold to talk" : "";
+            case IDLE -> microphone.canStart() ? (vad ? "Start listening" : "Hold to talk") : "";
             case OPENING -> "Opening speaker…";
             case SPEAKING -> "Speaking…";
             case CLEANING_UP -> "Closing speaker…";
@@ -439,9 +462,13 @@ public final class WorkspaceController {
         // Keep keyboard focus during speaker cleanup. The session prevents capture until the speaker is released.
         micButton.setDisable(renderedState != RealtimeSession.State.READY || mode == Mode.TEXT || applyingSettings
                 || state == RealtimeSession.MicState.UNCONFIRMED);
-        micButton.pseudoClassStateChanged(WAITING_FOR_SPEAKER, cleaningSpeaker);
+        micButton.pseudoClassStateChanged(WAITING_FOR_SPEAKER, cleaningSpeaker && !vad);
+        micButton.setAccessibleText(vad ? (listening ? "Stop listening" : "Start listening") : "Microphone");
         micTooltip.setText(mode == Mode.TEXT ? "Microphone unavailable in Text mode"
-                : state == RealtimeSession.MicState.UNCONFIRMED ? "Manual PCM microphone input was not confirmed"
+                : state == RealtimeSession.MicState.UNCONFIRMED ? "PCM microphone input was not confirmed"
+                : vad && renderedState == RealtimeSession.State.READY
+                ? listening ? "Click the microphone or press Esc to stop listening."
+                            : "Click the microphone to listen for up to 30 seconds."
                 : cleaningSpeaker ? audioStatus
                 : renderedState == RealtimeSession.State.READY
                 ? "Hold the microphone or Space to record. Release to send. Esc cancels."
@@ -457,10 +484,11 @@ public final class WorkspaceController {
         cancelButton.setAccessibleText(playing ? "Stop playback" : "Cancel turn");
         micStatus.setText(mode == Mode.TEXT ? audioStatus : switch (state) {
             case IDLE -> audioStatus;
-            case UNCONFIRMED -> "Manual PCM microphone input was not confirmed";
+            case UNCONFIRMED -> "PCM microphone input was not confirmed";
             case OPENING -> "Opening microphone…";
-            case RECORDING -> String.format(Locale.ROOT, "Recording · %.1f s", microphone.seconds());
-            case LIMIT -> "Recording limit reached. Release to send.";
+            case RECORDING -> vad && playing ? "Listening · " + audioStatus
+                    : String.format(Locale.ROOT, "%s · %.1f s", vad ? "Listening" : "Recording", microphone.seconds());
+            case LIMIT -> vad ? "Listening limit reached." : "Recording limit reached. Release to send.";
             case STOPPING -> "Stopping microphone…";
             case SENDING -> "Sending audio…";
             case TOO_SHORT -> "Recording too short. Hold to talk.";
@@ -480,9 +508,10 @@ public final class WorkspaceController {
         sendButton.setDisable(!canSendText || composer.getText().isBlank());
     }
 
-    private void renderConversation(List<RealtimeSession.TurnView> turns, Mode mode) {
+    private void renderConversation(List<RealtimeSession.TurnView> turns, Mode mode, boolean vad) {
         conversationEmpty.setText(renderedState == RealtimeSession.State.READY
-                ? mode == Mode.TEXT ? "Send a message." : "Send a message or hold the microphone to talk."
+                ? mode == Mode.TEXT ? "Send a message."
+                        : vad ? "Send a message or start listening." : "Send a message or hold the microphone to talk."
                 : "Connect to start a conversation.");
         conversationEmpty.setVisible(turns.isEmpty());
         if (turns.equals(renderedTurns)) {

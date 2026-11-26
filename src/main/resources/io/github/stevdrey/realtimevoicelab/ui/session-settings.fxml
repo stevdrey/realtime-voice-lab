@@ -17,11 +17,14 @@
         <ComboBox fx:id="voice" id="settings-voice" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
         <Label text="Mode" labelFor="${mode}" GridPane.rowIndex="2"/>
         <ComboBox fx:id="mode" id="settings-mode" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
-        <Label text="Preset" labelFor="${preset}" GridPane.rowIndex="3"/>
-        <ComboBox fx:id="preset" id="settings-preset" promptText="Custom" GridPane.columnIndex="1"
+        <Label text="Turn detection" labelFor="${turnDetection}" GridPane.rowIndex="3"/>
+        <ComboBox fx:id="turnDetection" id="settings-turn-detection" GridPane.columnIndex="1"
                   GridPane.rowIndex="3"/>
+        <Label text="Preset" labelFor="${preset}" GridPane.rowIndex="4"/>
+        <ComboBox fx:id="preset" id="settings-preset" promptText="Custom" GridPane.columnIndex="1"
+                  GridPane.rowIndex="4"/>
     </GridPane>
-    <Label text="Audio mode enables push-to-talk. Typed messages receive text replies in either mode."
+    <Label text="Push to talk uses hold and release. Server VAD and Semantic VAD listen after you click the microphone."
            styleClass="caption" wrapText="true"/>
     <Label text="Instructions" labelFor="${instructions}"/>
     <TextArea fx:id="instructions" id="settings-instructions" wrapText="true" prefRowCount="5"
