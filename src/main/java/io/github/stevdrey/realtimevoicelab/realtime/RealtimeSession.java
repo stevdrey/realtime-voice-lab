@@ -225,8 +225,11 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private boolean canStartTurn(Attempt attempt) {
+        // VAD playback cleanup can still discover unheard audio that needs truncation.
+        boolean waitingForPlayback = settings.effectiveTurnDetection().automatic()
+                ? attempt.output != null : hasPendingPlayback(attempt);
         return attempt.turn == null && attempt.input == null && attempt.interruption == null
-                && attempt.pendingVadTurn == null && !hasPendingPlayback(attempt)
+                && attempt.pendingVadTurn == null && !waitingForPlayback
                 && !attempt.writing && attempt.settingUpdate == null;
     }
 
@@ -1108,7 +1111,7 @@ public final class RealtimeSession implements AutoCloseable {
         }
         var itemId = protocol.requiredId(event.itemId());
         if ("input_audio_buffer.speech_started".equals(event.type())) {
-            if (input.discard || input.vad.speechItemId != null || !attempt.vadSpeechItems.add(itemId)) {
+            if (input.vad.speechItemId != null || !attempt.vadSpeechItems.add(itemId)) {
                 return;
             }
             if (attempt.vadSpeechItems.size() > MAX_HISTORY_TURNS) {
@@ -1116,6 +1119,10 @@ public final class RealtimeSession implements AutoCloseable {
             }
             input.vad.speechItemId = itemId;
             input.vad.speechStopped = false;
+            // A complete turn may already be in flight when the operator stops listening.
+            if (input.discard) {
+                return;
+            }
             if (hasVoiceToInterrupt(attempt)) {
                 interruptVoice(attempt);
             } else if (attempt.turn != null && attempt.turn.state != TurnState.CANCEL_REJECTED) {
@@ -1422,9 +1429,6 @@ public final class RealtimeSession implements AutoCloseable {
         }
         playbackWorker = null;
         output.turn.playedFrames = output.stream.playedFrames();
-        if (attempt.turn != output.turn) {
-            output.turn.assistantAudio = null;
-        }
         if (output.cleanupDeadline != null) {
             output.cleanupDeadline.complete(null);
         }
@@ -1438,6 +1442,9 @@ public final class RealtimeSession implements AutoCloseable {
         } else if (status.state() == State.READY) {
             statusChanged.run();
         }
+        if (attempt.turn != output.turn) {
+            output.turn.assistantAudio = null;
+        }
         if (active == attempt) {
             advanceInterruption(attempt);
             advanceVadTurn(attempt);
@@ -1446,7 +1453,16 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private void playbackUnavailable(Attempt attempt) {
-        stopPlayback(attempt);
+        var output = attempt.output;
+        if (settings.effectiveTurnDetection().automatic() && output != null
+                && (attempt.turn == null || attempt.turn == output.turn)
+                && (attempt.turn != null || playbackWorker == output
+                    || !output.turn.assistantAudio.cuts(output.turn.playedFrames, false).isEmpty())) {
+            // Keep the failed output's item and frame count until the provider confirms truncation.
+            interruptVoice(attempt);
+        } else {
+            stopPlayback(attempt);
+        }
         attempt.speakerState = SpeakerState.UNAVAILABLE;
         statusChanged.run();
     }

@@ -6,6 +6,7 @@ import java.util.Base64;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -111,6 +112,70 @@ class RealtimeBargeInTest {
             assertEquals(0, count(socket, "response.cancel"));
         } finally {
             release.complete(null);
+        }
+    }
+
+    @Test
+    void truncatesUnheardAudioWhenSpeechStartsDuringStalledSpeakerCleanup() throws Exception {
+        var clock = new AtomicLong();
+        var stopping = new CompletableFuture<Void>();
+        var release = new CompletableFuture<Void>();
+        var stalledSpeaker = new FakeSpeaker(() -> {}, () -> {
+            stopping.complete(null);
+            release.join();
+        });
+        try (var session = new RealtimeSession(transport, () -> {}, microphone.microphone(),
+                stalledSpeaker.playback(clock::get))) {
+            var socket = listen(session, TurnDetection.SERVER_VAD);
+            utterance(socket, "input-1");
+            bindResponse(socket, "reply-1");
+            audio(socket, "reply-1", "assistant-1");
+            await(() -> !stalledSpeaker.devices.isEmpty() && stalledSpeaker.devices.getFirst().written().length > 0);
+            done(socket, "reply-1", "completed", assistant("assistant-1"));
+            clock.set(Duration.ofSeconds(4).toNanos());
+            await(stopping::isDone);
+
+            utterance(socket, "input-2");
+            assertEquals(1, count(socket, "response.create"));
+            release.complete(null);
+            await(() -> count(socket, "conversation.item.truncate") > 0 || count(socket, "response.create") > 1);
+            assertTrue(stalledSpeaker.devices.getFirst().flushed);
+            assertEquals(1, count(socket, "response.create"));
+            assertCut(last(socket), "assistant-1", 0);
+            assertEquals(RealtimeSession.TurnState.INTERRUPTED, session.workspace().turns().getFirst().state());
+            assertEquals(0, count(socket, "response.cancel"));
+
+            socket.truncated("assistant-1", 40);
+            assertEquals(1, count(socket, "response.create"));
+            socket.truncated("assistant-1", 0);
+            assertEquals(2, count(socket, "response.create"));
+        } finally {
+            release.complete(null);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = TurnDetection.class, names = {"SERVER_VAD", "SEMANTIC_VAD"})
+    void showsACompletedVadTurnWhoseEventsArriveWhileStopping(TurnDetection detection) throws Exception {
+        try (var session = session()) {
+            var socket = listen(session, detection);
+            assertTrue(session.stopListening());
+            assertEquals(1, count(socket, "input_audio_buffer.clear"));
+
+            // The server committed a complete utterance before it cleared the remaining buffer.
+            utterance(socket, "committed-before-clear");
+            var turn = session.workspace().turns().getFirst();
+            assertTrue(turn.voice());
+            assertEquals(RealtimeSession.TurnState.WAITING, turn.state());
+            assertEquals(0, count(socket, "response.create"));
+            assertFalse(session.sendText("Synthetic typed turn"));
+
+            socket.text("""
+                    {"type":"input_audio_buffer.cleared"}
+                    """, true);
+            assertEquals(1, count(socket, "response.create"));
+            assertEquals("rvl-" + turn.number(), last(socket).at("/response/metadata/rvl_turn").asText());
+            await(() -> microphone.closes.get() == 1);
         }
     }
 
