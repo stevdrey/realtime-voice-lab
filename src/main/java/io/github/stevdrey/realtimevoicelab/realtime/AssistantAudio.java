@@ -60,6 +60,10 @@ final class AssistantAudio {
         completedItems.addAll(receivedFrames.keySet());
     }
 
+    boolean isCompleted(String itemId) {
+        return completedItems.contains(itemId);
+    }
+
     ArrayDeque<Cut> cuts(long playedFrames, boolean interruptedGeneration) {
         var playedByItem = new LinkedHashMap<String, Integer>();
         for (var span : spans) {

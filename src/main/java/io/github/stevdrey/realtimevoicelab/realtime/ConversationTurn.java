@@ -149,8 +149,12 @@ final class ConversationTurn {
         parts.clear();
         finalTranscripts.clear();
         streamedChars = 0;
-        earlierText = "";
         finishedText = "";
+    }
+
+    /** Drops the completed first response once any part of it is known to be unheard. */
+    void discardEarlierText() {
+        earlierText = "";
     }
 
     void prepareToolFollowUp(ToolExchange exchange) {

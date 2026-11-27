@@ -39,7 +39,34 @@ final class LocalTools {
         }
         var tool = tools.get(0);
         return "function".equals(tool.path("type").textValue()) && COUNTER.equals(tool.path("name").textValue())
-                && parameters().equals(tool.path("parameters"));
+                && parametersConfirmed(tool.path("parameters"));
+    }
+
+    // The provider may normalize the echo. Compare the constraints, while execute() still validates every call.
+    private boolean parametersConfirmed(JsonNode schema) {
+        var additional = schema.path("additionalProperties");
+        var required = schema.path("required");
+        var properties = schema.path("properties");
+        return "object".equals(schema.path("type").textValue())
+                && (additional.isMissingNode() || additional.isBoolean() && !additional.booleanValue())
+                && required.isArray() && required.size() == 2
+                && (requiredPair(required, "current", "delta") || requiredPair(required, "delta", "current"))
+                && properties.isObject() && properties.size() == 2
+                && integerProperty(properties.path("current"), 0, MAX_COUNTER)
+                && integerProperty(properties.path("delta"), -MAX_DELTA, MAX_DELTA);
+    }
+
+    private boolean requiredPair(JsonNode required, String first, String second) {
+        return first.equals(required.get(0).textValue()) && second.equals(required.get(1).textValue());
+    }
+
+    private boolean integerProperty(JsonNode property, int minimum, int maximum) {
+        return "integer".equals(property.path("type").textValue())
+                && bound(property.path("minimum"), minimum) && bound(property.path("maximum"), maximum);
+    }
+
+    private boolean bound(JsonNode value, int expected) {
+        return value.isNumber() && value.doubleValue() == expected;
     }
 
     private ArrayNode declarations() {

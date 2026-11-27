@@ -274,6 +274,7 @@ class RealtimeAudioOutputTest {
             socket.truncated("second-assistant-item", 40);
             await(() -> session.workspace().canSend());
             assertEquals(writes + 1, socket.writes.size());
+            assertEquals("First.", session.workspace().turns().getFirst().output());
         }
     }
 

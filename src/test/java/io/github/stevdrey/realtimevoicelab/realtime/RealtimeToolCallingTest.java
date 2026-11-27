@@ -75,6 +75,24 @@ class RealtimeToolCallingTest {
     }
 
     @Test
+    void acceptsANormalizedEchoButRejectsChangedBounds() throws Exception {
+        var tools = new LocalTools();
+        var normalized = json.readTree("""
+                {"tool_choice":"auto","tools":[{"type":"function","name":"calculate_workspace_counter",
+                 "parameters":{"type":"object","strict":true,"required":["delta","current"],
+                  "properties":{"current":{"type":"integer","minimum":0.0,"maximum":100},
+                                "delta":{"type":"integer","minimum":-10,"maximum":10.0}}}}]}
+                """);
+        assertTrue(tools.confirmed(normalized));
+        ObjectNode changed = normalized.deepCopy();
+        ((ObjectNode) changed.at("/tools/0/parameters/properties/current")).put("maximum", 50);
+        assertFalse(tools.confirmed(changed));
+        ObjectNode open = normalized.deepCopy();
+        ((ObjectNode) open.at("/tools/0/parameters")).put("additionalProperties", true);
+        assertFalse(tools.confirmed(open));
+    }
+
+    @Test
     void sendsOrderedOutputsThenOneTextFollowUpAfterBothWriteAndAcknowledgment() throws Exception {
         var initialKey = startTurn("primary");
         int beforeTools = socket.writes.size();

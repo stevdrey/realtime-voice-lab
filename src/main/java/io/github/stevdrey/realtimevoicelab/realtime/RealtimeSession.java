@@ -1344,6 +1344,10 @@ public final class RealtimeSession implements AutoCloseable {
             interruption.cuts = interruption.audio.cuts(playedFrames, interruption.interruptedGeneration);
             if (!interruption.cuts.isEmpty()) {
                 interruption.turn.discardAudioTranscript();
+                // Keep a fully heard first response from a tool follow-up. The provider keeps it too.
+                if (interruption.cuts.stream().anyMatch(cut -> interruption.audio.isCompleted(cut.itemId()))) {
+                    interruption.turn.discardEarlierText();
+                }
             }
         }
         interruption.pending = interruption.cuts.pollFirst();
@@ -1795,7 +1799,8 @@ public final class RealtimeSession implements AutoCloseable {
             var output = attempt.output;
             // Reserve the entire bounded queue for the follow-up. The line can finish playing its own buffer.
             if (turn.followingTools && output != null
-                    && output.stream.waitForEmptyQueue(() -> playbackQueueEmpty(attempt, output))) {
+                    && output.stream.waitForEmptyQueue(() -> Thread.ofVirtual().name("rvl-speaker-queue")
+                            .start(() -> playbackQueueEmpty(attempt, output)))) {
                 return;
             }
             turn.responseRequested = true;
