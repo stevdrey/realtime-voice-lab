@@ -41,6 +41,7 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -50,6 +51,9 @@ import javafx.util.Duration;
 import javafx.util.StringConverter;
 
 public final class WorkspaceController {
+    // Three 100 px metric columns and two 16 px gaps.
+    private static final double COMPACT_METRICS_WIDTH = 332;
+
     private enum MicGesture {
         MOUSE, SPACE, ENTER
     }
@@ -156,6 +160,7 @@ public final class WorkspaceController {
     @FXML private Label costState;
     @FXML private Label transcriptionCost;
 
+    @FXML private HBox metrics;
     @FXML private Region toyPanel;
     @FXML private Region toySwatch;
     @FXML private Label toyColor;
@@ -178,6 +183,12 @@ public final class WorkspaceController {
         latencyValue.setAccessibleHelp(latencyHelp);
         modelSelector.getItems().setAll(Model.values());
         toyPanel.managedProperty().bind(toyPanel.visibleProperty());
+        metrics.widthProperty().addListener((observable, previous, width) -> {
+            boolean compact = width.doubleValue() < COMPACT_METRICS_WIDTH;
+            metrics.setSpacing(compact ? 8 : 16);
+            elapsedValue.setMinWidth(compact ? Region.USE_PREF_SIZE : Region.USE_COMPUTED_SIZE);
+            costMetric.setMinWidth(compact ? 100 : Region.USE_COMPUTED_SIZE);
+        });
         sessionProgress.managedProperty().bind(sessionProgress.visibleProperty());
         modelSelector.accessibleTextProperty().bind(Bindings.createStringBinding(
                 () -> "Model: " + modelSelector.getValue(), modelSelector.valueProperty()));
@@ -494,7 +505,10 @@ public final class WorkspaceController {
         }
         renderElapsed();
         var latency = workspace.audioLatency();
-        setMetric(latencyValue, "Latency", latency == null ? null : latency.toMillis() + " ms");
+        var latencyText = latency == null ? null : latency.toMillis() + " ms";
+        setMetric(latencyValue, "Latency", latencyText);
+        var latencyHelp = latencyValue.getAccessibleHelp();
+        latencyValue.getTooltip().setText(latencyText == null ? latencyHelp : latencyText + "\n" + latencyHelp);
         renderCost(workspace.usage());
     }
 

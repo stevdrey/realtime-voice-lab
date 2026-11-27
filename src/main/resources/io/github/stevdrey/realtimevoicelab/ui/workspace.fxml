@@ -107,7 +107,7 @@
                 <Label fx:id="toyTheme" id="toy-theme"/>
                 <Label fx:id="toyCounter" id="toy-counter"/>
             </HBox>
-            <HBox id="metrics" spacing="16" HBox.hgrow="ALWAYS">
+            <HBox fx:id="metrics" id="metrics" spacing="16" HBox.hgrow="ALWAYS">
                 <VBox spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
                     <Label text="Latency" styleClass="caption"/>
                     <Label fx:id="latencyValue" id="latency-value" text="—" styleClass="metric-value"/>
@@ -116,7 +116,7 @@
                     <Label text="Session" styleClass="caption"/>
                     <Label fx:id="elapsedValue" id="elapsed-value" text="—" styleClass="metric-value"/>
                 </VBox>
-                <VBox fx:id="costMetric" spacing="4" minWidth="104" prefWidth="0" HBox.hgrow="ALWAYS">
+                <VBox fx:id="costMetric" spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
                     <Label text="Est. cost" styleClass="caption"/>
                     <Label fx:id="costValue" id="cost-value" text="—" styleClass="metric-value"/>
                     <Label fx:id="costState" id="cost-state" styleClass="caption" wrapText="true" minWidth="0"/>

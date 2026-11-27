@@ -400,6 +400,11 @@ class RealtimeVoiceLabAppTest {
             assertEquals("none", followUp.path("tool_choice").textValue());
 
             onFxThread(() -> {
+                var scene = stage.getScene();
+                var toy = scene.lookup("#toy-workspace");
+                var metrics = scene.lookup("#metrics");
+                assertTrue(toy.localToScene(toy.getBoundsInLocal()).getMaxX()
+                        < metrics.localToScene(metrics.getBoundsInLocal()).getMinX());
                 stage.setWidth(stage.getMinWidth());
                 stage.setHeight(stage.getMinHeight());
                 return null;
@@ -426,6 +431,9 @@ class RealtimeVoiceLabAppTest {
                 assertTrue(cost.getAccessibleHelp().contains("$0.000148 USD"));
                 assertTrue(cost.getWidth() + 1 >= cost.prefWidth(-1),
                         () -> "Estimated cost is clipped: width=" + cost.getWidth() + ", preferred=" + cost.prefWidth(-1));
+                var elapsed = (Label) scene.lookup("#elapsed-value");
+                assertTrue(elapsed.getWidth() + 1 >= elapsed.prefWidth(-1),
+                        () -> "Elapsed time is clipped: width=" + elapsed.getWidth() + ", preferred=" + elapsed.prefWidth(-1));
                 assertEquals("Pending usage", ((Label) scene.lookup("#cost-state")).getText());
                 assertTrue(scene.lookup("#cost-state").isVisible());
                 assertEquals(2, ((SplitPane) scene.lookup("#main-panels")).getItems().size());
@@ -625,7 +633,9 @@ class RealtimeVoiceLabAppTest {
                         assertEquals("—", ((Label) scene.lookup("#cost-value")).getText());
                         assertEquals("Pending usage", ((Label) scene.lookup("#cost-state")).getText());
                         assertTrue(scene.lookup("#transcription-cost").isVisible());
-                        assertTrue(((Label) scene.lookup("#latency-value")).getText().matches("[0-9]+ ms"));
+                        var latency = (Label) scene.lookup("#latency-value");
+                        assertTrue(latency.getText().matches("[0-9]+ ms"));
+                        assertTrue(latency.getTooltip().getText().startsWith(latency.getText()));
                         return null;
                     });
                     socket.text("""
