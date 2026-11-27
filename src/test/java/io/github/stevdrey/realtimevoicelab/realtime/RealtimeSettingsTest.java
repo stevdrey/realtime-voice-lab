@@ -296,12 +296,12 @@ class RealtimeSettingsTest {
     }
 
     private static String acknowledgement(String model) {
-        return """
+        return FakeTransport.withToolConfiguration("""
                 {"type":"session.updated","session":{"type":"realtime","id":"test-session","max_output_tokens":512,
                  "model":"%s","instructions":"Respond briefly.","output_modalities":["audio"],
                  "audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"turn_detection":null,"transcription":null},
                           "output":{"voice":"marin","format":{"type":"audio/pcm","rate":24000}}}}}
-                """.formatted(model);
+                """.formatted(model));
     }
 
     private FakeTransport.Socket open(RealtimeSession session) {

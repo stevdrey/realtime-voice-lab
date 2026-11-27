@@ -122,6 +122,7 @@ public final class SpeakerPlayback {
                 if (written != count) {
                     return Result.UNAVAILABLE;
                 }
+                stream.notifyQueueEmpty();
                 progressAt = now;
                 if (now - meterAt >= METER_INTERVAL_NANOS) {
                     meter.accept(level(block, written));
@@ -182,6 +183,7 @@ public final class SpeakerPlayback {
         private int head;
         private int size;
         private boolean complete;
+        private Runnable onQueueEmpty;
         private volatile boolean stopped;
         // A stopped device position is published before the playback worker returns.
         private volatile long playedFrames;
@@ -213,10 +215,23 @@ public final class SpeakerPlayback {
             complete = true;
         }
 
+        /** Returns true when the producer must wait for a notification or the worker's failure. */
+        public synchronized boolean waitForEmptyQueue(Runnable notification) {
+            if (stopped) {
+                return true;
+            }
+            if (size == 0) {
+                return false;
+            }
+            onQueueEmpty = notification;
+            return true;
+        }
+
         public synchronized void stop() {
             stopped = true;
             size = 0;
             queue = null;
+            onQueueEmpty = null;
         }
 
         private synchronized int read(byte[] block, int limit) {
@@ -236,6 +251,19 @@ public final class SpeakerPlayback {
 
         private synchronized boolean isEmpty() {
             return size == 0;
+        }
+
+        private void notifyQueueEmpty() {
+            Runnable notification;
+            synchronized (this) {
+                if (size != 0 || onQueueEmpty == null) {
+                    return;
+                }
+                notification = onQueueEmpty;
+                onQueueEmpty = null;
+            }
+            // The producer can enter the session from this callback. Release the queue lock first.
+            notification.run();
         }
     }
 }

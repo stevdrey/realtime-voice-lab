@@ -11,9 +11,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.stevdrey.realtimevoicelab.audio.FakeMicrophone;
 import io.github.stevdrey.realtimevoicelab.audio.FakeSpeaker;
+import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
 import io.github.stevdrey.realtimevoicelab.audio.SpeakerPlayback;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
 import org.junit.jupiter.api.Test;
@@ -116,6 +118,254 @@ class RealtimeAudioOutputTest {
                 device.playBufferedFrames();
             }
         }
+    }
+
+    @Test
+    void playsBothVoiceResponsesAndKeepsTheirTranscriptsInOneTurnAfterAToolCall() throws Exception {
+        try (var session = session(speaker.playback())) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "initial");
+            var first = microphone.block(0);
+            var second = microphone.block(1);
+            socket.text(audio("initial", first), true);
+            transcript(socket, "done", 0, "First.", "initial");
+            socket.text(output("response.output_audio.done", "initial", 0, ""), true);
+            var toolItem = toolOutput(socket);
+            assertEquals("function_call_output", toolItem.path("type").textValue());
+            assertEquals("call_audio", toolItem.path("call_id").textValue());
+            assertEquals(7, json.readTree(toolItem.path("output").textValue()).path("value").intValue());
+            assertFalse(session.workspace().canSend());
+            int writesBeforeFollowUp = socket.writes.size();
+            acknowledgeToolOutput(socket, toolItem);
+            await(() -> socket.writes.size() > writesBeforeFollowUp);
+            bindVoiceFollowUp(socket);
+            socket.text(audio("follow_up", second).replace("assistant-item", "second-assistant-item"), true);
+            transcript(socket, "done", 0, "Seven.", "follow_up");
+            responseDone(socket, "follow_up", "completed");
+
+            await(() -> !speaker.devices.isEmpty() && speaker.devices.getFirst().written().length == first.length);
+            var device = speaker.devices.getFirst();
+            device.playBufferedFrames();
+            await(() -> device.written().length == first.length + second.length);
+            var expected = new byte[first.length + second.length];
+            System.arraycopy(first, 0, expected, 0, first.length);
+            System.arraycopy(second, 0, expected, first.length, second.length);
+            assertArrayEquals(expected, device.written());
+            device.playBufferedFrames();
+            await(() -> session.workspace().canSend());
+            assertEquals(1, speaker.devices.size());
+            assertEquals(1, session.workspace().turns().size());
+            assertEquals("First.\nSeven.", session.workspace().turns().getFirst().output());
+            assertEquals(RealtimeSession.TurnState.COMPLETED, session.workspace().turns().getFirst().state());
+        }
+    }
+
+    @Test
+    void waitsForQueueCapacityBeforeRequestingAFullLengthToolFollowUp() throws Exception {
+        var openSpeaker = new CompletableFuture<Void>();
+        var delayedSpeaker = new FakeSpeaker(openSpeaker::join);
+        var deadlines = new CopyOnWriteArrayList<Deadline>();
+        try (var session = session(delayedSpeaker.playback(), () -> {}, deadlines)) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "initial");
+            socket.text(audio("initial", microphone.block(0)), true);
+            var toolItem = toolOutput(socket);
+            int writes = socket.writes.size();
+            acknowledgeToolOutput(socket, toolItem);
+            assertEquals(writes, socket.writes.size());
+            assertTrue(session.workspace().canCancel());
+            assertFalse(session.workspace().canSend());
+            assertFalse(deadlines.stream().anyMatch(deadline -> deadline.nanos() == RealtimeSession.TOOL_OUTPUT_TIMEOUT.toNanos()
+                    && !deadline.future().isDone()));
+
+            openSpeaker.complete(null);
+            await(() -> socket.writes.size() > writes);
+            bindVoiceFollowUp(socket);
+            var twoSeconds = audio("follow_up", new byte[2 * MicrophoneCapture.BYTES_PER_SECOND])
+                    .replace("assistant-item", "second-assistant-item");
+            for (int index = 0; index < 15; index++) {
+                socket.text(twoSeconds, true);
+            }
+            responseDone(socket, "follow_up", "completed");
+            assertEquals(writes + 1, socket.writes.size());
+            assertEquals(SPEAKING, session.workspace().speaker().state());
+            assertEquals(RealtimeSession.TurnState.COMPLETED, session.workspace().turns().getFirst().state());
+        } finally {
+            openSpeaker.complete(null);
+        }
+    }
+
+    @Test
+    void cancellingBeforeToolAcknowledgmentKeepsTheFullyPlayedFirstResponse() throws Exception {
+        try (var session = session(speaker.playback())) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "initial");
+            var pcm = microphone.block(0);
+            socket.text(audio("initial", pcm), true);
+            await(() -> !speaker.devices.isEmpty() && speaker.devices.getFirst().written().length == pcm.length);
+            var device = speaker.devices.getFirst();
+            device.playBufferedFrames();
+            var toolItem = toolOutput(socket);
+            int writes = socket.writes.size();
+
+            session.cancelTurn();
+            await(() -> device.closed && session.workspace().speaker().state() == IDLE);
+            assertFalse(session.workspace().canSend());
+            assertEquals(writes, socket.writes.size());
+            acknowledgeToolOutput(socket, toolItem);
+            assertEquals(writes, socket.writes.size());
+            assertTrue(device.closed);
+            assertTrue(session.workspace().canSend());
+            assertEquals(RealtimeSession.TurnState.CANCELLED, session.workspace().turns().getFirst().state());
+        }
+    }
+
+    @Test
+    void cancelledVoiceTurnWaitsForToolWriteAndAudioTruncation() throws Exception {
+        try (var session = session(speaker.playback())) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "initial");
+            var pcm = microphone.block(0);
+            socket.text(audio("initial", pcm), true);
+            await(() -> !speaker.devices.isEmpty() && speaker.devices.getFirst().written().length == pcm.length);
+            var device = speaker.devices.getFirst();
+            var blockedWrite = new CompletableFuture<WebSocket>();
+            socket.nextTurnWrite = blockedWrite;
+            var toolItem = toolOutput(socket);
+            int writes = socket.writes.size();
+
+            session.cancelTurn();
+            acknowledgeToolOutput(socket, toolItem);
+            await(() -> device.closed && session.workspace().speaker().state() == IDLE);
+            assertFalse(session.workspace().canSend());
+            assertEquals(writes, socket.writes.size());
+            blockedWrite.complete(socket);
+            await(() -> socket.writes.size() > writes);
+            assertTruncate(socket, 0);
+            assertFalse(session.workspace().canSend());
+            socket.truncated("assistant-item", 0);
+            assertTrue(session.workspace().canSend());
+            assertEquals(writes + 1, socket.writes.size());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void cancelledVoiceToolOutputStillHandlesRejectionAndTimeout(boolean rejected) throws Exception {
+        var deadlines = new CopyOnWriteArrayList<Deadline>();
+        try (var session = session(speaker.playback(), () -> {}, deadlines)) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "initial");
+            var pcm = microphone.block(0);
+            socket.text(audio("initial", pcm), true);
+            await(() -> !speaker.devices.isEmpty() && speaker.devices.getFirst().written().length == pcm.length);
+            var device = speaker.devices.getFirst();
+            toolOutput(socket);
+            var eventId = json.readTree(socket.writes.getLast()).path("event_id").textValue();
+            var toolDeadline = deadlines.getLast();
+            int writes = socket.writes.size();
+
+            session.cancelTurn();
+            await(() -> device.closed && session.workspace().speaker().state() == IDLE);
+            assertFalse(toolDeadline.future().isDone());
+            if (rejected) {
+                socket.text("""
+                        {"type":"error","error":{"event_id":"%s","message":"synthetic private detail"}}
+                        """.formatted(eventId), true);
+            } else {
+                expire(deadlines, RealtimeSession.TOOL_OUTPUT_TIMEOUT);
+            }
+            var failure = rejected ? RealtimeSession.Failure.PROVIDER : RealtimeSession.Failure.ITEM_ACK_TIMEOUT;
+            assertEquals(new RealtimeSession.Status(RealtimeSession.State.ERROR, failure), session.status());
+            assertTrue(socket.aborted);
+            assertFalse(session.workspace().canSend());
+            assertEquals(writes, socket.writes.size());
+        }
+    }
+
+    @Test
+    void cancellingWhileWaitingForQueueCapacityTruncatesUnheardAudioAndDropsTheFollowUp() throws Exception {
+        var openSpeaker = new CompletableFuture<Void>();
+        var delayedSpeaker = new FakeSpeaker(openSpeaker::join);
+        try (var session = session(delayedSpeaker.playback())) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "initial");
+            socket.text(audio("initial", microphone.block(0)), true);
+            var toolItem = toolOutput(socket);
+            int writes = socket.writes.size();
+            acknowledgeToolOutput(socket, toolItem);
+            assertEquals(writes, socket.writes.size());
+
+            session.cancelTurn();
+            openSpeaker.complete(null);
+            await(() -> socket.writes.size() > writes);
+            assertTruncate(socket, 0);
+            socket.truncated("assistant-item", 0);
+            await(() -> session.workspace().canSend());
+            assertEquals(writes + 1, socket.writes.size());
+        } finally {
+            openSpeaker.complete(null);
+        }
+    }
+
+    @Test
+    void cancellingDuringToolFollowUpTruncatesOnlyTheStillGeneratingResponse() throws Exception {
+        try (var session = session(speaker.playback())) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            startVoice(session, socket, "input-1", "initial");
+            var pcm = microphone.block(0);
+            socket.text(audio("initial", pcm), true);
+            await(() -> !speaker.devices.isEmpty() && speaker.devices.getFirst().written().length == pcm.length);
+            var device = speaker.devices.getFirst();
+            device.playBufferedFrames();
+            var toolItem = toolOutput(socket);
+            acknowledgeToolOutput(socket, toolItem);
+            bindVoiceFollowUp(socket);
+            socket.text(audio("follow_up", pcm).replace("assistant-item", "second-assistant-item"), true);
+            await(() -> device.written().length == 2 * pcm.length);
+            device.playBufferedFrames();
+
+            session.cancelTurn();
+            var cancel = json.readTree(socket.writes.getLast());
+            assertEquals("response.cancel", cancel.path("type").asText());
+            assertEquals("follow_up", cancel.path("response_id").asText());
+            int writes = socket.writes.size();
+            responseDone(socket, "follow_up", "cancelled");
+            await(() -> socket.writes.size() > writes);
+            var truncate = json.readTree(socket.writes.getLast());
+            assertEquals("conversation.item.truncate", truncate.path("type").asText());
+            assertEquals("second-assistant-item", truncate.path("item_id").asText());
+            assertEquals(40, truncate.path("audio_end_ms").asInt());
+            socket.truncated("second-assistant-item", 40);
+            await(() -> session.workspace().canSend());
+            assertEquals(writes + 1, socket.writes.size());
+            assertEquals("First.", session.workspace().turns().getFirst().output());
+        }
+    }
+
+    private JsonNode toolOutput(FakeTransport.Socket socket) throws Exception {
+        socket.text("""
+                {"type":"response.done","response":{"id":"initial","status":"completed","output":[
+                 {"id":"assistant-item","type":"message","role":"assistant","content":[{"type":"output_audio",
+                  "transcript":"First."}]},
+                 {"type":"function_call","status":"completed","call_id":"call_audio",
+                  "name":"calculate_workspace_counter","arguments":%s}]}}
+                """.formatted(json.writeValueAsString("{\"current\":3,\"delta\":4}")), true);
+        return json.readTree(socket.writes.getLast()).path("item");
+    }
+
+    private void acknowledgeToolOutput(FakeTransport.Socket socket, JsonNode item) {
+        socket.text("""
+                {"type":"conversation.item.added","item":%s}
+                """.formatted(item), true);
+    }
+
+    private void bindVoiceFollowUp(FakeTransport.Socket socket) throws Exception {
+        var response = json.readTree(socket.writes.getLast()).path("response");
+        assertEquals("audio", response.at("/output_modalities/0").asText());
+        socket.text("""
+                {"type":"response.created","response":{"id":"follow_up","metadata":%s}}
+                """.formatted(response.path("metadata")), true);
     }
 
     private void awaitFinalBufferPlayback(FakeSpeaker.Device device) throws InterruptedException {

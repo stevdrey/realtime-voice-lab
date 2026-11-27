@@ -552,10 +552,10 @@ class RealtimeSafetyTest {
         socket.opened();
         socket.created();
         socket.textWrite.complete(socket);
-        socket.text("""
+        socket.text(FakeTransport.withToolConfiguration("""
                 {"type":"session.updated","session":{"type":"realtime","id":"test-session",
                  "model":"gpt-realtime-2.1-mini","instructions":"Respond briefly.","output_modalities":["audio"]%s}}
-                """.formatted(fields), true);
+                """.formatted(fields)), true);
         return socket;
     }
 

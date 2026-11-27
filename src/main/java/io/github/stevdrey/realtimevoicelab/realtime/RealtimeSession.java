@@ -8,6 +8,7 @@ import java.nio.ByteBuffer;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -33,6 +34,7 @@ public final class RealtimeSession implements AutoCloseable {
     static final Duration MAX_SESSION_TIME = Duration.ofMinutes(5);
     static final Duration ITEM_ACK_TIMEOUT = Duration.ofSeconds(15);
     static final Duration RESPONSE_CORRELATION_TIMEOUT = Duration.ofSeconds(15);
+    static final Duration TOOL_OUTPUT_TIMEOUT = Duration.ofSeconds(15);
     static final Duration CANCEL_TIMEOUT = Duration.ofSeconds(5);
     static final Duration MAX_AUDIO_TIME = Duration.ofSeconds(30);
     static final Duration OPEN_TIMEOUT = Duration.ofSeconds(5);
@@ -117,7 +119,8 @@ public final class RealtimeSession implements AutoCloseable {
     private final LongSupplier nanoTime;
     // The timer completes exceptionally on expiry. Normal completion cancels the timeout.
     private final LongFunction<CompletableFuture<Void>> scheduleTimeout;
-    private final SessionProtocol protocol = new SessionProtocol();
+    private final LocalTools localTools = new LocalTools();
+    private final SessionProtocol protocol = new SessionProtocol(localTools);
     private final EventInspector inspector = new EventInspector(Clock.systemUTC());
 
     // Commands, listener callbacks, write completions and deadlines share this monitor.
@@ -1071,9 +1074,17 @@ public final class RealtimeSession implements AutoCloseable {
                 }
             }
             case "response.function_call_arguments.done" -> {
-                // Replays and rejected requests also consume budget. Dispatch remains a separate check.
-                if (status.state() == State.READY && ++attempt.toolCalls > MAX_TOOL_CALLS) {
-                    stopAtLimit(attempt, Failure.TOOL_LIMIT);
+                if (status.state() == State.READY) {
+                    var signal = protocol.textEvent(message);
+                    var responseId = signal.path("response_id").textValue();
+                    var callId = signal.path("call_id").textValue();
+                    // These signals may also come from cancelled responses. Count them without dispatching.
+                    if (!attempt.toolCalls.recordSignal(
+                            responseId != null && responseId.length() <= SessionProtocol.MAX_ID_CHARS
+                                    ? responseId : null,
+                            localTools.validCallId(callId) ? callId : null)) {
+                        stopAtLimit(attempt, Failure.TOOL_LIMIT);
+                    }
                 }
             }
             case "response.output_audio.done", "response.output_audio_transcript.delta",
@@ -1291,16 +1302,20 @@ public final class RealtimeSession implements AutoCloseable {
         }
         var output = attempt.output;
         var turn = attempt.turn == null ? output.turn : attempt.turn;
-        boolean generating = attempt.turn != null;
+        boolean turnPending = attempt.turn != null;
+        boolean generating = turnPending && turn.responseRequested;
         if (output == null && playbackWorker != null && playbackWorker.turn == turn) {
             output = playbackWorker;
         }
         turn.discardAudioTranscript();
-        turn.state = generating ? TurnState.CANCELLING : TurnState.INTERRUPTED;
+        turn.state = turnPending ? TurnState.CANCELLING : TurnState.INTERRUPTED;
         stopVoiceOutput(attempt, turn, output, generating);
-        startDeadline(attempt, CANCEL_TIMEOUT, Failure.CANCEL_TIMEOUT);
+        // The tool deadline still applies while an output write or acknowledgment is outstanding.
+        if (turn.toolExchange == null) {
+            startDeadline(attempt, CANCEL_TIMEOUT, Failure.CANCEL_TIMEOUT);
+        }
         if (active == attempt) {
-            if (generating) {
+            if (turnPending) {
                 advanceTurn(attempt);
             } else {
                 advanceInterruption(attempt);
@@ -1318,7 +1333,8 @@ public final class RealtimeSession implements AutoCloseable {
     private void advanceInterruption(Attempt attempt) {
         var interruption = attempt.interruption;
         if (status.state() != State.READY || interruption == null || attempt.writing || !interruption.generationDone
-                || interruption.pending != null || !withinSessionTime(attempt)) {
+                || interruption.turn.toolExchange != null || interruption.pending != null
+                || !withinSessionTime(attempt)) {
             return;
         }
         if (interruption.output != null && interruption.output == playbackWorker) {
@@ -1332,6 +1348,10 @@ public final class RealtimeSession implements AutoCloseable {
             interruption.cuts = interruption.audio.cuts(playedFrames, interruption.interruptedGeneration);
             if (!interruption.cuts.isEmpty()) {
                 interruption.turn.discardAudioTranscript();
+                // Keep a fully heard first response from a tool follow-up. The provider keeps it too.
+                if (interruption.cuts.stream().anyMatch(cut -> interruption.audio.isCompleted(cut.itemId()))) {
+                    interruption.turn.discardEarlierText();
+                }
             }
         }
         interruption.pending = interruption.cuts.pollFirst();
@@ -1427,6 +1447,12 @@ public final class RealtimeSession implements AutoCloseable {
         if (active == attempt && attempt.output == output && output.level != level) {
             output.level = level;
             statusChanged.run();
+        }
+    }
+
+    private synchronized void playbackQueueEmpty(Attempt attempt, AudioOutput output) {
+        if (active == attempt && attempt.output == output && status.state() == State.READY) {
+            advanceTurn(attempt);
         }
     }
 
@@ -1546,6 +1572,11 @@ public final class RealtimeSession implements AutoCloseable {
         var turn = attempt.turn;
         boolean matchesTurn = turn != null && (id.equals(turn.responseId) || matchesUnboundResponse(turn, response));
         if (matchesTurn) {
+            if ("completed".equals(outcome) && attempt.interruption == null
+                    && (turn.state == TurnState.WAITING || turn.state == TurnState.RESPONDING)
+                    && prepareToolFollowUp(attempt, turn, id, response)) {
+                return;
+            }
             // The terminal output is what the provider keeps, including text generated before a cancel applied.
             if (turn.isVoice()) {
                 finishVoiceResponse(attempt, turn, response, "completed".equals(outcome), outputLimit);
@@ -1566,6 +1597,58 @@ public final class RealtimeSession implements AutoCloseable {
             advanceVadTurn(attempt);
             statusChanged.run();
         }
+    }
+
+    private boolean prepareToolFollowUp(Attempt attempt, ConversationTurn turn, String responseId,
+                                       JsonNode response) throws IOException {
+        var calls = new ArrayList<JsonNode>();
+        var batchIds = new LinkedHashSet<String>();
+        var output = response.path("output");
+        if (!output.isArray()) {
+            return false;
+        }
+        for (var item : output) {
+            if (!"function_call".equals(item.path("type").textValue())) {
+                continue;
+            }
+            var callId = item.path("call_id").textValue();
+            if (turn.followingTools || !localTools.validCallId(callId)) {
+                throw new IOException("Unexpected Realtime function call");
+            }
+            if (batchIds.add(callId)) {
+                if (!attempt.toolCalls.reserve(responseId, callId)) {
+                    stopAtLimit(attempt, Failure.TOOL_LIMIT);
+                    return true;
+                }
+                calls.add(item);
+            }
+        }
+        var outputs = new ArrayList<ToolExchange.Output>();
+        for (var call : calls) {
+            var callId = call.path("call_id").textValue();
+            if (attempt.toolCalls.claim(callId)) {
+                outputs.add(new ToolExchange.Output(callId, localTools.execute(call).toString()));
+            }
+        }
+        if (outputs.isEmpty()) {
+            return false;
+        }
+        if (turn.isVoice()) {
+            protocol.reconcileVoiceTranscript(turn, response);
+            if (turn.assistantAudio == null) {
+                turn.assistantAudio = new AssistantAudio();
+            }
+            turn.assistantAudio.completeFirstResponse(response, protocol);
+        } else {
+            turn.reconcile(protocol.terminalText(response));
+        }
+        turn.prepareToolFollowUp(new ToolExchange(turn.id, outputs, nanoTime.getAsLong()));
+        startDeadline(attempt, TOOL_OUTPUT_TIMEOUT, Failure.ITEM_ACK_TIMEOUT);
+        if (active == attempt) {
+            advanceTurn(attempt);
+            statusChanged.run();
+        }
+        return true;
     }
 
     private void finishVoiceResponse(Attempt attempt, ConversationTurn turn, JsonNode response,
@@ -1600,6 +1683,8 @@ public final class RealtimeSession implements AutoCloseable {
                         && "user".equals(item.path("role").textValue())) {
                     turn.itemAcknowledged = true;
                     advanceTurn(attempt);
+                } else if (turn.toolExchange != null && turn.toolExchange.acknowledge(item)) {
+                    advanceTurn(attempt);
                 }
             }
             case "response.created" -> {
@@ -1619,7 +1704,8 @@ public final class RealtimeSession implements AutoCloseable {
 
     private boolean matchesUnboundResponse(ConversationTurn turn, JsonNode response) {
         return turn.responseRequested && turn.responseId == null
-                && turn.id.equals(response.path("metadata").path(SessionProtocol.TURN_METADATA).textValue());
+                && turn.responseRequestKey().equals(
+                        response.path("metadata").path(SessionProtocol.TURN_METADATA).textValue());
     }
 
     private void turnError(Attempt attempt, JsonNode error) {
@@ -1627,7 +1713,7 @@ public final class RealtimeSession implements AutoCloseable {
         var eventId = error.path("event_id").textValue();
         if (eventId == null) {
             // Once a response is requested, the provider may still be generating. Reconnect before sending again.
-            if (turn.responseRequested) {
+            if (turn.responseRequested || turn.toolExchange != null) {
                 fail(attempt, Failure.PROVIDER);
             }
             return;
@@ -1635,7 +1721,11 @@ public final class RealtimeSession implements AutoCloseable {
         boolean itemRejected = !turn.itemAcknowledged && turn.itemEventId().equals(eventId);
         boolean responseRejected = turn.responseRequested && turn.responseId == null
                 && turn.responseEventId().equals(eventId);
-        if (itemRejected || responseRejected) {
+        if (turn.toolExchange != null && turn.toolExchange.rejectsPendingOutput(eventId)
+                || responseRejected && turn.followingTools) {
+            fail(attempt, Failure.PROVIDER);
+            return;
+        } else if (itemRejected || responseRejected) {
             finishTurn(attempt, TurnState.FAILED);
         } else if (turn.cancelSent && turn.cancelEventId().equals(eventId)) {
             if (attempt.interruption != null) {
@@ -1669,6 +1759,7 @@ public final class RealtimeSession implements AutoCloseable {
             if (attempt.output == null) {
                 attempt.turn.assistantAudio = null;
             }
+            attempt.turn.toolExchange = null;
             attempt.turn.finish(outcome);
             attempt.turn = null;
         }
@@ -1688,14 +1779,41 @@ public final class RealtimeSession implements AutoCloseable {
         if (!withinSessionTime(attempt)) {
             return;
         }
+        var exchange = turn.toolExchange;
+        if (exchange != null && exchange.expired(nanoTime.getAsLong(), TOOL_OUTPUT_TIMEOUT.toNanos())) {
+            fail(attempt, Failure.ITEM_ACK_TIMEOUT);
+            return;
+        }
         if (!turn.responseRequested && turn.state == TurnState.CANCELLING) {
+            // The write is done, but the provider can still reject an output it has not acknowledged.
+            if (exchange != null && exchange.awaitingAcknowledgment()) {
+                return;
+            }
             finishTurn(attempt, TurnState.CANCELLED);
             if (attempt.interruption != null) {
                 attempt.interruption.generationDone = true;
                 advanceInterruption(attempt);
+            } else {
+                advanceVadTurn(attempt);
             }
             statusChanged.run();
+        } else if (exchange != null && !exchange.complete()) {
+            var command = exchange.nextWrite(protocol);
+            if (command != null) {
+                writeTurnEvent(attempt, command);
+            }
         } else if (turn.itemAcknowledged && !turn.responseRequested) {
+            if (exchange != null) {
+                turn.toolExchange = null;
+                clearPhaseDeadline(attempt);
+            }
+            var output = attempt.output;
+            // Reserve the entire bounded queue for the follow-up. The line can finish playing its own buffer.
+            if (turn.followingTools && output != null
+                    && output.stream.waitForEmptyQueue(() -> Thread.ofVirtual().name("rvl-speaker-queue")
+                            .start(() -> playbackQueueEmpty(attempt, output)))) {
+                return;
+            }
             turn.responseRequested = true;
             // An unidentified response may still be running. Abort on timeout before allowing a new session.
             startDeadline(attempt, RESPONSE_CORRELATION_TIMEOUT, Failure.RESPONSE_TIMEOUT);
@@ -1817,7 +1935,7 @@ public final class RealtimeSession implements AutoCloseable {
         } else if (!acknowledged.boundedOutput() || update.requested.mode() == Mode.AUDIO && !acknowledged.pcmOutput()
                 || !transcriptionConfirmed(attempt.transcriptionModel, acknowledged.transcriptionModel())) {
             fail(attempt, Failure.PROTOCOL);
-        } else if (!acknowledged.matches(update.requested)) {
+        } else if (!acknowledged.matches(update.requested) || !acknowledged.toolsConfirmed()) {
             fail(attempt, Failure.SETTINGS_MISMATCH);
         } else {
             update.acknowledged = acknowledged;
@@ -1948,7 +2066,7 @@ public final class RealtimeSession implements AutoCloseable {
         private boolean cancelBeforeClose;
         private final Map<String, Long> audioBytes = new HashMap<>();
         private final LinkedHashSet<String> finishedResponses = new LinkedHashSet<>();
-        private int toolCalls;
+        private final ToolCallBudget toolCalls = new ToolCallBudget();
         private Failure closeFailure;
         private long settingsSequence;
         private SettingsUpdate settingUpdate;
