@@ -21,6 +21,8 @@ final class ConversationTurn {
     TurnState state = TurnState.WAITING;
     boolean itemAcknowledged;
     boolean responseRequested;
+    long responseRequestedAt;
+    boolean firstAudioReceived;
     boolean followingTools;
     ToolExchange toolExchange;
     int cancelRequests;

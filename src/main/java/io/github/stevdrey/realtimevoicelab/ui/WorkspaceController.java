@@ -1,9 +1,12 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
@@ -17,6 +20,8 @@ import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
 import io.github.stevdrey.realtimevoicelab.realtime.ToyWorkspace;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.value.ObservableBooleanValue;
@@ -41,6 +46,7 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
+import javafx.util.Duration;
 import javafx.util.StringConverter;
 
 public final class WorkspaceController {
@@ -65,6 +71,8 @@ public final class WorkspaceController {
     private final RealtimeSession session;
     private final Tooltip connectTooltip = new Tooltip();
     private final Tooltip micTooltip = new Tooltip();
+    private final Tooltip costTooltip = new Tooltip();
+    private final Timeline elapsedTimer = new Timeline(new KeyFrame(Duration.seconds(1), event -> renderElapsed()));
     private final Tooltip settingsTooltip = new Tooltip("Settings");
     private final AtomicBoolean renderPending = new AtomicBoolean();
     private final AtomicBoolean inspectorRenderPending = new AtomicBoolean();
@@ -141,6 +149,13 @@ public final class WorkspaceController {
     @FXML
     private EventInspectorController eventInspectorController;
 
+    @FXML private Label latencyValue;
+    @FXML private Label elapsedValue;
+    @FXML private VBox costMetric;
+    @FXML private Label costValue;
+    @FXML private Label costState;
+    @FXML private Label transcriptionCost;
+
     @FXML private Region toyPanel;
     @FXML private Region toySwatch;
     @FXML private Label toyColor;
@@ -154,6 +169,13 @@ public final class WorkspaceController {
 
     @FXML
     private void initialize() {
+        elapsedTimer.setCycleCount(Timeline.INDEFINITE);
+        costState.managedProperty().bind(costState.visibleProperty());
+        transcriptionCost.managedProperty().bind(transcriptionCost.visibleProperty());
+        Tooltip.install(costMetric, costTooltip);
+        var latencyHelp = "Time from sending a voice response request to receiving its first playable PCM chunk.";
+        latencyValue.setTooltip(new Tooltip(latencyHelp));
+        latencyValue.setAccessibleHelp(latencyHelp);
         modelSelector.getItems().setAll(Model.values());
         toyPanel.managedProperty().bind(toyPanel.visibleProperty());
         sessionProgress.managedProperty().bind(sessionProgress.visibleProperty());
@@ -370,6 +392,7 @@ public final class WorkspaceController {
             return;
         }
         disposed = true;
+        elapsedTimer.stop();
         if (settingsDialog != null) {
             settingsDialog.close();
         }
@@ -455,10 +478,92 @@ public final class WorkspaceController {
         boolean vad = settings.values().effectiveTurnDetection().automatic();
         renderAudio(workspace.microphone(), workspace.speaker(), mode, vad, settings.applying());
         renderConversation(workspace.turns(), mode, vad);
+        renderMetrics(workspace);
         toyPanel.setVisible(settings.values().toolPreset() == ToolPreset.TOY_WORKSPACE);
         if (toyPanel.isVisible()) {
             renderToy(workspace.toy());
         }
+    }
+
+    private void renderMetrics(RealtimeSession.Workspace workspace) {
+        var state = workspace.status().state();
+        if (state == RealtimeSession.State.CONNECTING || state == RealtimeSession.State.READY) {
+            elapsedTimer.play();
+        } else {
+            elapsedTimer.stop();
+        }
+        renderElapsed();
+        var latency = workspace.audioLatency();
+        setMetric(latencyValue, "Latency", latency == null ? null : latency.toMillis() + " ms");
+        renderCost(workspace.usage());
+    }
+
+    private void renderElapsed() {
+        var elapsed = session.elapsedTime();
+        var value = elapsed == null ? null
+                : String.format(Locale.ROOT, "%02d:%02d", elapsed.toMinutes(), elapsed.toSecondsPart());
+        setMetric(elapsedValue, "Session elapsed", value);
+    }
+
+    private void renderCost(RealtimeSession.UsageView usage) {
+        var details = new StringJoiner("\n");
+        details.add("Estimated Realtime response cost in USD. Actual charges may differ.");
+        var amount = usage == null ? null : usage.estimatedUsd();
+        setMetric(costValue, "Estimated Realtime response cost", amount == null ? null : formatUsd(amount));
+        String state = "";
+        boolean transcriptionUsed = usage != null && usage.transcriptionUsed();
+        if (usage != null) {
+            details.add("Session model: " + usage.model().id() + ".");
+            if (usage.pricingDate() != null) {
+                details.add("Rates dated " + usage.pricingDate() + ".");
+            } else {
+                details.add("Pricing unavailable for this model.");
+                state = "Pricing unavailable";
+            }
+            if (usage.missingUsage()) {
+                details.add("Some response usage was missing, incomplete or unpriceable.");
+                state = "Usage unavailable";
+            }
+            if (usage.pending()) {
+                details.add("Responses in flight may add charges as they report usage.");
+                state = "Pending usage";
+            } else if (amount == null && state.isEmpty()) {
+                details.add("Waiting for the first response to report usage.");
+            }
+            if (usage.transcriptionEnabled()) {
+                details.add("Input transcription is billed separately and excluded from this estimate.");
+            }
+            if (amount != null || usage.reportedInputTokens() > 0 || usage.reportedOutputTokens() > 0) {
+                details.add("Reported tokens: " + usage.reportedInputTokens() + " input ("
+                        + usage.reportedCachedTokens() + " cached), " + usage.reportedOutputTokens() + " output.");
+            }
+            if (usage.reportedReasoningTokens() != null) {
+                details.add("Reported reasoning tokens included in output: " + usage.reportedReasoningTokens() + ".");
+            }
+            for (var quota : usage.rateLimits()) {
+                details.add(String.format(Locale.ROOT, "Rate limit for %s: %d / %d remaining, resets in %.1f s.",
+                        quota.name(), quota.remaining(), quota.limit(), quota.resetSeconds()));
+            }
+        }
+        costState.setText(state);
+        costState.setVisible(!state.isEmpty());
+        transcriptionCost.setVisible(transcriptionUsed);
+        var explanation = details.toString();
+        costTooltip.setText(explanation);
+        costValue.setAccessibleHelp(explanation);
+    }
+
+    private String formatUsd(BigDecimal amount) {
+        var rounded = amount.setScale(6, RoundingMode.HALF_UP);
+        if (amount.signum() > 0 && rounded.signum() == 0) {
+            return "<$0.000001";
+        }
+        return rounded.signum() == 0 ? "$0.00" : "$" + rounded.toPlainString();
+    }
+
+    private void setMetric(Label label, String name, String value) {
+        label.setText(value == null ? "—" : value);
+        label.setAccessibleText(value == null ? name + " unavailable" : name + " " + value);
     }
 
     private void renderToy(ToyWorkspace toy) {
@@ -633,6 +738,9 @@ public final class WorkspaceController {
             case AUDIO_LIMIT -> "Audio turn limit reached";
             case OUTPUT_LIMIT -> "Response output limit reached";
             case TOOL_LIMIT -> "Session tool-call limit reached";
+            case SPEND_LIMIT -> "Estimated spend threshold reached";
+            case SPEND_ESTIMATE_UNAVAILABLE -> "Estimated spend unavailable. Session stopped.";
+            case SPEND_CONFIGURATION -> "Check the estimated spend limit and model pricing configuration.";
             case TRANSCRIPTION_CONFLICT -> "VAD needs Push to talk with gpt-realtime-whisper. Change turn detection or transcription.";
         };
     }

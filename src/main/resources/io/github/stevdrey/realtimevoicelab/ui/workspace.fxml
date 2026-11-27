@@ -110,15 +110,18 @@
             <HBox id="metrics" spacing="16" HBox.hgrow="ALWAYS">
                 <VBox spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
                     <Label text="Latency" styleClass="caption"/>
-                    <Label text="—" accessibleText="Latency unavailable" styleClass="metric-value"/>
+                    <Label fx:id="latencyValue" id="latency-value" text="—" styleClass="metric-value"/>
                 </VBox>
                 <VBox spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
                     <Label text="Session" styleClass="caption"/>
-                    <Label text="—" accessibleText="Session unavailable" styleClass="metric-value"/>
+                    <Label fx:id="elapsedValue" id="elapsed-value" text="—" styleClass="metric-value"/>
                 </VBox>
-                <VBox spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
+                <VBox fx:id="costMetric" spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
                     <Label text="Est. cost" styleClass="caption"/>
-                    <Label text="—" accessibleText="Est. cost unavailable" styleClass="metric-value"/>
+                    <Label fx:id="costValue" id="cost-value" text="—" styleClass="metric-value"/>
+                    <Label fx:id="costState" id="cost-state" styleClass="caption" wrapText="true" minWidth="0"/>
+                    <Label fx:id="transcriptionCost" id="transcription-cost" styleClass="caption"
+                           wrapText="true" minWidth="0" text="Transcription extra"/>
                 </VBox>
             </HBox>
         </HBox>

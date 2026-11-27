@@ -418,6 +418,8 @@ class RealtimeVoiceLabAppTest {
                 var metricsBounds = metrics.localToScene(metrics.getBoundsInLocal());
                 assertTrue(panelBounds.getMaxX() < metricsBounds.getMinX());
                 assertTrue(metricsBounds.getMaxX() <= scene.getWidth());
+                assertEquals("Pending usage", ((Label) scene.lookup("#cost-state")).getText());
+                assertTrue(scene.lookup("#cost-state").isVisible());
                 assertEquals(2, ((SplitPane) scene.lookup("#main-panels")).getItems().size());
                 assertTrue(speaker.devices.isEmpty());
                 return null;
@@ -610,6 +612,14 @@ class RealtimeVoiceLabAppTest {
                 assertFalse(device.wroteOnFxThread);
 
                 if (turn == 1) {
+                    onFxThread(() -> {
+                        var scene = stage.getScene();
+                        assertEquals("—", ((Label) scene.lookup("#cost-value")).getText());
+                        assertEquals("Pending usage", ((Label) scene.lookup("#cost-state")).getText());
+                        assertTrue(scene.lookup("#transcription-cost").isVisible());
+                        assertTrue(((Label) scene.lookup("#latency-value")).getText().matches("[0-9]+ ms"));
+                        return null;
+                    });
                     socket.text("""
                             {"type":"response.output_audio_transcript.delta","response_id":"reply-1","item_id":"assistant-1",
                             "output_index":0,"content_index":0,"delta":"Synthetic reply"}
@@ -620,16 +630,26 @@ class RealtimeVoiceLabAppTest {
                             "output_index":0,"content_index":0,"transcript":"Synthetic reply."}
                             """, true);
                     socket.text("""
-                            {"type":"response.done","response":{"id":"reply-1","status":"completed","output":[]}}
+                            {"type":"response.done","response":{"id":"reply-1","status":"completed","output":[],
+                             "usage":{"input_tokens":10,"output_tokens":20,
+                              "input_token_details":{"audio_tokens":10,"cached_tokens":0},
+                              "output_token_details":{"audio_tokens":20}}}}
                             """, true);
                     socket.text("""
                             {"type":"conversation.item.input_audio_transcription.completed","item_id":"input-1",
-                            "content_index":0,"transcript":"Synthetic question."}
+                            "content_index":0,"transcript":"Synthetic question.","usage":{"type":"duration","seconds":3}}
                             """, true);
                     onFxThread(() -> {
                         assertTrue(showsTurnText(stage, "You · Approximate transcript"));
                         assertTrue(showsTurnText(stage, "Synthetic question."));
                         assertTrue(showsTurnText(stage, "Synthetic reply."));
+                        var scene = stage.getScene();
+                        var cost = (Label) scene.lookup("#cost-value");
+                        assertEquals("$0.000500", cost.getText());
+                        assertFalse(scene.lookup("#cost-state").isVisible());
+                        assertTrue(scene.lookup("#transcription-cost").isVisible());
+                        assertTrue(cost.getAccessibleHelp().contains("billed separately"));
+                        assertTrue(cost.getAccessibleHelp().contains("Rates dated"));
                         var stop = (Button) stage.getScene().lookup("#cancel-text");
                         assertEquals("Stop playback", stop.getAccessibleText());
                         assertFalse(stop.isDisabled());
@@ -650,9 +670,15 @@ class RealtimeVoiceLabAppTest {
                             {"type":"conversation.item.input_audio_transcription.failed","item_id":"input-2",
                             "content_index":0,"error":{"message":"private synthetic detail"}}
                             """, true);
+                    socket.text("""
+                            {"type":"response.done","response":{"id":"reply-2","status":"failed","output":[]}}
+                            """, true);
                     onFxThread(() -> {
                         assertTrue(showsTurnText(stage, "Voice input · Transcription unavailable"));
                         assertFalse(showsTurnText(stage, "private synthetic detail"));
+                        assertEquals("—", ((Label) stage.getScene().lookup("#cost-value")).getText());
+                        assertEquals("Usage unavailable", ((Label) stage.getScene().lookup("#cost-state")).getText());
+                        assertTrue(stage.getScene().lookup("#transcription-cost").isVisible());
                         stage.close();
                         return null;
                     });

@@ -14,6 +14,8 @@ The default **Demo counter** tool preset offers a local calculation in text and 
 
 To try voice control, select **Toy workspace** under **Settings → Tool preset** before connecting. Ask to change the swatch to green, switch the toy panel to midnight, and add 3 to the counter. The panel shows each setting and supports a reset to indigo, slate, and 0. See [RVL-010](../../issues/16).
 
+The footer shows the latest voice response latency, elapsed session time and estimated Realtime response cost in USD. Hover over **Est. cost** for usage, pricing date, rate limits and exclusions. Input transcription is billed separately. A local pricing file and an optional estimated spend cutoff are documented in [Security and cost](docs/wiki/Security-and-Cost.md). See [RVL-012](../../issues/18).
+
 ## Goals
 - Inspect GA WebSocket events and learn the session lifecycle.
 - Talk to `gpt-realtime-2.1-mini` using text and push-to-talk audio.
