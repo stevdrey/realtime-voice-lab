@@ -1721,6 +1721,9 @@ public final class RealtimeSession implements AutoCloseable {
         boolean matchesTurn = turn != null && (id.equals(turn.responseId) || matchesRequest);
         if (settings.restrictedInterviewer()) {
             var blocked = restrictedToolFailure(attempt, id, response.path("output"));
+            if (blocked == null && attempt.toolCalls.hasUnmatchedSignal(id)) {
+                blocked = Failure.RESTRICTED_TOOL_CALL;
+            }
             if (blocked != null) {
                 if (matchesTurn) {
                     turn.replaceReplyWithLocalMessage(INTERVIEW_REDIRECT);

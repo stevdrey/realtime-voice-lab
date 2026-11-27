@@ -139,6 +139,28 @@ class RestrictedInterviewerTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"call-1", "invalid call id"})
+    void closesWhenTheTerminalResponseOmitsASignaledCall(String callId) throws Exception {
+        var socket = connectInterview();
+        requestResponse(socket, "start", "reply");
+        signal(socket, callId);
+        socket.text(completed("unrelated-reply").toString(), true);
+        assertEquals(State.READY, session.status().state());
+        assertEquals(0, socket.closeWrites);
+
+        socket.text(completed("reply").toString(), true);
+
+        assertEquals(State.CLOSING, session.status().state());
+        assertEquals(TurnState.BLOCKED, session.workspace().turns().getLast().state());
+        assertTrue(session.workspace().turns().getLast().output().contains("Return to the interview"));
+        assertFalse(session.sendText("start"));
+        assertEquals(3, socket.writes.size());
+        assertEquals(1, socket.closeWrites);
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        assertEquals(new RealtimeSession.Status(State.ERROR, Failure.RESTRICTED_TOOL_CALL), session.status());
+    }
+
+    @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void appliesTheSharedQuotaToSignalsAndTerminalCalls(boolean overQuota) throws Exception {
         var socket = connectInterview();
