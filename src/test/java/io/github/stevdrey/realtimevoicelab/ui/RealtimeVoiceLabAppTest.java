@@ -708,7 +708,7 @@ class RealtimeVoiceLabAppTest {
                     onFxThread(() -> {
                         assertTrue(showsTurnText(stage, "Voice input · Transcription unavailable"));
                         assertFalse(showsTurnText(stage, "private synthetic detail"));
-                        assertEquals("—", ((Label) stage.getScene().lookup("#cost-value")).getText());
+                        assertEquals("≥ $0.000500", ((Label) stage.getScene().lookup("#cost-value")).getText());
                         assertEquals("Usage unavailable", ((Label) stage.getScene().lookup("#cost-state")).getText());
                         assertTrue(stage.getScene().lookup("#transcription-cost").isVisible());
                         stage.close();

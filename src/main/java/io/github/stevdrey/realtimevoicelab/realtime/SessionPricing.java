@@ -24,6 +24,10 @@ record SessionPricing(Map<Model, Rates> models, BigDecimal cutoff, boolean inval
     }
 
     static SessionPricing load(String pricingFile, String limitUsd) {
+        // An exported but empty variable leaves the cutoff disabled.
+        if (limitUsd != null && limitUsd.isBlank()) {
+            limitUsd = null;
+        }
         var limit = decimal(limitUsd);
         boolean invalid = limitUsd != null && (limit == null || limit.signum() == 0);
         var rates = new EnumMap<Model, Rates>(Model.class);

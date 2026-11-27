@@ -539,9 +539,11 @@ public final class WorkspaceController {
     private void renderCost(RealtimeSession.UsageView usage) {
         var details = new StringJoiner("\n");
         var amount = usage == null ? null : usage.estimatedUsd();
-        var displayAmount = amount == null ? null : formatUsd(amount);
+        boolean lowerBound = amount != null && usage.missingUsage();
+        var displayAmount = amount == null ? null : (lowerBound ? "≥ " : "") + formatUsd(amount);
         details.add(displayAmount == null ? "Estimated Realtime response cost in USD."
-                : "Estimated Realtime response cost " + displayAmount + " USD.");
+                : "Estimated Realtime response cost " + (lowerBound ? "at least " + formatUsd(amount) : displayAmount)
+                        + " USD.");
         details.add("Actual charges may differ.");
         setMetric(costValue, "Estimated Realtime response cost", displayAmount);
         String state = "";
@@ -560,7 +562,9 @@ public final class WorkspaceController {
             }
             if (usage.pending()) {
                 details.add("Responses in flight may add charges as they report usage.");
-                state = "Pending usage";
+                if (state.isEmpty()) {
+                    state = "Pending usage";
+                }
             } else if (amount == null && state.isEmpty()) {
                 details.add("Waiting for the first response to report usage.");
             }

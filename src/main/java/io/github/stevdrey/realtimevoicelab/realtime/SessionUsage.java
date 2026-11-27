@@ -29,6 +29,7 @@ final class SessionUsage {
     private Long reasoningTokens;
     private String unboundRequestKey;
     private boolean missingUsage;
+    private boolean priced;
     private final boolean transcriptionEnabled;
     private boolean transcriptionUsed;
     private List<RateLimit> rateLimits = List.of();
@@ -97,6 +98,7 @@ final class SessionUsage {
         }
         if (rates != null) {
             estimate = estimate.add(rates.estimate(usage));
+            priced = true;
         }
         return true;
     }
@@ -174,7 +176,8 @@ final class SessionUsage {
     }
 
     UsageView view() {
-        var amount = finished.isEmpty() || missingUsage || rates == null ? null : estimate;
+        // With missing usage, the priced total is a lower bound.
+        var amount = priced ? estimate : null;
         return new UsageView(model, amount, rates == null ? null : rates.date(), inputTokens, outputTokens,
                 cachedTokens, reasoningTokens, hasPending(), missingUsage, transcriptionEnabled,
                 transcriptionUsed, rateLimits);

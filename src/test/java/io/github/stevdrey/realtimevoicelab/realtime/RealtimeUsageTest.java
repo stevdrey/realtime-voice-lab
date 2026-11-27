@@ -113,10 +113,11 @@ class RealtimeUsageTest {
         assertUsd("0.00132420");
         socket.text(responseDone("unknown", "completed", data), true);
         assertTrue(usage().missingUsage());
-        assertNull(usage().estimatedUsd());
+        assertUsd("0.00132420");
         assertEquals(State.READY, session.status().state());
         socket.text(responseDone("new-known", "completed", MIXED_USAGE), true);
-        assertNull(usage().estimatedUsd());
+        assertTrue(usage().missingUsage());
+        assertUsd("0.00264840");
         assertEquals(300, usage().reportedInputTokens());
     }
 
@@ -212,7 +213,7 @@ class RealtimeUsageTest {
         nanos.set(Duration.ofSeconds(3).toNanos());
         session.disconnect();
         socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
-        assertNull(usage().estimatedUsd());
+        assertUsd("0.00132420");
         assertTrue(usage().missingUsage());
         assertFalse(usage().pending());
         nanos.set(Duration.ofSeconds(5).toNanos());
@@ -341,6 +342,17 @@ class RealtimeUsageTest {
         assertEquals(State.CLOSING, session.status().state());
         socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
         assertEquals(Failure.SPEND_ESTIMATE_UNAVAILABLE, session.status().failure());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "  "})
+    void blankSpendLimitLeavesTheCutoffDisabled(String limit) {
+        var pricing = SessionPricing.load(null, limit);
+        assertNull(pricing.cutoff());
+        assertFalse(pricing.invalidCutoff());
+        createSession(null, limit);
+        session.connect(Model.MINI.id());
+        assertEquals(State.CONNECTING, session.status().state());
     }
 
     @Test
