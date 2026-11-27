@@ -58,6 +58,7 @@ import javafx.stage.Window;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -720,6 +721,50 @@ class RealtimeVoiceLabAppTest {
             assertTrue(socket.aborted);
         } finally {
             allowStop.complete(null);
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "1,    0, $0.0000006",
+            "1,    1, $0.00000006",
+            "2208, 0, $0.001324"
+    })
+    void displaysIncompleteUsageAsAConservativeLowerBound(int inputTokens, int cachedTokens,
+                                                          String expectedAmount) throws Exception {
+        var transport = new FakeTransport();
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport);
+                connectButton(stage).fire();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.ready();
+            socket.text("""
+                    {"type":"response.done","response":{"id":"priced","status":"completed","output":[],
+                     "usage":{"input_tokens":%1$d,"output_tokens":0,
+                      "input_token_details":{"text_tokens":%1$d,"cached_tokens":%2$d}}}}
+                    """.formatted(inputTokens, cachedTokens), true);
+            socket.text("""
+                    {"type":"response.done","response":{"id":"unpriced","status":"failed","usage":null,"output":[]}}
+                    """, true);
+            var help = onFxThread(() -> {
+                var scene = stage.getScene();
+                var cost = (Label) scene.lookup("#cost-value");
+                assertEquals("≥ " + expectedAmount, cost.getText());
+                assertEquals("Estimated Realtime response cost ≥ " + expectedAmount, cost.getAccessibleText());
+                assertTrue(cost.getAccessibleHelp().contains("at least " + expectedAmount + " USD."));
+                assertEquals("Usage unavailable", ((Label) scene.lookup("#cost-state")).getText());
+                return cost.getAccessibleHelp();
+            });
+            assertHoveredTooltip(stage, "#cost-value", help);
+        } finally {
             onFxThread(() -> {
                 stage.close();
                 return null;

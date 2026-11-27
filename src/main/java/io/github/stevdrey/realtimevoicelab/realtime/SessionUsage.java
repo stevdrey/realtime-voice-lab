@@ -155,12 +155,13 @@ final class SessionUsage {
 
     private List<RateLimit> readRateLimits(JsonNode limits) {
         var result = new ArrayList<RateLimit>(2);
+        var seenNames = new HashSet<String>();
         for (var entry : limits) {
             var name = entry.path("name").textValue();
             if (!"requests".equals(name) && !"tokens".equals(name)) {
                 continue;
             }
-            if (result.stream().anyMatch(limit -> limit.name().equals(name))) {
+            if (!seenNames.add(name)) {
                 return List.of();
             }
             long limit = ResponseUsage.count(entry, "limit");

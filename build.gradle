@@ -36,7 +36,10 @@ dependencies {
 
 tasks.named('test', Test) {
     useJUnitPlatform()
+    // Keep headless rendering independent of the developer's desktop and graphics driver.
     systemProperty 'glass.platform', 'Headless'
+    systemProperty 'prism.order', 'sw'
+    ['DISPLAY', 'WAYLAND_DISPLAY'].each { environment.remove(it) }
     // Desktop tests use synthetic sessions and bundled rates.
     ['OPENAI_API_KEY', 'RVL_PRICING_FILE', 'RVL_ESTIMATED_SPEND_LIMIT_USD'].each { environment.remove(it) }
 

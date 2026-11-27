@@ -540,10 +540,10 @@ public final class WorkspaceController {
         var details = new StringJoiner("\n");
         var amount = usage == null ? null : usage.estimatedUsd();
         boolean lowerBound = amount != null && usage.missingUsage();
-        var displayAmount = amount == null ? null : (lowerBound ? "≥ " : "") + formatUsd(amount);
-        details.add(displayAmount == null ? "Estimated Realtime response cost in USD."
-                : "Estimated Realtime response cost " + (lowerBound ? "at least " + formatUsd(amount) : displayAmount)
-                        + " USD.");
+        var formattedAmount = amount == null ? null : formatUsd(amount, lowerBound);
+        var displayAmount = lowerBound ? "≥ " + formattedAmount : formattedAmount;
+        details.add(formattedAmount == null ? "Estimated Realtime response cost in USD."
+                : "Estimated Realtime response cost " + (lowerBound ? "at least " : "") + formattedAmount + " USD.");
         details.add("Actual charges may differ.");
         setMetric(costValue, "Estimated Realtime response cost", displayAmount);
         String state = "";
@@ -591,10 +591,10 @@ public final class WorkspaceController {
         costValue.setAccessibleHelp(explanation);
     }
 
-    private String formatUsd(BigDecimal amount) {
-        var rounded = amount.setScale(6, RoundingMode.HALF_UP);
+    private String formatUsd(BigDecimal amount, boolean lowerBound) {
+        var rounded = amount.setScale(6, lowerBound ? RoundingMode.DOWN : RoundingMode.HALF_UP);
         if (amount.signum() > 0 && rounded.signum() == 0) {
-            return "<$0.000001";
+            return lowerBound ? "$" + amount.stripTrailingZeros().toPlainString() : "<$0.000001";
         }
         return rounded.signum() == 0 ? "$0.00" : "$" + rounded.toPlainString();
     }

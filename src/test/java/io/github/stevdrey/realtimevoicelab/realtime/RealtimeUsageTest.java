@@ -170,6 +170,32 @@ class RealtimeUsageTest {
     }
 
     @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void rejectsDuplicateQuotaNamesRegardlessOfWhichEntryIsInvalid(boolean invalidFirst) {
+        var socket = connect(null, null);
+        socket.text("""
+                {"type":"rate_limits.updated","event_id":"initial","rate_limits":[
+                  {"name":"requests","limit":10,"remaining":9,"reset_seconds":15},
+                  {"name":"tokens","limit":1000,"remaining":800,"reset_seconds":15}]}
+                """, true);
+        socket.text("""
+                {"type":"rate_limits.updated","event_id":"duplicate","rate_limits":[
+                  {"name":"tokens","limit":1000,"remaining":%d,"reset_seconds":1},
+                  {"name":"tokens","limit":1000,"remaining":%d,"reset_seconds":1}]}
+                """.formatted(invalidFirst ? 1100 : 600, invalidFirst ? 600 : 1100), true);
+        assertEquals(List.of(new RateLimit("requests", 10, 9, 15), new RateLimit("tokens", 1000, 800, 15)),
+                usage().rateLimits());
+
+        socket.text("""
+                {"type":"rate_limits.updated","event_id":"distinct","rate_limits":[
+                  {"name":"requests","limit":10,"remaining":8,"reset_seconds":2},
+                  {"name":"tokens","limit":1000,"remaining":600,"reset_seconds":2}]}
+                """, true);
+        assertEquals(List.of(new RateLimit("requests", 10, 8, 2), new RateLimit("tokens", 1000, 600, 2)),
+                usage().rateLimits());
+    }
+
+    @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void keepsCompletedTerminalTextWhenTheCutoffEndsTheSession(boolean usageAvailable) {
         var socket = connect(null, "0.00165525");
