@@ -371,6 +371,9 @@ class RealtimeVoiceLabAppTest {
                     """, true);
             socket.text("""
                     {"type":"response.done","response":{"id":"toy-response","status":"completed",
+                     "usage":{"input_tokens":10,"output_tokens":20,
+                              "input_token_details":{"audio_tokens":10,"cached_tokens":0},
+                              "output_token_details":{"text_tokens":20}},
                      "metadata":{"rvl_turn":"rvl-1"},"output":[
                       {"type":"function_call","status":"completed","call_id":"color","name":"changeColor",
                        "arguments":"{\\"color\\":\\"green\\"}"},
@@ -418,6 +421,11 @@ class RealtimeVoiceLabAppTest {
                 var metricsBounds = metrics.localToScene(metrics.getBoundsInLocal());
                 assertTrue(panelBounds.getMaxX() < metricsBounds.getMinX());
                 assertTrue(metricsBounds.getMaxX() <= scene.getWidth());
+                var cost = (Label) scene.lookup("#cost-value");
+                assertEquals("$0.000148", cost.getText());
+                assertTrue(cost.getAccessibleHelp().contains("$0.000148 USD"));
+                assertTrue(cost.getWidth() + 1 >= cost.prefWidth(-1),
+                        () -> "Estimated cost is clipped: width=" + cost.getWidth() + ", preferred=" + cost.prefWidth(-1));
                 assertEquals("Pending usage", ((Label) scene.lookup("#cost-state")).getText());
                 assertTrue(scene.lookup("#cost-state").isVisible());
                 assertEquals(2, ((SplitPane) scene.lookup("#main-panels")).getItems().size());
@@ -639,6 +647,10 @@ class RealtimeVoiceLabAppTest {
                             {"type":"conversation.item.input_audio_transcription.completed","item_id":"input-1",
                             "content_index":0,"transcript":"Synthetic question.","usage":{"type":"duration","seconds":3}}
                             """, true);
+                    socket.text("""
+                            {"type":"rate_limits.updated","event_id":"quota-1","rate_limits":[
+                              {"name":"tokens","limit":1000,"remaining":850,"reset_seconds":12.5}]}
+                            """, true);
                     onFxThread(() -> {
                         assertTrue(showsTurnText(stage, "You · Approximate transcript"));
                         assertTrue(showsTurnText(stage, "Synthetic question."));
@@ -650,6 +662,7 @@ class RealtimeVoiceLabAppTest {
                         assertTrue(scene.lookup("#transcription-cost").isVisible());
                         assertTrue(cost.getAccessibleHelp().contains("billed separately"));
                         assertTrue(cost.getAccessibleHelp().contains("Rates dated"));
+                        assertTrue(cost.getAccessibleHelp().contains("Reset delay at update: 12.5 s."));
                         var stop = (Button) stage.getScene().lookup("#cancel-text");
                         assertEquals("Stop playback", stop.getAccessibleText());
                         assertFalse(stop.isDisabled());

@@ -15,11 +15,13 @@ import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
 final class SessionUsage {
     // Keep IDs for the entire session so a replay cannot become billable after history eviction.
     private static final int MAX_TRACKED_RESPONSES = 4096;
+    private static final int MAX_TRACKED_RATE_UPDATES = 8192;
 
     private final Model model;
     private final SessionPricing.Rates rates;
     private final Set<String> pending = new HashSet<>();
     private final Set<String> finished = new HashSet<>();
+    private final Set<String> rateUpdateIds = new HashSet<>();
     private BigDecimal estimate = BigDecimal.ZERO;
     private long inputTokens;
     private long outputTokens;
@@ -123,7 +125,14 @@ final class SessionUsage {
         return true;
     }
 
-    void updateRateLimits(JsonNode limits) {
+    void updateRateLimits(String eventId, JsonNode limits) {
+        if (rateUpdateIds.size() == MAX_TRACKED_RATE_UPDATES) {
+            return;
+        }
+        if (eventId != null && eventId.length() <= SessionProtocol.MAX_ID_CHARS && !eventId.isBlank()
+                && !rateUpdateIds.add(eventId)) {
+            return;
+        }
         // Retain one snapshot of documented quotas. Reserved quota is independent of reported usage.
         rateLimits = limits.isArray() ? readRateLimits(limits) : List.of();
     }

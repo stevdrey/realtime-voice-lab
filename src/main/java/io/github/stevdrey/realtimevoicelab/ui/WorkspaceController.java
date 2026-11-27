@@ -507,9 +507,12 @@ public final class WorkspaceController {
 
     private void renderCost(RealtimeSession.UsageView usage) {
         var details = new StringJoiner("\n");
-        details.add("Estimated Realtime response cost in USD. Actual charges may differ.");
         var amount = usage == null ? null : usage.estimatedUsd();
-        setMetric(costValue, "Estimated Realtime response cost", amount == null ? null : formatUsd(amount));
+        var displayAmount = amount == null ? null : formatUsd(amount);
+        details.add(displayAmount == null ? "Estimated Realtime response cost in USD."
+                : "Estimated Realtime response cost " + displayAmount + " USD.");
+        details.add("Actual charges may differ.");
+        setMetric(costValue, "Estimated Realtime response cost", displayAmount);
         String state = "";
         boolean transcriptionUsed = usage != null && usage.transcriptionUsed();
         if (usage != null) {
@@ -541,7 +544,7 @@ public final class WorkspaceController {
                 details.add("Reported reasoning tokens included in output: " + usage.reportedReasoningTokens() + ".");
             }
             for (var quota : usage.rateLimits()) {
-                details.add(String.format(Locale.ROOT, "Rate limit for %s: %d / %d remaining, resets in %.1f s.",
+                details.add(String.format(Locale.ROOT, "Reported %s quota: %d / %d remaining. Reset delay at update: %.1f s.",
                         quota.name(), quota.remaining(), quota.limit(), quota.resetSeconds()));
             }
         }

@@ -16,6 +16,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.Failure;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.RateLimit;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.State;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
+import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TurnState;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
 
 import org.junit.jupiter.api.AfterEach;
@@ -122,23 +123,46 @@ class RealtimeUsageTest {
     @Test
     void readsRateLimitsSeparatelyAndIgnoresUnsupportedOrMalformedQuotas() {
         var socket = connect(null, null);
-        socket.text("""
-                {"type":"rate_limits.updated","rate_limits":[
+        var initial = """
+                {"type":"rate_limits.updated","event_id":"quota-1","rate_limits":[
                  {"name":"requests","limit":10,"remaining":9,"reset_seconds":5.25},
                  {"name":"tokens","limit":1000,"remaining":500,"reset_seconds":0},
                  {"name":"unknown","limit":1,"remaining":0,"reset_seconds":2}]}
-                """, true);
+                """;
+        socket.text(initial, true);
         assertEquals(List.of(new RateLimit("requests", 10, 9, 5.25), new RateLimit("tokens", 1000, 500, 0)),
                 usage().rateLimits());
         assertNull(usage().estimatedUsd());
         socket.text(responseDone("r", "completed", MIXED_USAGE), true);
         socket.text("""
-                {"type":"rate_limits.updated","rate_limits":[
+                {"type":"rate_limits.updated","event_id":"quota-2","rate_limits":[
                  {"name":"tokens","limit":1000,"remaining":850,"reset_seconds":0.5},
                  {"name":"requests","limit":10,"remaining":11,"reset_seconds":-1}]}
                 """, true);
+        socket.text(initial, true);
         assertEquals(List.of(new RateLimit("tokens", 1000, 850, 0.5)), usage().rateLimits());
         assertUsd("0.00132420");
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void keepsCompletedTerminalTextWhenTheCutoffEndsTheSession(boolean usageAvailable) {
+        var socket = connect(null, "0.00165525");
+        assertTrue(session.sendText("Synthetic question"));
+        acknowledgeTurn(socket, 1);
+        socket.text("""
+                {"type":"response.done","response":{"id":"terminal","status":"completed",
+                 "metadata":{"rvl_turn":"rvl-1"},"usage":%s,
+                 "output":[{"type":"message","role":"assistant",
+                            "content":[{"type":"output_text","text":"Synthetic terminal answer."}]}]}}
+                """.formatted(usageAvailable ? MIXED_USAGE : "null"), true);
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+
+        assertEquals(usageAvailable ? Failure.SPEND_LIMIT : Failure.SPEND_ESTIMATE_UNAVAILABLE,
+                session.status().failure());
+        var turn = session.workspace().turns().getLast();
+        assertEquals("Synthetic terminal answer.", turn.output());
+        assertEquals(TurnState.COMPLETED, turn.state());
     }
 
     @Test

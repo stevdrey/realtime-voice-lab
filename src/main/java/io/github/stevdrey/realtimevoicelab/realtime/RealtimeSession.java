@@ -1188,7 +1188,7 @@ public final class RealtimeSession implements AutoCloseable {
             }
             case "rate_limits.updated" -> {
                 if (status.state() == State.READY) {
-                    attempt.usage.updateRateLimits(protocol.textEvent(message).path("rate_limits"));
+                    attempt.usage.updateRateLimits(event.eventId(), protocol.textEvent(message).path("rate_limits"));
                     statusChanged.run();
                 }
             }
@@ -1665,26 +1665,18 @@ public final class RealtimeSession implements AutoCloseable {
         }
         attempt.audioBytes.remove(id);
         var outcome = response.path("status").asText();
-        boolean outputLimit = "incomplete".equals(outcome)
-                && "max_output_tokens".equals(response.path("status_details").path("reason").textValue());
+        boolean completed = "completed".equals(outcome);
+        var limit = responseLimit(attempt, response, outcome);
         boolean matchesTurn = turn != null && (id.equals(turn.responseId) || matchesRequest);
-        if (!outputLimit && pricing.cutoff() != null && attempt.usage.missingUsage()) {
-            stopAtLimit(attempt, Failure.SPEND_ESTIMATE_UNAVAILABLE);
-            return;
-        }
-        if (!outputLimit && attempt.usage.reachedCutoff(pricing.cutoff())) {
-            stopAtLimit(attempt, Failure.SPEND_LIMIT);
-            return;
-        }
         if (matchesTurn) {
-            if ("completed".equals(outcome) && attempt.interruption == null
+            if (limit == null && completed && attempt.interruption == null
                     && (turn.state == TurnState.WAITING || turn.state == TurnState.RESPONDING)
                     && prepareToolFollowUp(attempt, turn, id, response)) {
                 return;
             }
             // The terminal output is what the provider keeps, including text generated before a cancel applied.
             if (turn.isVoice()) {
-                finishVoiceResponse(attempt, turn, response, "completed".equals(outcome), outputLimit);
+                finishVoiceResponse(attempt, turn, response, completed, limit != null);
             } else {
                 turn.reconcile(protocol.terminalText(response));
             }
@@ -1695,13 +1687,26 @@ public final class RealtimeSession implements AutoCloseable {
                 default -> TurnState.FAILED;
             });
         }
-        if (outputLimit) {
-            stopAtLimit(attempt, Failure.OUTPUT_LIMIT);
-        } else if (matchesTurn) {
+        if (limit != null) {
+            stopAtLimit(attempt, limit);
+            return;
+        }
+        if (matchesTurn) {
             advanceInterruption(attempt);
             advanceVadTurn(attempt);
         }
         statusChanged.run();
+    }
+
+    private Failure responseLimit(Attempt attempt, JsonNode response, String outcome) {
+        if ("incomplete".equals(outcome)
+                && "max_output_tokens".equals(response.path("status_details").path("reason").textValue())) {
+            return Failure.OUTPUT_LIMIT;
+        }
+        if (pricing.cutoff() != null && attempt.usage.missingUsage()) {
+            return Failure.SPEND_ESTIMATE_UNAVAILABLE;
+        }
+        return attempt.usage.reachedCutoff(pricing.cutoff()) ? Failure.SPEND_LIMIT : null;
     }
 
     private boolean prepareToolFollowUp(Attempt attempt, ConversationTurn turn, String responseId,
@@ -1789,7 +1794,7 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private void finishVoiceResponse(Attempt attempt, ConversationTurn turn, JsonNode response,
-                                     boolean completed, boolean outputLimit) throws IOException {
+                                     boolean completed, boolean closingAtLimit) throws IOException {
         var interruption = attempt.interruption;
         if (interruption != null && interruption.turn == turn) {
             interruption.audio.reconcile(response, protocol);
@@ -1798,7 +1803,7 @@ public final class RealtimeSession implements AutoCloseable {
         }
         protocol.reconcileVoiceTranscript(turn, response);
         var output = attempt.output;
-        if (!completed && !outputLimit) {
+        if (!completed && !closingAtLimit) {
             if (turn.assistantAudio == null) {
                 turn.assistantAudio = new AssistantAudio();
             }
