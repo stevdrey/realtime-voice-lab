@@ -15,6 +15,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.Failure;
@@ -234,22 +235,87 @@ class RealtimeToolCallingTest {
         assertTrue(session.workspace().canSend());
     }
 
-    @Test
-    void cancellingWhileAnOutputIsInFlightDropsTheUnsentOutputsAndFollowUp() throws Exception {
+    @ParameterizedTest
+    @CsvSource({"true, false", "false, false", "false, true"})
+    void waitsForInFlightToolOutputAfterCancellation(boolean writeBeforeCancel, boolean acknowledgeBeforeWrite)
+            throws Exception {
         var key = startTurn("reply");
         var blockedWrite = new CompletableFuture<WebSocket>();
         socket.nextTurnWrite = blockedWrite;
         socket.text(done("reply", "completed", key, call("a", COUNTER, ARGUMENTS), call("b", COUNTER, ARGUMENTS)), true);
         var output = lastWrite();
         int writes = socket.writes.size();
+        if (writeBeforeCancel) {
+            blockedWrite.complete(socket);
+        }
         session.cancelTurn();
         assertFalse(session.workspace().canSend());
-        acknowledge(output);
-        blockedWrite.complete(socket);
+        ObjectNode unrelated = output.path("item").deepCopy();
+        unrelated.put("call_id", "b");
+        socket.text(added(unrelated), true);
+        assertFalse(session.sendText("Another turn before settlement"));
+        if (acknowledgeBeforeWrite) {
+            acknowledge(output);
+            assertFalse(session.workspace().canSend());
+            blockedWrite.complete(socket);
+        } else {
+            blockedWrite.complete(socket);
+            assertFalse(session.workspace().canSend());
+            acknowledge(output);
+        }
         acknowledge(output);
         assertEquals(writes, socket.writes.size());
         assertEquals(TurnState.CANCELLED, session.workspace().turns().getFirst().state());
         assertTrue(session.workspace().canSend());
+    }
+
+    @Test
+    void rejectsLateToolOutputErrorAfterCancellation() throws Exception {
+        var key = startTurn("reply");
+        socket.text(done("reply", "completed", key, call("rejected", COUNTER, ARGUMENTS)), true);
+        var output = lastWrite();
+        int writes = socket.writes.size();
+        session.cancelTurn();
+        rejectOutput(output);
+        assertFailure(Failure.PROVIDER);
+        acknowledge(output);
+        assertEquals(writes, socket.writes.size());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void timesOutUnacknowledgedToolOutputAfterCancellation(boolean deliverTimer) throws Exception {
+        var key = startTurn("reply");
+        socket.text(done("reply", "completed", key, call("timeout", COUNTER, ARGUMENTS)), true);
+        var output = lastWrite();
+        var deadline = latestDeadline;
+        int writes = socket.writes.size();
+        session.cancelTurn();
+        assertSame(deadline, latestDeadline);
+        if (deliverTimer) {
+            deadline.completeExceptionally(new TimeoutException());
+        } else {
+            now.addAndGet(RealtimeSession.TOOL_OUTPUT_TIMEOUT.toNanos());
+            acknowledge(output);
+        }
+        assertFailure(Failure.ITEM_ACK_TIMEOUT);
+        assertEquals(writes, socket.writes.size());
+    }
+
+    @Test
+    void failsACancelledTurnIfTheAcknowledgedToolOutputWriteFails() throws Exception {
+        var key = startTurn("reply");
+        var blockedWrite = new CompletableFuture<WebSocket>();
+        socket.nextTurnWrite = blockedWrite;
+        socket.text(done("reply", "completed", key, call("failed", COUNTER, ARGUMENTS)), true);
+        var output = lastWrite();
+        int writes = socket.writes.size();
+        session.cancelTurn();
+        acknowledge(output);
+        assertFalse(session.workspace().canSend());
+        blockedWrite.completeExceptionally(new IOException("synthetic private detail"));
+        assertFailure(Failure.CONNECTION);
+        assertEquals(writes, socket.writes.size());
     }
 
     @Test
@@ -290,10 +356,7 @@ class RealtimeToolCallingTest {
         var key = startTurn("reply");
         socket.text(done("reply", "completed", key, call("rejected", COUNTER, ARGUMENTS)), true);
         var output = lastWrite();
-        var error = json.createObjectNode().put("type", "error");
-        error.putObject("error").put("event_id", output.path("event_id").textValue())
-                .put("message", "synthetic private detail");
-        socket.text(error.toString(), true);
+        rejectOutput(output);
         assertFailure(Failure.PROVIDER);
         int writes = socket.writes.size();
         acknowledge(output);
@@ -403,6 +466,13 @@ class RealtimeToolCallingTest {
 
     private void acknowledge(JsonNode command) {
         socket.text(added(command.path("item")), true);
+    }
+
+    private void rejectOutput(JsonNode command) {
+        var error = json.createObjectNode().put("type", "error");
+        error.putObject("error").put("event_id", command.path("event_id").textValue())
+                .put("message", "synthetic private detail");
+        socket.text(error.toString(), true);
     }
 
     private String added(JsonNode item) {

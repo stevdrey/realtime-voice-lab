@@ -22,12 +22,16 @@ final class ToolExchange {
         return acknowledged == outputs.size();
     }
 
+    boolean awaitingAcknowledgment() {
+        return sent != acknowledged;
+    }
+
     boolean expired(long now, long limit) {
         return now - startedAt >= limit;
     }
 
     SessionProtocol.Command nextWrite(SessionProtocol protocol) {
-        if (sent != acknowledged || complete()) {
+        if (awaitingAcknowledgment() || complete()) {
             return null;
         }
         var output = outputs.get(sent++);
@@ -35,7 +39,7 @@ final class ToolExchange {
     }
 
     boolean acknowledge(JsonNode item) {
-        if (sent == acknowledged || !itemId(sent).equals(item.path("id").textValue())
+        if (!awaitingAcknowledgment() || !itemId(sent).equals(item.path("id").textValue())
                 || !"function_call_output".equals(item.path("type").textValue())
                 || !outputs.get(sent - 1).callId().equals(item.path("call_id").textValue())) {
             return false;
@@ -44,8 +48,8 @@ final class ToolExchange {
         return true;
     }
 
-    boolean rejectsPendingWrite(String eventId) {
-        return sent != acknowledged && eventId(sent).equals(eventId);
+    boolean rejectsPendingOutput(String eventId) {
+        return awaitingAcknowledgment() && eventId(sent).equals(eventId);
     }
 
     private String eventId(int index) {

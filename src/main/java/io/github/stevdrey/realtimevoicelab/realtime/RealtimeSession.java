@@ -1310,7 +1310,10 @@ public final class RealtimeSession implements AutoCloseable {
         turn.discardAudioTranscript();
         turn.state = turnPending ? TurnState.CANCELLING : TurnState.INTERRUPTED;
         stopVoiceOutput(attempt, turn, output, generating);
-        startDeadline(attempt, CANCEL_TIMEOUT, Failure.CANCEL_TIMEOUT);
+        // The tool deadline still applies while an output write or acknowledgment is outstanding.
+        if (turn.toolExchange == null) {
+            startDeadline(attempt, CANCEL_TIMEOUT, Failure.CANCEL_TIMEOUT);
+        }
         if (active == attempt) {
             if (turnPending) {
                 advanceTurn(attempt);
@@ -1330,7 +1333,8 @@ public final class RealtimeSession implements AutoCloseable {
     private void advanceInterruption(Attempt attempt) {
         var interruption = attempt.interruption;
         if (status.state() != State.READY || interruption == null || attempt.writing || !interruption.generationDone
-                || interruption.pending != null || !withinSessionTime(attempt)) {
+                || interruption.turn.toolExchange != null || interruption.pending != null
+                || !withinSessionTime(attempt)) {
             return;
         }
         if (interruption.output != null && interruption.output == playbackWorker) {
@@ -1717,7 +1721,7 @@ public final class RealtimeSession implements AutoCloseable {
         boolean itemRejected = !turn.itemAcknowledged && turn.itemEventId().equals(eventId);
         boolean responseRejected = turn.responseRequested && turn.responseId == null
                 && turn.responseEventId().equals(eventId);
-        if (turn.toolExchange != null && turn.toolExchange.rejectsPendingWrite(eventId)
+        if (turn.toolExchange != null && turn.toolExchange.rejectsPendingOutput(eventId)
                 || responseRejected && turn.followingTools) {
             fail(attempt, Failure.PROVIDER);
             return;
@@ -1775,24 +1779,31 @@ public final class RealtimeSession implements AutoCloseable {
         if (!withinSessionTime(attempt)) {
             return;
         }
-        if (turn.toolExchange != null && turn.toolExchange.expired(nanoTime.getAsLong(), TOOL_OUTPUT_TIMEOUT.toNanos())) {
+        var exchange = turn.toolExchange;
+        if (exchange != null && exchange.expired(nanoTime.getAsLong(), TOOL_OUTPUT_TIMEOUT.toNanos())) {
             fail(attempt, Failure.ITEM_ACK_TIMEOUT);
             return;
         }
         if (!turn.responseRequested && turn.state == TurnState.CANCELLING) {
+            // The write is done, but the provider can still reject an output it has not acknowledged.
+            if (exchange != null && exchange.awaitingAcknowledgment()) {
+                return;
+            }
             finishTurn(attempt, TurnState.CANCELLED);
             if (attempt.interruption != null) {
                 attempt.interruption.generationDone = true;
                 advanceInterruption(attempt);
+            } else {
+                advanceVadTurn(attempt);
             }
             statusChanged.run();
-        } else if (turn.toolExchange != null && !turn.toolExchange.complete()) {
-            var command = turn.toolExchange.nextWrite(protocol);
+        } else if (exchange != null && !exchange.complete()) {
+            var command = exchange.nextWrite(protocol);
             if (command != null) {
                 writeTurnEvent(attempt, command);
             }
         } else if (turn.itemAcknowledged && !turn.responseRequested) {
-            if (turn.toolExchange != null) {
+            if (exchange != null) {
                 turn.toolExchange = null;
                 clearPhaseDeadline(attempt);
             }
