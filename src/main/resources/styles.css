@@ -40,6 +40,31 @@
     -fx-spacing: 12;
 }
 
+.toy-workspace {
+    -fx-background-color: -rv-panel;
+    -fx-background-radius: 8;
+    -fx-border-color: -rv-divider;
+    -fx-border-radius: 8;
+    -fx-padding: 8 12;
+}
+
+.toy-workspace:midnight {
+    -fx-background-color: #0f172a;
+    -fx-border-color: -rv-accent;
+}
+
+.toy-swatch {
+    -fx-background-color: -rv-accent;
+    -fx-background-radius: 999;
+    -fx-min-width: 14;
+    -fx-min-height: 14;
+    -fx-max-height: 14;
+}
+
+.toy-swatch:blue { -fx-background-color: -rv-outgoing; }
+.toy-swatch:green { -fx-background-color: -rv-success; }
+.toy-swatch:amber { -fx-background-color: #fbbf24; }
+
 .label {
     -fx-text-fill: -rv-text;
 }
@@ -368,7 +393,7 @@
     -fx-stroke: -rv-muted;
 }
 
-.metrics {
+.workspace-footer {
     -fx-border-color: -rv-divider transparent transparent transparent;
     -fx-padding: 8 0 0 0;
 }

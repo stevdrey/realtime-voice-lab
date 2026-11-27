@@ -10,7 +10,9 @@ Open **Settings** to choose a model, voice and mode or edit instructions from th
 
 In Audio mode, **Turn detection** offers **Push to talk**, **Server VAD** and **Semantic VAD**. Push to talk is the default. In either VAD mode, click the microphone to start a listening window of up to 30 seconds. Speaking during an assistant reply interrupts playback. The input and output work best with headphones. See [RVL-008](../../issues/14).
 
-The Realtime session offers a local demo counter function in text and audio turns. Ask it to use the demo counter with a current value of 40 and a change of 2. It calculates the next value without changing the workspace. See [RVL-009](../../issues/15).
+The default **Demo counter** tool preset offers a local calculation in text and audio turns. Ask it to use the demo counter with a current value of 40 and a change of 2. It calculates the next value without changing the workspace. See [RVL-009](../../issues/15).
+
+To try voice control, select **Toy workspace** under **Settings → Tool preset** before connecting. Ask to change the swatch to green, switch the toy panel to midnight, and add 3 to the counter. The panel shows each setting and supports a reset to indigo, slate, and 0. See [RVL-010](../../issues/16).
 
 ## Goals
 - Inspect GA WebSocket events and learn the session lifecycle.

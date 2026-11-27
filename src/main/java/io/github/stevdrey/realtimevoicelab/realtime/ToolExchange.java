@@ -6,20 +6,23 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 /** Tracks the ordered output writes and their server acknowledgments for one response. */
 final class ToolExchange {
-    private final List<Output> outputs;
+    private List<Output> outputs;
     private final String turnId;
     private final long startedAt;
     private int sent;
     private int acknowledged;
 
-    ToolExchange(String turnId, List<Output> outputs, long startedAt) {
+    ToolExchange(String turnId, long startedAt) {
         this.turnId = turnId;
-        this.outputs = List.copyOf(outputs);
         this.startedAt = startedAt;
     }
 
+    void completeExecution(List<Output> results) {
+        outputs = List.copyOf(results);
+    }
+
     boolean complete() {
-        return acknowledged == outputs.size();
+        return outputs != null && acknowledged == outputs.size();
     }
 
     boolean awaitingAcknowledgment() {
@@ -31,7 +34,7 @@ final class ToolExchange {
     }
 
     SessionProtocol.Command nextWrite(SessionProtocol protocol) {
-        if (awaitingAcknowledgment() || complete()) {
+        if (outputs == null || awaitingAcknowledgment() || complete()) {
             return null;
         }
         var output = outputs.get(sent++);

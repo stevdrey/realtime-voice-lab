@@ -98,19 +98,29 @@
             <Label fx:id="micStatus" id="mic-status" styleClass="caption" minHeight="18" wrapText="true"/>
         </VBox>
 
-        <HBox id="metrics" spacing="16" styleClass="metrics">
-            <VBox spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
-                <Label text="Latency" styleClass="caption"/>
-                <Label text="—" accessibleText="Latency unavailable" styleClass="metric-value"/>
-            </VBox>
-            <VBox spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
-                <Label text="Session" styleClass="caption"/>
-                <Label text="—" accessibleText="Session unavailable" styleClass="metric-value"/>
-            </VBox>
-            <VBox spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
-                <Label text="Est. cost" styleClass="caption"/>
-                <Label text="—" accessibleText="Est. cost unavailable" styleClass="metric-value"/>
-            </VBox>
+        <HBox alignment="CENTER_LEFT" spacing="16" styleClass="workspace-footer">
+            <HBox fx:id="toyPanel" id="toy-workspace" alignment="CENTER_LEFT" spacing="12"
+                  visible="false" styleClass="toy-workspace">
+                <Label text="TOY WORKSPACE" styleClass="panel-title"/>
+                <Region fx:id="toySwatch" id="toy-swatch" styleClass="toy-swatch"/>
+                <Label fx:id="toyColor" id="toy-color"/>
+                <Label fx:id="toyTheme" id="toy-theme"/>
+                <Label fx:id="toyCounter" id="toy-counter"/>
+            </HBox>
+            <HBox id="metrics" spacing="16" HBox.hgrow="ALWAYS">
+                <VBox spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
+                    <Label text="Latency" styleClass="caption"/>
+                    <Label text="—" accessibleText="Latency unavailable" styleClass="metric-value"/>
+                </VBox>
+                <VBox spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
+                    <Label text="Session" styleClass="caption"/>
+                    <Label text="—" accessibleText="Session unavailable" styleClass="metric-value"/>
+                </VBox>
+                <VBox spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
+                    <Label text="Est. cost" styleClass="caption"/>
+                    <Label text="—" accessibleText="Est. cost unavailable" styleClass="metric-value"/>
+                </VBox>
+            </HBox>
         </HBox>
     </VBox>
 </VBox>

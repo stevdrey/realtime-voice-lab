@@ -15,6 +15,8 @@ import io.github.stevdrey.realtimevoicelab.realtime.RealtimeTransport;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
+import io.github.stevdrey.realtimevoicelab.realtime.ToyWorkspace;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.value.ObservableBooleanValue;
@@ -55,6 +57,10 @@ public final class WorkspaceController {
     private static final PseudoClass DISCONNECT = PseudoClass.getPseudoClass("disconnect");
     private static final PseudoClass RECORDING = PseudoClass.getPseudoClass("recording");
     private static final PseudoClass WAITING_FOR_SPEAKER = PseudoClass.getPseudoClass("waiting-for-speaker");
+    private static final PseudoClass MIDNIGHT = PseudoClass.getPseudoClass("midnight");
+    private static final PseudoClass BLUE = PseudoClass.getPseudoClass("blue");
+    private static final PseudoClass GREEN = PseudoClass.getPseudoClass("green");
+    private static final PseudoClass AMBER = PseudoClass.getPseudoClass("amber");
 
     private final RealtimeSession session;
     private final Tooltip connectTooltip = new Tooltip();
@@ -135,14 +141,21 @@ public final class WorkspaceController {
     @FXML
     private EventInspectorController eventInspectorController;
 
+    @FXML private Region toyPanel;
+    @FXML private Region toySwatch;
+    @FXML private Label toyColor;
+    @FXML private Label toyTheme;
+    @FXML private Label toyCounter;
+
     WorkspaceController(RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker) {
         session = new RealtimeSession(transport, this::scheduleRender, microphone, speaker,
-                this::scheduleInspectorRender);
+                this::scheduleInspectorRender, Platform::runLater);
     }
 
     @FXML
     private void initialize() {
         modelSelector.getItems().setAll(Model.values());
+        toyPanel.managedProperty().bind(toyPanel.visibleProperty());
         sessionProgress.managedProperty().bind(sessionProgress.visibleProperty());
         modelSelector.accessibleTextProperty().bind(Bindings.createStringBinding(
                 () -> "Model: " + modelSelector.getValue(), modelSelector.valueProperty()));
@@ -152,7 +165,7 @@ public final class WorkspaceController {
             var selected = modelSelector.getValue();
             if (selected != null && selected != saved.model()) {
                 session.configure(new SessionSettings(selected, saved.voice(), saved.mode(),
-                        saved.instructions(), saved.turnDetection()), workspace.status().state());
+                        saved.instructions(), saved.turnDetection(), saved.toolPreset()), workspace.status().state());
                 renderSession();
             }
         });
@@ -442,6 +455,20 @@ public final class WorkspaceController {
         boolean vad = settings.values().effectiveTurnDetection().automatic();
         renderAudio(workspace.microphone(), workspace.speaker(), mode, vad, settings.applying());
         renderConversation(workspace.turns(), mode, vad);
+        toyPanel.setVisible(settings.values().toolPreset() == ToolPreset.TOY_WORKSPACE);
+        if (toyPanel.isVisible()) {
+            renderToy(workspace.toy());
+        }
+    }
+
+    private void renderToy(ToyWorkspace toy) {
+        toyPanel.pseudoClassStateChanged(MIDNIGHT, toy.theme() == ToyWorkspace.Theme.MIDNIGHT);
+        toySwatch.pseudoClassStateChanged(BLUE, toy.color() == ToyWorkspace.Color.BLUE);
+        toySwatch.pseudoClassStateChanged(GREEN, toy.color() == ToyWorkspace.Color.GREEN);
+        toySwatch.pseudoClassStateChanged(AMBER, toy.color() == ToyWorkspace.Color.AMBER);
+        toyColor.setText("Color: " + toy.color().id());
+        toyTheme.setText("Theme: " + toy.theme().id());
+        toyCounter.setText("Counter: " + toy.counter());
     }
 
     private void renderAudio(RealtimeSession.MicrophoneView microphone, RealtimeSession.SpeakerView speaker,

@@ -23,6 +23,8 @@
         <Label text="Preset" labelFor="${preset}" GridPane.rowIndex="4"/>
         <ComboBox fx:id="preset" id="settings-preset" promptText="Custom" GridPane.columnIndex="1"
                   GridPane.rowIndex="4"/>
+        <Label text="Tool preset" labelFor="${toolPreset}" GridPane.rowIndex="5"/>
+        <ComboBox fx:id="toolPreset" id="settings-tool-preset" GridPane.columnIndex="1" GridPane.rowIndex="5"/>
     </GridPane>
     <Label text="Push to talk uses hold and release. Server VAD and Semantic VAD listen after you click the microphone."
            styleClass="caption" wrapText="true"/>
