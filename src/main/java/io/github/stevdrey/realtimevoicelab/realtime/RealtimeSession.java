@@ -18,6 +18,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 
@@ -26,6 +27,7 @@ import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
 import io.github.stevdrey.realtimevoicelab.audio.SpeakerPlayback;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
 
 public final class RealtimeSession implements AutoCloseable {
     public static final String DEFAULT_MODEL = Model.MINI.id();
@@ -106,7 +108,8 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     public record Workspace(Status status, List<TurnView> turns, boolean canSend, boolean canCancel,
-                            MicrophoneView microphone, SpeakerView speaker, SettingsView settings) {
+                            MicrophoneView microphone, SpeakerView speaker, SettingsView settings,
+                            ToyWorkspace toy) {
     }
 
     private final RealtimeTransport transport;
@@ -114,6 +117,7 @@ public final class RealtimeSession implements AutoCloseable {
     private final SpeakerPlayback speaker;
     private final Runnable statusChanged;
     private final Runnable eventsChanged;
+    private final Consumer<Runnable> dispatchWorkspaceTools;
     private final Duration setupTimeout;
     private final Duration closeTimeout;
     private final LongSupplier nanoTime;
@@ -126,6 +130,7 @@ public final class RealtimeSession implements AutoCloseable {
     // Commands, listener callbacks, write completions and deadlines share this monitor.
     private Status status = new Status(State.DISCONNECTED, null);
     private SessionSettings settings = SessionSettings.DEFAULT;
+    private ToyWorkspace toyWorkspace = ToyWorkspace.DEFAULT;
     private final ArrayDeque<ConversationTurn> history = new ArrayDeque<>();
     private long turnNumber;
     private Attempt active;
@@ -148,8 +153,19 @@ public final class RealtimeSession implements AutoCloseable {
 
     public RealtimeSession(RealtimeTransport transport, Runnable statusChanged, MicrophoneCapture microphone,
                            SpeakerPlayback speaker, Runnable eventsChanged) {
+        this(transport, statusChanged, microphone, speaker, eventsChanged, Runnable::run);
+    }
+
+    /**
+     * Creates a session whose toy workspace batches run through {@code dispatchWorkspaceTools}. The desktop passes
+     * {@code Platform::runLater}. Constructors without a dispatcher run each batch on the thread that delivered the
+     * provider event.
+     */
+    public RealtimeSession(RealtimeTransport transport, Runnable statusChanged, MicrophoneCapture microphone,
+                           SpeakerPlayback speaker, Runnable eventsChanged, Consumer<Runnable> dispatchWorkspaceTools) {
         this(transport, statusChanged, Duration.ofSeconds(15), Duration.ofSeconds(3),
-                System::nanoTime, RealtimeSession::timeoutAfter, microphone, speaker, eventsChanged);
+                System::nanoTime, RealtimeSession::timeoutAfter, microphone, speaker, eventsChanged,
+                dispatchWorkspaceTools);
     }
 
     RealtimeSession(RealtimeTransport transport, Runnable statusChanged, Duration setupTimeout, Duration closeTimeout) {
@@ -172,18 +188,19 @@ public final class RealtimeSession implements AutoCloseable {
                     Duration closeTimeout, LongSupplier nanoTime, LongFunction<CompletableFuture<Void>> scheduleTimeout,
                     MicrophoneCapture microphone, SpeakerPlayback speaker) {
         this(transport, statusChanged, setupTimeout, closeTimeout, nanoTime, scheduleTimeout, microphone, speaker,
-                () -> {});
+                () -> {}, Runnable::run);
     }
 
-    private RealtimeSession(RealtimeTransport transport, Runnable statusChanged, Duration setupTimeout,
+    RealtimeSession(RealtimeTransport transport, Runnable statusChanged, Duration setupTimeout,
                             Duration closeTimeout, LongSupplier nanoTime,
                             LongFunction<CompletableFuture<Void>> scheduleTimeout, MicrophoneCapture microphone,
-                            SpeakerPlayback speaker, Runnable eventsChanged) {
+                            SpeakerPlayback speaker, Runnable eventsChanged, Consumer<Runnable> dispatchWorkspaceTools) {
         this.transport = transport;
         this.microphone = microphone;
         this.speaker = speaker;
         this.statusChanged = statusChanged;
         this.eventsChanged = eventsChanged;
+        this.dispatchWorkspaceTools = dispatchWorkspaceTools;
         this.setupTimeout = setupTimeout;
         this.closeTimeout = closeTimeout;
         this.nanoTime = nanoTime;
@@ -213,7 +230,7 @@ public final class RealtimeSession implements AutoCloseable {
                         micState == MicState.RECORDING ? input.level : 0),
                 new SpeakerView(speakerState, output == null ? 0 : output.level),
                 new SettingsView(settings, active == null || ready && canStartTurn(active),
-                        ready && active.settingUpdate != null, ready && active.voiceLocked));
+                        ready && active.settingUpdate != null, ready && active.voiceLocked), toyWorkspace);
     }
 
     private SpeakerState speakerState(Attempt attempt) {
@@ -666,7 +683,8 @@ public final class RealtimeSession implements AutoCloseable {
             publish(State.ERROR, Failure.SETTINGS_REJECTED);
             return;
         }
-        settings = new SessionSettings(allowedModel, settings.voice(), settings.mode(), settings.instructions(), settings.turnDetection());
+        settings = new SessionSettings(allowedModel, settings.voice(), settings.mode(), settings.instructions(),
+                settings.turnDetection(), settings.toolPreset());
         connectSelected(transcriptionModel);
     }
 
@@ -721,6 +739,7 @@ public final class RealtimeSession implements AutoCloseable {
             return true;
         }
         if (status.state() != State.READY || !canStartTurn(attempt) || requested.model() != settings.model()
+                || requested.toolPreset() != settings.toolPreset()
                 || attempt.voiceLocked && requested.voice() != settings.voice() || !withinSessionTime(attempt)) {
             return false;
         }
@@ -890,10 +909,22 @@ public final class RealtimeSession implements AutoCloseable {
 
     // Also enforce the time at the point of use if the scheduled callback has not run yet.
     private boolean withinSessionTime(Attempt attempt) {
-        if (nanoTime.getAsLong() - attempt.startedAt < MAX_SESSION_TIME.toNanos()) {
+        return withinSessionTime(attempt, nanoTime.getAsLong());
+    }
+
+    private boolean withinSessionTime(Attempt attempt, long observedAt) {
+        if (observedAt - attempt.startedAt < MAX_SESSION_TIME.toNanos()) {
             return true;
         }
         stopAtLimit(attempt, Failure.SESSION_LIMIT);
+        return false;
+    }
+
+    private boolean withinToolOutputTime(Attempt attempt, ToolExchange exchange, long observedAt) {
+        if (!exchange.expired(observedAt, TOOL_OUTPUT_TIMEOUT.toNanos())) {
+            return true;
+        }
+        fail(attempt, Failure.ITEM_ACK_TIMEOUT);
         return false;
     }
 
@@ -1623,14 +1654,8 @@ public final class RealtimeSession implements AutoCloseable {
                 calls.add(item);
             }
         }
-        var outputs = new ArrayList<ToolExchange.Output>();
-        for (var call : calls) {
-            var callId = call.path("call_id").textValue();
-            if (attempt.toolCalls.claim(callId)) {
-                outputs.add(new ToolExchange.Output(callId, localTools.execute(call).toString()));
-            }
-        }
-        if (outputs.isEmpty()) {
+        calls.removeIf(call -> !attempt.toolCalls.claim(call.path("call_id").textValue()));
+        if (calls.isEmpty()) {
             return false;
         }
         if (turn.isVoice()) {
@@ -1642,13 +1667,51 @@ public final class RealtimeSession implements AutoCloseable {
         } else {
             turn.reconcile(protocol.terminalText(response));
         }
-        turn.prepareToolFollowUp(new ToolExchange(turn.id, outputs, nanoTime.getAsLong()));
+        var exchange = new ToolExchange(turn.id, nanoTime.getAsLong());
+        turn.prepareToolFollowUp(exchange);
         startDeadline(attempt, TOOL_OUTPUT_TIMEOUT, Failure.ITEM_ACK_TIMEOUT);
-        if (active == attempt) {
-            advanceTurn(attempt);
+        if (active != attempt) {
+            return true;
+        }
+        if (settings.toolPreset() == ToolPreset.TOY_WORKSPACE) {
+            // The desktop dispatches one bounded batch to the FX thread. Cancellation can win while it is queued.
+            dispatchWorkspaceTools.accept(() -> executeTools(attempt, turn, exchange, calls));
+            // Render the reconciled first response while the batch waits for its thread.
             statusChanged.run();
+        } else {
+            executeTools(attempt, turn, exchange, calls);
         }
         return true;
+    }
+
+    private synchronized void executeTools(Attempt attempt, ConversationTurn turn, ToolExchange exchange,
+                                           List<JsonNode> calls) {
+        if (active != attempt || status.state() != State.READY || attempt.turn != turn
+                || turn.toolExchange != exchange || turn.state == TurnState.CANCELLING || !withinSessionTime(attempt)) {
+            return;
+        }
+        if (!withinToolOutputTime(attempt, exchange, nanoTime.getAsLong())) {
+            return;
+        }
+        var outputs = new ArrayList<ToolExchange.Output>();
+        var preset = settings.toolPreset();
+        var workspace = toyWorkspace;
+        for (var call : calls) {
+            var result = localTools.execute(preset, call, workspace);
+            workspace = result.workspace();
+            outputs.add(new ToolExchange.Output(call.path("call_id").textValue(), result.output().toString()));
+        }
+        if (preset == ToolPreset.TOY_WORKSPACE) {
+            // A deadline callback can be waiting for this monitor while the batch is evaluated.
+            long observedAt = nanoTime.getAsLong();
+            if (!withinSessionTime(attempt, observedAt) || !withinToolOutputTime(attempt, exchange, observedAt)) {
+                return;
+            }
+            toyWorkspace = workspace;
+        }
+        exchange.completeExecution(outputs);
+        advanceTurn(attempt);
+        statusChanged.run();
     }
 
     private void finishVoiceResponse(Attempt attempt, ConversationTurn turn, JsonNode response,
@@ -1780,8 +1843,7 @@ public final class RealtimeSession implements AutoCloseable {
             return;
         }
         var exchange = turn.toolExchange;
-        if (exchange != null && exchange.expired(nanoTime.getAsLong(), TOOL_OUTPUT_TIMEOUT.toNanos())) {
-            fail(attempt, Failure.ITEM_ACK_TIMEOUT);
+        if (exchange != null && !withinToolOutputTime(attempt, exchange, nanoTime.getAsLong())) {
             return;
         }
         if (!turn.responseRequested && turn.state == TurnState.CANCELLING) {
@@ -1935,7 +1997,7 @@ public final class RealtimeSession implements AutoCloseable {
         } else if (!acknowledged.boundedOutput() || update.requested.mode() == Mode.AUDIO && !acknowledged.pcmOutput()
                 || !transcriptionConfirmed(attempt.transcriptionModel, acknowledged.transcriptionModel())) {
             fail(attempt, Failure.PROTOCOL);
-        } else if (!acknowledged.matches(update.requested) || !acknowledged.toolsConfirmed()) {
+        } else if (!acknowledged.matches(update.requested)) {
             fail(attempt, Failure.SETTINGS_MISMATCH);
         } else {
             update.acknowledged = acknowledged;

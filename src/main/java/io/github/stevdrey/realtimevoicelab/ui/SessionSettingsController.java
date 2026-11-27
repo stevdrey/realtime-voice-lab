@@ -7,6 +7,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Preset;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.TurnDetection;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Voice;
 import javafx.fxml.FXML;
@@ -27,6 +28,7 @@ public final class SessionSettingsController {
     @FXML private ComboBox<Mode> mode;
     @FXML private ComboBox<TurnDetection> turnDetection;
     @FXML private ComboBox<Preset> preset;
+    @FXML private ComboBox<ToolPreset> toolPreset;
     @FXML private TextArea instructions;
     @FXML private Label reconnectHelp;
     @FXML private Label error;
@@ -53,6 +55,9 @@ public final class SessionSettingsController {
         turnDetection.getItems().setAll(TurnDetection.values());
         turnDetection.setValue(current.turnDetection());
         turnDetection.disableProperty().bind(mode.valueProperty().isEqualTo(Mode.TEXT));
+        toolPreset.getItems().setAll(ToolPreset.values());
+        toolPreset.setValue(current.toolPreset());
+        toolPreset.setDisable(connected);
         preset.getItems().setAll(Preset.values());
         instructions.setText(current.instructions());
         instructions.setTextFormatter(TextInputLimit.formatter(SessionSettings.MAX_INSTRUCTION_CHARS));
@@ -76,8 +81,8 @@ public final class SessionSettingsController {
         applyButton.setText(connected ? "Apply" : "Save");
         reconnectHelp.setText(connected
                 ? settings.voiceLocked()
-                    ? "Audio was generated. Disconnect and reconnect to change the model or voice."
-                    : "Disconnect and reconnect to change the model."
+                    ? "Disconnect and reconnect to change the model, voice, or tool preset."
+                    : "Disconnect and reconnect to change the model or tool preset."
                 : "Saved settings apply when you connect.");
         error.managedProperty().bind(error.visibleProperty());
     }
@@ -85,7 +90,7 @@ public final class SessionSettingsController {
     @FXML
     private void apply() {
         var requested = new SessionSettings(model.getValue(), voice.getValue(), mode.getValue(),
-                instructions.getText(), turnDetection.getValue());
+                instructions.getText(), turnDetection.getValue(), toolPreset.getValue());
         if (apply.test(requested)) {
             dialog.close();
         } else {

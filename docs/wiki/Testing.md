@@ -67,6 +67,10 @@ Synthetic tests cover both VAD modes, interruption during generation, queued pla
 
 The client disables automatic response creation and cancellation in both VAD modes. It sends a targeted `response.cancel` when generation is still active and clears the local transcript for an interrupted assistant audio reply because the stream has no word-level playback timing. This verification uses synthetic PCM and devices. The live service and physical audio timing require an explicitly authorized manual smoke. [OpenAI VAD guide](https://developers.openai.com/api/docs/guides/realtime-vad) · [Realtime client event reference](https://developers.openai.com/api/reference/resources/realtime/client-events#conversation-item-truncate)
 
+## RVL-010 toy workspace verification
+
+Run `./gradlew --offline test --tests '*RealtimeToolCallingTest' --tests '*RealtimeVoiceLabAppTest'` without an API key. The fake transport checks preset confirmation, argument validation, ordered results, duplicate IDs, and cancellation before dispatch. The JavaFX test selects the preset, records synthetic PCM, and verifies the panel's color, theme, and counter after a composite tool response. It also checks that the follow-up requests audio and the main layout fits the minimum supported scene size.
+
 ## Opt-in manual smoke across MVP features
 Use a dedicated restricted API key, headphones and own adult or synthetic speech.
 - Connect mini; verify session acknowledgment and text two-turn exchange.

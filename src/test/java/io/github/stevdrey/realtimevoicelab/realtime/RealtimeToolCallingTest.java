@@ -3,19 +3,26 @@ package io.github.stevdrey.realtimevoicelab.realtime;
 import java.io.IOException;
 import java.net.http.WebSocket;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
+import io.github.stevdrey.realtimevoicelab.audio.SpeakerPlayback;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.Failure;
@@ -28,11 +35,14 @@ class RealtimeToolCallingTest {
     private static final String ARGUMENTS = "{\"current\":40,\"delta\":2}";
     private final ObjectMapper json = new ObjectMapper();
     private final FakeTransport transport = new FakeTransport();
+    private final ArrayDeque<Runnable> workspaceTasks = new ArrayDeque<>();
     private final AtomicLong now = new AtomicLong(Long.MAX_VALUE - Duration.ofSeconds(1).toNanos());
+    private LongSupplier clock = now::get;
     private CompletableFuture<Void> latestDeadline;
     private final RealtimeSession session = new RealtimeSession(transport, () -> {},
-            Duration.ofSeconds(15), Duration.ofSeconds(3), now::get,
-            nanos -> latestDeadline = new CompletableFuture<>());
+            Duration.ofSeconds(15), Duration.ofSeconds(3), () -> clock.getAsLong(),
+            nanos -> latestDeadline = new CompletableFuture<>(), new MicrophoneCapture(),
+            new SpeakerPlayback(), () -> {}, workspaceTasks::addLast);
     private FakeTransport.Socket socket;
 
     @BeforeEach
@@ -84,13 +94,189 @@ class RealtimeToolCallingTest {
                   "properties":{"current":{"type":"integer","minimum":0.0,"maximum":100},
                                 "delta":{"type":"integer","minimum":-10,"maximum":10.0}}}}]}
                 """);
-        assertTrue(tools.confirmed(normalized));
+        assertEquals(ToolPreset.DEMO_COUNTER, tools.confirmedPreset(normalized));
         ObjectNode changed = normalized.deepCopy();
         ((ObjectNode) changed.at("/tools/0/parameters/properties/current")).put("maximum", 50);
-        assertFalse(tools.confirmed(changed));
+        assertNull(tools.confirmedPreset(changed));
         ObjectNode open = normalized.deepCopy();
         ((ObjectNode) open.at("/tools/0/parameters")).put("additionalProperties", true);
-        assertFalse(tools.confirmed(open));
+        assertNull(tools.confirmedPreset(open));
+    }
+
+    @Test
+    void requiresExplicitWorkspacePresetAndChecksTheEcho() throws Exception {
+        assertFalse(session.configure(workspaceSettings(), State.READY));
+        assertCallError(call("disabled", "resetWorkspace", "{}"), "disabled", "unknown_tool");
+        assertTrue(workspaceTasks.isEmpty());
+        assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+
+        openWorkspaceSession();
+        var configured = json.readTree(socket.writes.getFirst()).path("session");
+        assertEquals("auto", configured.path("tool_choice").textValue());
+        assertEquals(List.of("changeColor", "setTheme", "incrementCounter", "resetWorkspace"),
+                configured.path("tools").valueStream().map(tool -> tool.path("name").textValue()).toList());
+        assertEquals(List.of("indigo", "blue", "green", "amber"),
+                configured.at("/tools/0/parameters/properties/color/enum").valueStream()
+                        .map(JsonNode::textValue).toList());
+        socket.updated(); // The provider echoed the demo preset instead of the requested workspace.
+        assertFailure(Failure.SETTINGS_MISMATCH);
+        assertTrue(workspaceTasks.isEmpty());
+    }
+
+    @Test
+    void appliesCompositeWorkspaceCallsInOrderAndIgnoresDuplicateIds() throws Exception {
+        connectWorkspace();
+        var key = startTurn("composite");
+        int initialWrites = socket.writes.size();
+        signal("composite", "count");
+        assertTrue(workspaceTasks.isEmpty());
+        assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+        var terminal = done("composite", "completed", key,
+                call("color", "changeColor", "{\"color\":\"blue\"}"),
+                call("theme", "setTheme", "{\"theme\":\"midnight\"}"),
+                call("count", "incrementCounter", "{\"delta\":7}"),
+                call("count", "incrementCounter", "{\"delta\":3}"));
+        socket.text(terminal, true);
+        socket.text(terminal, true);
+        assertEquals(initialWrites, socket.writes.size());
+        assertEquals(1, workspaceTasks.size());
+        assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+        workspaceTasks.removeFirst().run();
+
+        assertEquals(new ToyWorkspace(ToyWorkspace.Color.BLUE, ToyWorkspace.Theme.MIDNIGHT, 7),
+                session.workspace().toy());
+        assertOutput(lastWrite(), "color", """
+                {"ok":true,"color":"blue","theme":"slate","counter":0}
+                """);
+        acknowledge(lastWrite());
+        assertOutput(lastWrite(), "theme", """
+                {"ok":true,"color":"blue","theme":"midnight","counter":0}
+                """);
+        acknowledge(lastWrite());
+        assertOutput(lastWrite(), "count", """
+                {"ok":true,"color":"blue","theme":"midnight","counter":7}
+                """);
+        acknowledge(lastWrite());
+        assertEquals("none", lastWrite().at("/response/tool_choice").textValue());
+        assertEquals(initialWrites + 4, socket.writes.size());
+        socket.text(done("composite_follow_up", "completed", requestKey(lastWrite())), true);
+
+        key = startTurn("reset");
+        socket.text(done("reset", "completed", key, call("count", "incrementCounter", "{\"delta\":10}"),
+                call("reset", "resetWorkspace", "{}")), true);
+        workspaceTasks.removeFirst().run();
+        assertOutput(lastWrite(), "reset", """
+                {"ok":true,"color":"indigo","theme":"slate","counter":0}
+                """);
+        assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+        acknowledge(lastWrite());
+        assertEquals("none", lastWrite().at("/response/tool_choice").textValue());
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', textBlock = """
+            changeColor                 | {"color":"chartreuse"}                   | invalid_arguments
+            changeColor                 | {"color":"blue","path":"elsewhere"}      | invalid_arguments
+            changeColor                 | {"color":"blue","color":"green"}         | invalid_arguments
+            setTheme                    | {"theme":"system"}                       | invalid_arguments
+            setTheme                    | {"theme":null}                           | invalid_arguments
+            incrementCounter            | {"delta":11}                             | invalid_arguments
+            incrementCounter            | {"delta":1.0}                            | invalid_arguments
+            incrementCounter            | {"delta":-1}                             | counter_out_of_range
+            resetWorkspace              | {"extra":true}                           | invalid_arguments
+            calculate_workspace_counter | {"current":40,"delta":2}                 | unknown_tool
+            """)
+    void invalidWorkspaceCallsReturnFixedErrorsAndKeepState(String name, String arguments, String error)
+            throws Exception {
+        connectWorkspace();
+        var key = startTurn("invalid");
+        socket.text(done("invalid", "completed", key, call("invalid", name, arguments)), true);
+        workspaceTasks.removeFirst().run();
+        assertOutput(lastWrite(), "invalid", "{\"ok\":false,\"error\":\"" + error + "\"}");
+        assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"cancel", "reconnect", "timeout"})
+    void queuedWorkspaceBatchCannotMutateAfterItLosesItsTurn(String ending) throws Exception {
+        connectWorkspace();
+        var key = startTurn("old");
+        socket.text(done("old", "completed", key, call("queued", "incrementCounter", "{\"delta\":5}")), true);
+        assertEquals(1, workspaceTasks.size());
+        switch (ending) {
+            case "cancel" -> session.cancelTurn();
+            case "reconnect" -> connectWorkspace();
+            case "timeout" -> now.addAndGet(RealtimeSession.TOOL_OUTPUT_TIMEOUT.toNanos());
+            default -> throw new AssertionError(ending);
+        }
+        int writes = socket.writes.size();
+        workspaceTasks.removeFirst().run();
+        assertEquals(writes, socket.writes.size());
+        assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+        if ("timeout".equals(ending)) {
+            assertFailure(Failure.ITEM_ACK_TIMEOUT);
+        } else {
+            assertTrue(session.workspace().canSend());
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Failure.class, names = {"ITEM_ACK_TIMEOUT", "SESSION_LIMIT"})
+    void discardsWorkspaceBatchIfADeadlineExpiresDuringExecution(Failure failure) throws Exception {
+        connectWorkspace();
+        if (failure == Failure.SESSION_LIMIT) {
+            now.addAndGet(RealtimeSession.MAX_SESSION_TIME.toNanos() - 1);
+        }
+        var key = startTurn("expiring");
+        socket.text(done("expiring", "completed", key, call("count", "incrementCounter", "{\"delta\":5}")), true);
+        if (failure == Failure.ITEM_ACK_TIMEOUT) {
+            now.addAndGet(RealtimeSession.TOOL_OUTPUT_TIMEOUT.toNanos() - 1);
+        }
+
+        // Both entry checks see a valid sample. The clock expires during execution, before any timer fires.
+        var entryChecks = new AtomicInteger(2);
+        clock = () -> {
+            long sample = now.get();
+            if (entryChecks.decrementAndGet() == 0) {
+                now.incrementAndGet();
+            }
+            return sample;
+        };
+        int writes = socket.writes.size();
+        workspaceTasks.removeFirst().run();
+
+        assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+        assertFalse(socket.writes.stream().skip(writes).anyMatch(write -> write.contains("\"function_call_output\"")));
+        if (failure == Failure.SESSION_LIMIT) {
+            assertEquals(State.CLOSING, session.status().state());
+            socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+            assertEquals(new RealtimeSession.Status(State.ERROR, failure), session.status());
+        } else {
+            assertFailure(failure);
+        }
+    }
+
+    private SessionSettings workspaceSettings() {
+        var defaults = SessionSettings.DEFAULT;
+        return new SessionSettings(defaults.model(), defaults.voice(), defaults.mode(), defaults.instructions(),
+                defaults.turnDetection(), ToolPreset.TOY_WORKSPACE);
+    }
+
+    private void openWorkspaceSession() {
+        session.disconnect();
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        assertTrue(session.configure(workspaceSettings(), State.DISCONNECTED));
+        session.connect(RealtimeSession.DEFAULT_MODEL);
+        socket = transport.attempts.getLast();
+        socket.opened();
+        socket.created();
+        socket.textWrite.complete(socket);
+    }
+
+    private void connectWorkspace() {
+        openWorkspaceSession();
+        socket.updated(workspaceSettings(), null);
+        assertEquals(State.READY, session.status().state());
     }
 
     @Test

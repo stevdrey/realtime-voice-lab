@@ -2,7 +2,8 @@ package io.github.stevdrey.realtimevoicelab.realtime;
 
 import java.util.Objects;
 
-public record SessionSettings(Model model, Voice voice, Mode mode, String instructions, TurnDetection turnDetection) {
+public record SessionSettings(Model model, Voice voice, Mode mode, String instructions, TurnDetection turnDetection,
+                              ToolPreset toolPreset) {
     public static final int MAX_INSTRUCTION_CHARS = 4_000;
     public static final SessionSettings DEFAULT = new SessionSettings(
             Model.MINI, Voice.MARIN, Mode.AUDIO, Preset.FREE_CONVERSATION.instructions());
@@ -11,12 +12,17 @@ public record SessionSettings(Model model, Voice voice, Mode mode, String instru
         this(model, voice, mode, instructions, TurnDetection.MANUAL);
     }
 
+    public SessionSettings(Model model, Voice voice, Mode mode, String instructions, TurnDetection turnDetection) {
+        this(model, voice, mode, instructions, turnDetection, ToolPreset.DEMO_COUNTER);
+    }
+
     public SessionSettings {
         Objects.requireNonNull(model);
         Objects.requireNonNull(voice);
         Objects.requireNonNull(mode);
         Objects.requireNonNull(instructions);
         Objects.requireNonNull(turnDetection);
+        Objects.requireNonNull(toolPreset);
         if (instructions.length() > MAX_INSTRUCTION_CHARS) {
             throw new IllegalArgumentException("Instructions exceed the session limit");
         }
@@ -127,6 +133,21 @@ public record SessionSettings(Model model, Voice voice, Mode mode, String instru
 
         public String instructions() {
             return instructions;
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    public enum ToolPreset {
+        DEMO_COUNTER("Demo counter"), TOY_WORKSPACE("Toy workspace");
+
+        private final String label;
+
+        ToolPreset(String label) {
+            this.label = label;
         }
 
         @Override

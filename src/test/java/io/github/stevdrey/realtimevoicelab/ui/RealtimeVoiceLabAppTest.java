@@ -11,8 +11,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.stevdrey.realtimevoicelab.audio.FakeMicrophone;
 import io.github.stevdrey.realtimevoicelab.audio.FakeSpeaker;
 import io.github.stevdrey.realtimevoicelab.realtime.FakeTransport;
@@ -22,6 +24,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Preset;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.TurnDetection;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Voice;
 import javafx.application.Platform;
@@ -277,7 +280,7 @@ class RealtimeVoiceLabAppTest {
                 assertTrue(combo(dialog, "#settings-model").isDisabled());
                 assertTrue(combo(dialog, "#settings-voice").isDisabled());
                 var help = (Label) dialog.getScene().lookup("#settings-reconnect-help");
-                assertTrue(help.getText().contains("reconnect to change the model or voice"));
+                assertTrue(help.getText().contains("reconnect to change the model, voice, or tool preset"));
                 ((TextArea) dialog.getScene().lookup("#settings-instructions")).setText("Synthetic rejected instructions.");
                 ((Button) dialog.getScene().lookup("#apply-settings")).fire();
                 return null;
@@ -309,6 +312,116 @@ class RealtimeVoiceLabAppTest {
             });
             awaitOnFxThread(() -> Window.getWindows().stream().noneMatch(window -> window instanceof Stage dialog
                     && "Session Settings".equals(dialog.getTitle())), "A session change did not close the settings dialog");
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    @Test
+    void voiceToolChangesRenderOnFxThreadAndStayInsideTheToyPanel() throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var speaker = new FakeSpeaker();
+        var stage = onFxThread(Stage::new);
+        var counterRenderedOnFx = new AtomicBoolean();
+        var defaults = SessionSettings.DEFAULT;
+        var settings = new SessionSettings(defaults.model(), defaults.voice(), defaults.mode(), defaults.instructions(),
+                defaults.turnDetection(), ToolPreset.TOY_WORKSPACE);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone(), speaker.playback(),
+                        stage.focusedProperty());
+                var scene = stage.getScene();
+                var toy = (Region) scene.lookup("#toy-workspace");
+                assertFalse(toy.isVisible());
+                assertFalse(toy.isManaged());
+                var dialog = openSettings(stage);
+                assertEquals(ToolPreset.DEMO_COUNTER, combo(dialog, "#settings-tool-preset").getValue());
+                this.<ToolPreset>combo(dialog, "#settings-tool-preset").setValue(ToolPreset.TOY_WORKSPACE);
+                ((Button) dialog.getScene().lookup("#apply-settings")).fire();
+                assertTrue(toy.isVisible());
+                assertTrue(toy.isManaged());
+                var counter = (Label) scene.lookup("#toy-counter");
+                assertEquals("Counter: 0", counter.getText());
+                counter.textProperty().addListener((observable, oldValue, newValue) ->
+                        counterRenderedOnFx.set(Platform.isFxApplicationThread()));
+                connectButton(stage).fire();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.opened();
+            socket.created();
+            socket.textWrite.complete(socket);
+            socket.updated(settings, null);
+            onFxThread(() -> {
+                var dialog = openSettings(stage);
+                assertTrue(combo(dialog, "#settings-tool-preset").isDisabled());
+                dialog.close();
+                stage.getScene().lookup("#mic-button").requestFocus();
+                return null;
+            });
+            recordWithKey(stage, microphone, KeyCode.SPACE);
+            awaitOnFxThread(() -> socket.writes.getLast().contains("input_audio_buffer.commit"),
+                    "Voice turn did not commit");
+            socket.text("""
+                    {"type":"input_audio_buffer.committed","item_id":"toy-voice-input"}
+                    """, true);
+            socket.text("""
+                    {"type":"response.done","response":{"id":"toy-response","status":"completed",
+                     "metadata":{"rvl_turn":"rvl-1"},"output":[
+                      {"type":"function_call","status":"completed","call_id":"color","name":"changeColor",
+                       "arguments":"{\\"color\\":\\"green\\"}"},
+                      {"type":"function_call","status":"completed","call_id":"theme","name":"setTheme",
+                       "arguments":"{\\"theme\\":\\"midnight\\"}"},
+                      {"type":"function_call","status":"completed","call_id":"count","name":"incrementCounter",
+                       "arguments":"{\\"delta\\":3}"}
+                     ]}}
+                    """, true);
+            awaitOnFxThread(() -> ((Label) stage.getScene().lookup("#toy-counter")).getText().equals("Counter: 3"),
+                    "Tool results did not reach the toy panel");
+            assertTrue(counterRenderedOnFx.get());
+            var mapper = new ObjectMapper();
+            for (var id : List.of("color", "theme", "count")) {
+                var output = mapper.readTree(socket.writes.getLast()).path("item");
+                assertEquals("function_call_output", output.path("type").textValue());
+                assertEquals(id, output.path("call_id").textValue());
+                assertTrue(mapper.readTree(output.path("output").textValue()).path("ok").booleanValue());
+                socket.text(mapper.createObjectNode().put("type", "conversation.item.added")
+                        .set("item", output).toString(), true);
+            }
+            var followUp = mapper.readTree(socket.writes.getLast()).path("response");
+            assertEquals("audio", followUp.at("/output_modalities/0").textValue());
+            assertEquals("none", followUp.path("tool_choice").textValue());
+
+            onFxThread(() -> {
+                stage.setWidth(stage.getMinWidth());
+                stage.setHeight(stage.getMinHeight());
+                return null;
+            });
+            awaitOnFxThread(() -> stage.getScene().getWidth() == 760 && stage.getScene().getHeight() == 520,
+                    "The enabled toy workspace did not resize to the minimum");
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                scene.getRoot().applyCss();
+                assertMinimumSizeLayout(stage);
+                var toy = (Region) scene.lookup("#toy-workspace");
+                var swatch = (Region) scene.lookup("#toy-swatch");
+                assertEquals(Color.web("#11151e"), toy.getBackground().getFills().getFirst().getFill());
+                assertEquals(Color.web("#4ade80"), swatch.getBackground().getFills().getFirst().getFill());
+                assertEquals("Color: green", ((Label) scene.lookup("#toy-color")).getText());
+                assertEquals("Theme: midnight", ((Label) scene.lookup("#toy-theme")).getText());
+                var panelBounds = toy.localToScene(toy.getBoundsInLocal());
+                var metrics = scene.lookup("#metrics");
+                var metricsBounds = metrics.localToScene(metrics.getBoundsInLocal());
+                assertTrue(panelBounds.getMaxX() < metricsBounds.getMinX());
+                assertTrue(metricsBounds.getMaxX() <= scene.getWidth());
+                assertEquals(2, ((SplitPane) scene.lookup("#main-panels")).getItems().size());
+                assertTrue(speaker.devices.isEmpty());
+                return null;
+            });
         } finally {
             onFxThread(() -> {
                 stage.close();

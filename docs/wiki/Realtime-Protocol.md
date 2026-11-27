@@ -26,11 +26,22 @@ Input transcription is opt-in per connection through `audio.input.transcription.
 
 RVL-009 declares `calculate_workspace_counter` in `session.tools` and checks the effective configuration. The function takes integers `current` (0–100) and `delta` (−10 to 10) and returns the resulting value if it stays between 0 and 100. It is a pure local calculation.
 
+RVL-010 adds the **Toy workspace** tool preset. The operator selects it before connecting, and the client verifies the effective preset in `session.updated`. Each session advertises the functions for its selected preset.
+
+| Function | Arguments |
+|---|---|
+| `changeColor` | `color` is `indigo`, `blue`, `green`, or `amber`. |
+| `setTheme` | `theme` is `slate` or `midnight` and applies to the toy panel. |
+| `incrementCounter` | Integer `delta` from −10 to 10. The result must stay between 0 and 100. |
+| `resetWorkspace` | An empty object. Restores indigo, slate, and 0. |
+
+Each successful workspace call returns `ok: true` and a `color`, `theme`, and `counter` snapshot after that call. An invalid call returns `ok: false` and a fixed `error` code. A batch applies valid calls in response order. The desktop app dispatches each batch to the JavaFX Application Thread. The client checks the session, turn, and deadline again before applying the batch. Toy state stays in memory while the application is open, including across reconnects.
+
 The app reads the complete argument strings from the `function_call` items in a successful, correlated `response.done`. Argument deltas and early completion signals never trigger execution. Call IDs are deduplicated for the connection. Each accepted call receives one `conversation.item.create` with a `function_call_output` item that echoes its `call_id`. Errors contain a fixed code and omit the supplied name and arguments. Invalid IDs end the session because a result cannot be correlated safely.
 
 After each output write and matching `conversation.item.added` acknowledgment, the app advances to the next output. The output exchange has a 15-second deadline. Once all outputs are accepted, the app requests one follow-up in the original text or audio modality with `tool_choice: "none"`. An audio follow-up waits until the app's PCM queue empties into the speaker device, which can finish playing its own buffer while the follow-up starts. This keeps the app queue within its 30-second capacity. On interruption, the provider keeps fully played items from the first response and truncates unheard audio where needed.
 
-Cancellation suppresses unsent tool outputs and any pending follow-up. If an output has already been sent, the client waits for its write and matching provider acknowledgment within the original output deadline. New responses wait for that acknowledgment and any required audio truncation. A failed write, correlated rejection or missing acknowledgment at the deadline aborts the session. The 10-call session cap from RVL-011 includes argument completion signals and terminal-only calls. See the [Realtime conversations guide](https://developers.openai.com/api/docs/guides/realtime-conversations).
+Cancellation suppresses unsent tool outputs and any pending follow-up. Toy workspace changes that have already been applied remain visible. If an output has already been sent, the client waits for its write and matching provider acknowledgment within the original output deadline. New responses wait for that acknowledgment and any required audio truncation. A failed write, correlated rejection or missing acknowledgment at the deadline aborts the session. The 10-call session cap from RVL-011 includes argument completion signals and terminal-only calls. See the [Realtime conversations guide](https://developers.openai.com/api/docs/guides/realtime-conversations).
 
 VAD: compare server_vad and semantic_vad with manual mode; when auto response is disabled explicitly request response after policy approval. On interruption stop and flush local audio immediately, cancel active generation where needed, send conversation.item.truncate with item_id, content_index and actually played audio_end_ms; reject late deltas. Do not confuse generated duration with heard duration. Test the case where response.done arrives before playback finishes.
 

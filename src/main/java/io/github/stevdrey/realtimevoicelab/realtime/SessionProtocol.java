@@ -6,6 +6,7 @@ import java.util.StringJoiner;
 import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.TurnDetection;
 
 import com.fasterxml.jackson.core.Base64Variants;
@@ -52,7 +53,7 @@ final class SessionProtocol {
         boolean setPcmOutput = initial || applied.mode() == Mode.TEXT && requested.mode() == Mode.AUDIO;
         if (initial) {
             session.put("max_output_tokens", MAX_OUTPUT_TOKENS);
-            tools.declare(session);
+            tools.declare(session, requested.toolPreset());
         }
         var detection = requested.effectiveTurnDetection();
         if (initial || detection != applied.effectiveTurnDetection()) {
@@ -277,7 +278,7 @@ final class SessionProtocol {
                 isPcmFormat(output.path("format")),
                 isPcmFormat(input.path("format")), readTurnDetection(input.path("turn_detection")), transcriptionModel,
                 session.path("model").textValue(), output.path("voice").textValue(),
-                modality, session.path("instructions").textValue(), tools.confirmed(session));
+                modality, session.path("instructions").textValue(), tools.confirmedPreset(session));
     }
 
     private TurnDetection readTurnDetection(JsonNode node) {
@@ -345,10 +346,11 @@ final class SessionProtocol {
 
     record Configuration(String sessionId, boolean boundedOutput, boolean pcmOutput, boolean pcmInput,
                          TurnDetection turnDetection, String transcriptionModel, String model, String voice,
-                         String modality, String instructions, boolean toolsConfirmed) {
+                         String modality, String instructions, ToolPreset toolPreset) {
         boolean matches(SessionSettings settings) {
             return modelMatches(settings.model().id()) && settings.voice().id().equals(voice)
-                    && settings.mode().modality().equals(modality) && settings.instructions().equals(instructions);
+                    && settings.mode().modality().equals(modality) && settings.instructions().equals(instructions)
+                    && settings.toolPreset() == toolPreset;
         }
 
         // The provider may report the dated snapshot behind the requested alias.

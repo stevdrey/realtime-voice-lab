@@ -18,7 +18,7 @@ public final class FakeTransport implements RealtimeTransport {
     static String withToolConfiguration(String json) {
         try {
             var event = new ObjectMapper().readTree(json);
-            new LocalTools().declare((ObjectNode) event.path("session"));
+            new LocalTools().declare((ObjectNode) event.path("session"), SessionSettings.DEFAULT.toolPreset());
             return event.toString();
         } catch (JsonProcessingException error) {
             throw new AssertionError("Invalid session fixture", error);
@@ -89,7 +89,7 @@ public final class FakeTransport implements RealtimeTransport {
             var session = event.putObject("session").put("type", "realtime").put("id", "test-session")
                     .put("max_output_tokens", 512).put("model", settings.model().id())
                     .put("instructions", settings.instructions());
-            new LocalTools().declare(session);
+            new LocalTools().declare(session, settings.toolPreset());
             session.putArray("output_modalities").add(settings.mode().modality());
             var audio = session.putObject("audio");
             var input = audio.putObject("input");
