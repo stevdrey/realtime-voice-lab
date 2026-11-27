@@ -145,6 +145,30 @@ class RealtimeUsageTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {
+            "",
+            ",\"rate_limits\":null",
+            ",\"rate_limits\":[]",
+            ",\"rate_limits\":[{\"name\":\"tokens\",\"limit\":5,\"remaining\":6,\"reset_seconds\":1}]",
+            """
+            ,"rate_limits":[
+              {"name":"tokens","limit":10,"remaining":7,"reset_seconds":1},
+              {"name":"tokens","limit":10,"remaining":6,"reset_seconds":1}]
+            """
+    })
+    void keepsTheLatestValidQuotaSnapshotWhenAnUpdateHasNoUsableSnapshot(String malformedFields) {
+        var socket = connect(null, null);
+        socket.text("""
+                {"type":"rate_limits.updated","event_id":"valid","rate_limits":[
+                  {"name":"tokens","limit":1000,"remaining":800,"reset_seconds":15}]}
+                """, true);
+        socket.text("""
+                {"type":"rate_limits.updated","event_id":"malformed"%s}
+                """.formatted(malformedFields), true);
+        assertEquals(List.of(new RateLimit("tokens", 1000, 800, 15)), usage().rateLimits());
+    }
+
+    @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void keepsCompletedTerminalTextWhenTheCutoffEndsTheSession(boolean usageAvailable) {
         var socket = connect(null, "0.00165525");
@@ -203,6 +227,52 @@ class RealtimeUsageTest {
         assertEquals(Duration.ZERO, session.elapsedTime());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"ready", "closing", "terminal"})
+    void accountsForCorrelatedTerminalUsageDuringDisconnect(String bindAt) {
+        var socket = connect(null, null);
+        assertTrue(session.sendText("Synthetic question"));
+        acknowledgeTurn(socket, 1);
+        var created = """
+                {"type":"response.created","response":{"id":"pending","metadata":{"rvl_turn":"rvl-1"}}}
+                """;
+        if ("ready".equals(bindAt)) {
+            socket.text(created, true);
+        }
+        session.disconnect();
+        assertEquals(State.CLOSING, session.status().state());
+        assertTrue(usage().pending());
+        int writes = socket.writes.size();
+        socket.text(responseDone("unrelated", "completed", MIXED_USAGE), true);
+        assertTrue(usage().pending());
+        assertEquals(0, usage().reportedInputTokens());
+        if ("closing".equals(bindAt)) {
+            socket.text(created, true);
+        }
+        var terminal = """
+                {"type":"response.done","response":{"id":"pending","status":"%s",%s
+                 "usage":%s,"output":[{"type":"message","role":"assistant",
+                  "content":[{"type":"output_text","text":"Synthetic late reply."}]},
+                  {"type":"function_call","name":"calculate_workspace_counter","call_id":"late_call",
+                   "arguments":"{\\"current\\":40,\\"delta\\":2}"}]}}
+                """.formatted("closing".equals(bindAt) ? "completed" : "cancelled",
+                "terminal".equals(bindAt) ? "\"metadata\":{\"rvl_turn\":\"rvl-1\"}," : "", MIXED_USAGE);
+        int split = terminal.length() / 2;
+        socket.text(terminal.substring(0, split), false);
+        socket.text(terminal.substring(split), true);
+        socket.text(terminal, true);
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+
+        assertEquals(State.DISCONNECTED, session.status().state());
+        assertFalse(usage().pending());
+        assertFalse(usage().missingUsage());
+        assertUsd("0.00132420");
+        assertEquals(writes, socket.writes.size());
+        var turn = session.workspace().turns().getLast();
+        assertEquals("", turn.output());
+        assertEquals(TurnState.INTERRUPTED, turn.state());
+    }
+
     @Test
     void matchesTerminalWithoutCreationAndClearsExplicitlyRejectedRequests() {
         var socket = connect(null, null);
@@ -237,9 +307,11 @@ class RealtimeUsageTest {
         assertEquals(State.CLOSING, session.status().state());
         assertEquals(SessionProtocol.CANCEL_RESPONSE.message(), socket.writes.getLast());
         assertEquals(1, socket.closeWrites);
+        socket.text(responseDone("still-running", "cancelled", MIXED_USAGE), true);
         socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
         assertEquals(Failure.SPEND_LIMIT, session.status().failure());
-        assertTrue(usage().missingUsage());
+        assertFalse(usage().missingUsage());
+        assertUsd("0.00397260");
     }
 
     @Test

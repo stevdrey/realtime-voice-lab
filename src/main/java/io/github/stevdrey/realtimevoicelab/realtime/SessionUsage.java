@@ -27,7 +27,7 @@ final class SessionUsage {
     private long outputTokens;
     private long cachedTokens;
     private Long reasoningTokens;
-    private boolean unboundRequest;
+    private String unboundRequestKey;
     private boolean missingUsage;
     private final boolean transcriptionEnabled;
     private boolean transcriptionUsed;
@@ -39,12 +39,21 @@ final class SessionUsage {
         this.transcriptionEnabled = transcriptionEnabled;
     }
 
-    void requestSent() {
-        unboundRequest = true;
+    void requestSent(String requestKey) {
+        unboundRequestKey = requestKey;
     }
 
     void requestRejected() {
-        unboundRequest = false;
+        unboundRequestKey = null;
+    }
+
+    boolean matchesUnboundRequest(JsonNode response) {
+        return unboundRequestKey != null && unboundRequestKey.equals(
+                response.path("metadata").path(SessionProtocol.TURN_METADATA).textValue());
+    }
+
+    boolean isPendingResponse(String id) {
+        return pending.contains(id);
     }
 
     void responseCreated(String id, boolean matchesRequest) throws IOException {
@@ -56,7 +65,7 @@ final class SessionUsage {
             pending.add(id);
         }
         if (matchesRequest) {
-            unboundRequest = false;
+            unboundRequestKey = null;
         }
     }
 
@@ -72,7 +81,7 @@ final class SessionUsage {
             checkCapacity();
         }
         if (matchesRequest) {
-            unboundRequest = false;
+            unboundRequestKey = null;
         }
         finished.add(id);
         var usage = ResponseUsage.read(data);
@@ -100,7 +109,7 @@ final class SessionUsage {
     }
 
     boolean hasPending() {
-        return unboundRequest || !pending.isEmpty();
+        return unboundRequestKey != null || !pending.isEmpty();
     }
 
     boolean missingUsage() {
@@ -113,7 +122,7 @@ final class SessionUsage {
 
     void close() {
         missingUsage |= hasPending();
-        unboundRequest = false;
+        unboundRequestKey = null;
         pending.clear();
     }
 
@@ -126,15 +135,20 @@ final class SessionUsage {
     }
 
     void updateRateLimits(String eventId, JsonNode limits) {
-        if (rateUpdateIds.size() == MAX_TRACKED_RATE_UPDATES) {
+        boolean trackId = eventId != null && eventId.length() <= SessionProtocol.MAX_ID_CHARS && !eventId.isBlank();
+        if (!limits.isArray() || rateUpdateIds.size() == MAX_TRACKED_RATE_UPDATES
+                || trackId && rateUpdateIds.contains(eventId)) {
             return;
         }
-        if (eventId != null && eventId.length() <= SessionProtocol.MAX_ID_CHARS && !eventId.isBlank()
-                && !rateUpdateIds.add(eventId)) {
+        var snapshot = readRateLimits(limits);
+        if (snapshot.isEmpty()) {
             return;
+        }
+        if (trackId) {
+            rateUpdateIds.add(eventId);
         }
         // Retain one snapshot of documented quotas. Reserved quota is independent of reported usage.
-        rateLimits = limits.isArray() ? readRateLimits(limits) : List.of();
+        rateLimits = snapshot;
     }
 
     private List<RateLimit> readRateLimits(JsonNode limits) {

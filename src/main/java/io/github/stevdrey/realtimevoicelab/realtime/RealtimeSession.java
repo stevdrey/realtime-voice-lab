@@ -821,7 +821,6 @@ public final class RealtimeSession implements AutoCloseable {
         attempt.closeFailure = limit;
         closedElapsed = elapsedTime();
         boolean generationPending = attempt.usage.hasPending();
-        attempt.usage.close();
         resetInput(attempt, MicState.IDLE);
         stopPlayback(attempt);
         // OUTPUT_LIMIT arrives after the provider has already stopped generation.
@@ -1074,6 +1073,9 @@ public final class RealtimeSession implements AutoCloseable {
         }
         inspectIncoming(event, null);
         if (!admitIncoming(attempt)) {
+            if (active == attempt && status.state() == State.CLOSING) {
+                receiveClosingUsage(attempt, event.type(), message);
+            }
             return;
         }
         switch (event.type()) {
@@ -1326,6 +1328,26 @@ public final class RealtimeSession implements AutoCloseable {
 
     private boolean admitIncoming(Attempt attempt) {
         return status.state() != State.CLOSING && withinSessionTime(attempt);
+    }
+
+    private void receiveClosingUsage(Attempt attempt, String type, String message) throws IOException {
+        var usage = attempt.usage;
+        boolean created = "response.created".equals(type);
+        if (!usage.hasPending() || !created && !"response.done".equals(type)) {
+            return;
+        }
+        var response = protocol.textEvent(message).path("response");
+        var id = protocol.requiredId(response.path("id").textValue());
+        boolean matchesRequest = usage.matchesUnboundRequest(response);
+        // Account for known work without reentering the turn lifecycle or extending the close deadline.
+        if (created) {
+            if (matchesRequest) {
+                usage.responseCreated(id, true);
+            }
+        } else if ((matchesRequest || usage.isPendingResponse(id))
+                && usage.responseDone(id, response.path("usage"), matchesRequest)) {
+            statusChanged.run();
+        }
     }
 
     private void checkSessionTime(Attempt attempt) {
@@ -1659,7 +1681,7 @@ public final class RealtimeSession implements AutoCloseable {
     private void responseDone(Attempt attempt, JsonNode response) throws IOException {
         var id = protocol.requiredId(response.path("id").textValue());
         var turn = attempt.turn;
-        boolean matchesRequest = turn != null && matchesUnboundResponse(turn, response);
+        boolean matchesRequest = turn != null && attempt.usage.matchesUnboundRequest(response);
         if (!attempt.usage.responseDone(id, response.path("usage"), matchesRequest)) {
             return;
         }
@@ -1833,19 +1855,13 @@ public final class RealtimeSession implements AutoCloseable {
             return;
         }
         var turn = attempt.turn;
-        boolean matchesRequest = turn != null && matchesUnboundResponse(turn, response);
+        boolean matchesRequest = turn != null && attempt.usage.matchesUnboundRequest(response);
         attempt.usage.responseCreated(id, matchesRequest);
         if (matchesRequest) {
             turn.responseId = id;
             advanceTurn(attempt);
         }
         statusChanged.run();
-    }
-
-    private boolean matchesUnboundResponse(ConversationTurn turn, JsonNode response) {
-        return turn.responseRequested && turn.responseId == null
-                && turn.responseRequestKey().equals(
-                        response.path("metadata").path(SessionProtocol.TURN_METADATA).textValue());
     }
 
     private void turnError(Attempt attempt, JsonNode error) {
@@ -1962,7 +1978,7 @@ public final class RealtimeSession implements AutoCloseable {
             if (active == attempt) {
                 turn.responseRequestedAt = nanoTime.getAsLong();
                 turn.firstAudioReceived = false;
-                attempt.usage.requestSent();
+                attempt.usage.requestSent(turn.responseRequestKey());
                 statusChanged.run();
                 writeTurnEvent(attempt, protocol.createResponse(turn));
             }
