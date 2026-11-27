@@ -58,6 +58,7 @@ import javafx.stage.Window;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -371,6 +372,9 @@ class RealtimeVoiceLabAppTest {
                     """, true);
             socket.text("""
                     {"type":"response.done","response":{"id":"toy-response","status":"completed",
+                     "usage":{"input_tokens":10,"output_tokens":20,
+                              "input_token_details":{"audio_tokens":10,"cached_tokens":0},
+                              "output_token_details":{"text_tokens":20}},
                      "metadata":{"rvl_turn":"rvl-1"},"output":[
                       {"type":"function_call","status":"completed","call_id":"color","name":"changeColor",
                        "arguments":"{\\"color\\":\\"green\\"}"},
@@ -397,12 +401,26 @@ class RealtimeVoiceLabAppTest {
             assertEquals("none", followUp.path("tool_choice").textValue());
 
             onFxThread(() -> {
+                var scene = stage.getScene();
+                var toy = scene.lookup("#toy-workspace");
+                var metrics = scene.lookup("#metrics");
+                assertTrue(toy.localToScene(toy.getBoundsInLocal()).getMaxX()
+                        < metrics.localToScene(metrics.getBoundsInLocal()).getMinX());
                 stage.setWidth(stage.getMinWidth());
                 stage.setHeight(stage.getMinHeight());
                 return null;
             });
             awaitOnFxThread(() -> stage.getScene().getWidth() == 760 && stage.getScene().getHeight() == 520,
                     "The enabled toy workspace did not resize to the minimum");
+            awaitOnFxThread(() -> {
+                var scene = stage.getScene();
+                var cost = (Label) scene.lookup("#cost-value");
+                var elapsed = (Label) scene.lookup("#elapsed-value");
+                var metrics = scene.lookup("#metrics");
+                return metrics.localToScene(metrics.getBoundsInLocal()).getMaxX() <= scene.getWidth()
+                        && cost.getWidth() + 1 >= cost.prefWidth(-1)
+                        && elapsed.getWidth() + 1 >= elapsed.prefWidth(-1);
+            }, "Compact metrics did not fit after the resize layout");
             onFxThread(() -> {
                 var scene = stage.getScene();
                 scene.getRoot().applyCss();
@@ -418,6 +436,16 @@ class RealtimeVoiceLabAppTest {
                 var metricsBounds = metrics.localToScene(metrics.getBoundsInLocal());
                 assertTrue(panelBounds.getMaxX() < metricsBounds.getMinX());
                 assertTrue(metricsBounds.getMaxX() <= scene.getWidth());
+                var cost = (Label) scene.lookup("#cost-value");
+                assertEquals("$0.000148", cost.getText());
+                assertTrue(cost.getAccessibleHelp().contains("$0.000148 USD"));
+                assertTrue(cost.getWidth() + 1 >= cost.prefWidth(-1),
+                        () -> "Estimated cost is clipped: width=" + cost.getWidth() + ", preferred=" + cost.prefWidth(-1));
+                var elapsed = (Label) scene.lookup("#elapsed-value");
+                assertTrue(elapsed.getWidth() + 1 >= elapsed.prefWidth(-1),
+                        () -> "Elapsed time is clipped: width=" + elapsed.getWidth() + ", preferred=" + elapsed.prefWidth(-1));
+                assertEquals("Pending usage", ((Label) scene.lookup("#cost-state")).getText());
+                assertTrue(scene.lookup("#cost-state").isVisible());
                 assertEquals(2, ((SplitPane) scene.lookup("#main-panels")).getItems().size());
                 assertTrue(speaker.devices.isEmpty());
                 return null;
@@ -610,6 +638,16 @@ class RealtimeVoiceLabAppTest {
                 assertFalse(device.wroteOnFxThread);
 
                 if (turn == 1) {
+                    onFxThread(() -> {
+                        var scene = stage.getScene();
+                        assertEquals("—", ((Label) scene.lookup("#cost-value")).getText());
+                        assertEquals("Pending usage", ((Label) scene.lookup("#cost-state")).getText());
+                        assertTrue(scene.lookup("#transcription-cost").isVisible());
+                        var latency = (Label) scene.lookup("#latency-value");
+                        assertTrue(latency.getText().matches("[0-9]+ ms"));
+                        assertTrue(latency.getTooltip().getText().startsWith(latency.getText()));
+                        return null;
+                    });
                     socket.text("""
                             {"type":"response.output_audio_transcript.delta","response_id":"reply-1","item_id":"assistant-1",
                             "output_index":0,"content_index":0,"delta":"Synthetic reply"}
@@ -620,16 +658,31 @@ class RealtimeVoiceLabAppTest {
                             "output_index":0,"content_index":0,"transcript":"Synthetic reply."}
                             """, true);
                     socket.text("""
-                            {"type":"response.done","response":{"id":"reply-1","status":"completed","output":[]}}
+                            {"type":"response.done","response":{"id":"reply-1","status":"completed","output":[],
+                             "usage":{"input_tokens":10,"output_tokens":20,
+                              "input_token_details":{"audio_tokens":10,"cached_tokens":0},
+                              "output_token_details":{"audio_tokens":20}}}}
                             """, true);
                     socket.text("""
                             {"type":"conversation.item.input_audio_transcription.completed","item_id":"input-1",
-                            "content_index":0,"transcript":"Synthetic question."}
+                            "content_index":0,"transcript":"Synthetic question.","usage":{"type":"duration","seconds":3}}
+                            """, true);
+                    socket.text("""
+                            {"type":"rate_limits.updated","event_id":"quota-1","rate_limits":[
+                              {"name":"tokens","limit":1000,"remaining":850,"reset_seconds":12.5}]}
                             """, true);
                     onFxThread(() -> {
                         assertTrue(showsTurnText(stage, "You · Approximate transcript"));
                         assertTrue(showsTurnText(stage, "Synthetic question."));
                         assertTrue(showsTurnText(stage, "Synthetic reply."));
+                        var scene = stage.getScene();
+                        var cost = (Label) scene.lookup("#cost-value");
+                        assertEquals("$0.000500", cost.getText());
+                        assertFalse(scene.lookup("#cost-state").isVisible());
+                        assertTrue(scene.lookup("#transcription-cost").isVisible());
+                        assertTrue(cost.getAccessibleHelp().contains("billed separately"));
+                        assertTrue(cost.getAccessibleHelp().contains("Rates dated"));
+                        assertTrue(cost.getAccessibleHelp().contains("Reset delay at update: 12.5 s."));
                         var stop = (Button) stage.getScene().lookup("#cancel-text");
                         assertEquals("Stop playback", stop.getAccessibleText());
                         assertFalse(stop.isDisabled());
@@ -650,9 +703,15 @@ class RealtimeVoiceLabAppTest {
                             {"type":"conversation.item.input_audio_transcription.failed","item_id":"input-2",
                             "content_index":0,"error":{"message":"private synthetic detail"}}
                             """, true);
+                    socket.text("""
+                            {"type":"response.done","response":{"id":"reply-2","status":"failed","output":[]}}
+                            """, true);
                     onFxThread(() -> {
                         assertTrue(showsTurnText(stage, "Voice input · Transcription unavailable"));
                         assertFalse(showsTurnText(stage, "private synthetic detail"));
+                        assertEquals("≥ $0.000500", ((Label) stage.getScene().lookup("#cost-value")).getText());
+                        assertEquals("Usage unavailable", ((Label) stage.getScene().lookup("#cost-state")).getText());
+                        assertTrue(stage.getScene().lookup("#transcription-cost").isVisible());
                         stage.close();
                         return null;
                     });
@@ -662,6 +721,50 @@ class RealtimeVoiceLabAppTest {
             assertTrue(socket.aborted);
         } finally {
             allowStop.complete(null);
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "1,    0, $0.0000006",
+            "1,    1, $0.00000006",
+            "2208, 0, $0.001324"
+    })
+    void displaysIncompleteUsageAsAConservativeLowerBound(int inputTokens, int cachedTokens,
+                                                          String expectedAmount) throws Exception {
+        var transport = new FakeTransport();
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport);
+                connectButton(stage).fire();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.ready();
+            socket.text("""
+                    {"type":"response.done","response":{"id":"priced","status":"completed","output":[],
+                     "usage":{"input_tokens":%1$d,"output_tokens":0,
+                      "input_token_details":{"text_tokens":%1$d,"cached_tokens":%2$d}}}}
+                    """.formatted(inputTokens, cachedTokens), true);
+            socket.text("""
+                    {"type":"response.done","response":{"id":"unpriced","status":"failed","usage":null,"output":[]}}
+                    """, true);
+            var help = onFxThread(() -> {
+                var scene = stage.getScene();
+                var cost = (Label) scene.lookup("#cost-value");
+                assertEquals("≥ " + expectedAmount, cost.getText());
+                assertEquals("Estimated Realtime response cost ≥ " + expectedAmount, cost.getAccessibleText());
+                assertTrue(cost.getAccessibleHelp().contains("at least " + expectedAmount + " USD."));
+                assertEquals("Usage unavailable", ((Label) scene.lookup("#cost-state")).getText());
+                return cost.getAccessibleHelp();
+            });
+            assertHoveredTooltip(stage, "#cost-value", help);
+        } finally {
             onFxThread(() -> {
                 stage.close();
                 return null;
