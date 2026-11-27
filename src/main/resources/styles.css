@@ -403,3 +403,7 @@
     -fx-font-size: 19px;
     -fx-font-weight: 600;
 }
+
+.metrics:narrow .metric-value {
+    -fx-font-size: 16px;
+}

@@ -107,7 +107,7 @@
                 <Label fx:id="toyTheme" id="toy-theme"/>
                 <Label fx:id="toyCounter" id="toy-counter"/>
             </HBox>
-            <HBox fx:id="metrics" id="metrics" spacing="16" HBox.hgrow="ALWAYS">
+            <HBox fx:id="metrics" id="metrics" spacing="16" HBox.hgrow="ALWAYS" styleClass="metrics">
                 <VBox fx:id="latencyMetric" spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
                     <Label text="Latency" styleClass="caption"/>
                     <Label fx:id="latencyValue" id="latency-value" text="—" styleClass="metric-value"/>

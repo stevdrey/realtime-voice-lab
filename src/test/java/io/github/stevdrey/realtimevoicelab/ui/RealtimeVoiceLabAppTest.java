@@ -411,6 +411,15 @@ class RealtimeVoiceLabAppTest {
             });
             awaitOnFxThread(() -> stage.getScene().getWidth() == 760 && stage.getScene().getHeight() == 520,
                     "The enabled toy workspace did not resize to the minimum");
+            awaitOnFxThread(() -> {
+                var scene = stage.getScene();
+                var cost = (Label) scene.lookup("#cost-value");
+                var elapsed = (Label) scene.lookup("#elapsed-value");
+                var metrics = scene.lookup("#metrics");
+                return metrics.localToScene(metrics.getBoundsInLocal()).getMaxX() <= scene.getWidth()
+                        && cost.getWidth() + 1 >= cost.prefWidth(-1)
+                        && elapsed.getWidth() + 1 >= elapsed.prefWidth(-1);
+            }, "Compact metrics did not fit after the resize layout");
             onFxThread(() -> {
                 var scene = stage.getScene();
                 scene.getRoot().applyCss();

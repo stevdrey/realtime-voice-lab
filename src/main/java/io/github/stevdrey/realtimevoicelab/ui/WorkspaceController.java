@@ -53,6 +53,7 @@ import javafx.util.StringConverter;
 public final class WorkspaceController {
     private static final double METRIC_GAP = 16;
     private static final double MIN_EQUAL_METRIC_WIDTH = 100;
+    private static final double NARROW_METRICS_WIDTH = 280;
 
     private enum MicGesture {
         MOUSE, SPACE, ENTER
@@ -67,6 +68,7 @@ public final class WorkspaceController {
     private static final PseudoClass DISCONNECT = PseudoClass.getPseudoClass("disconnect");
     private static final PseudoClass RECORDING = PseudoClass.getPseudoClass("recording");
     private static final PseudoClass WAITING_FOR_SPEAKER = PseudoClass.getPseudoClass("waiting-for-speaker");
+    private static final PseudoClass NARROW = PseudoClass.getPseudoClass("narrow");
     private static final PseudoClass MIDNIGHT = PseudoClass.getPseudoClass("midnight");
     private static final PseudoClass BLUE = PseudoClass.getPseudoClass("blue");
     private static final PseudoClass GREEN = PseudoClass.getPseudoClass("green");
@@ -512,6 +514,7 @@ public final class WorkspaceController {
     }
 
     private void layoutMetrics() {
+        metrics.pseudoClassStateChanged(NARROW, metrics.getWidth() < NARROW_METRICS_WIDTH);
         double costWidth = Math.ceil(costValue.prefWidth(-1));
         double equalColumnsWidth = 3 * Math.max(MIN_EQUAL_METRIC_WIDTH, costWidth) + 2 * METRIC_GAP;
         boolean compact = metrics.getWidth() < equalColumnsWidth;
