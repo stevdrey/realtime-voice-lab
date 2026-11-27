@@ -51,8 +51,8 @@ import javafx.util.Duration;
 import javafx.util.StringConverter;
 
 public final class WorkspaceController {
-    // Three 100 px metric columns and two 16 px gaps.
-    private static final double COMPACT_METRICS_WIDTH = 332;
+    private static final double METRIC_GAP = 16;
+    private static final double MIN_EQUAL_METRIC_WIDTH = 100;
 
     private enum MicGesture {
         MOUSE, SPACE, ENTER
@@ -161,6 +161,8 @@ public final class WorkspaceController {
     @FXML private Label transcriptionCost;
 
     @FXML private HBox metrics;
+    @FXML private VBox latencyMetric;
+    @FXML private VBox elapsedMetric;
     @FXML private Region toyPanel;
     @FXML private Region toySwatch;
     @FXML private Label toyColor;
@@ -183,12 +185,9 @@ public final class WorkspaceController {
         latencyValue.setAccessibleHelp(latencyHelp);
         modelSelector.getItems().setAll(Model.values());
         toyPanel.managedProperty().bind(toyPanel.visibleProperty());
-        metrics.widthProperty().addListener((observable, previous, width) -> {
-            boolean compact = width.doubleValue() < COMPACT_METRICS_WIDTH;
-            metrics.setSpacing(compact ? 8 : 16);
-            elapsedValue.setMinWidth(compact ? Region.USE_PREF_SIZE : Region.USE_COMPUTED_SIZE);
-            costMetric.setMinWidth(compact ? 100 : Region.USE_COMPUTED_SIZE);
-        });
+        metrics.widthProperty().addListener((observable, previous, width) -> layoutMetrics());
+        costValue.fontProperty().addListener((observable, previous, font) -> layoutMetrics());
+        costValue.textProperty().addListener((observable, previous, text) -> layoutMetrics());
         sessionProgress.managedProperty().bind(sessionProgress.visibleProperty());
         modelSelector.accessibleTextProperty().bind(Bindings.createStringBinding(
                 () -> "Model: " + modelSelector.getValue(), modelSelector.valueProperty()));
@@ -510,6 +509,21 @@ public final class WorkspaceController {
         var latencyHelp = latencyValue.getAccessibleHelp();
         latencyValue.getTooltip().setText(latencyText == null ? latencyHelp : latencyText + "\n" + latencyHelp);
         renderCost(workspace.usage());
+    }
+
+    private void layoutMetrics() {
+        double costWidth = Math.ceil(costValue.prefWidth(-1));
+        double equalColumnsWidth = 3 * Math.max(MIN_EQUAL_METRIC_WIDTH, costWidth) + 2 * METRIC_GAP;
+        boolean compact = metrics.getWidth() < equalColumnsWidth;
+        metrics.setSpacing(compact ? 8 : METRIC_GAP);
+        elapsedValue.setMinWidth(compact ? Region.USE_PREF_SIZE : Region.USE_COMPUTED_SIZE);
+        if (compact) {
+            double available = metrics.getWidth() - elapsedMetric.minWidth(-1) - latencyMetric.minWidth(-1)
+                    - 2 * metrics.getSpacing();
+            costMetric.setMinWidth(Math.min(costWidth, Math.max(0, available)));
+        } else {
+            costMetric.setMinWidth(Region.USE_COMPUTED_SIZE);
+        }
     }
 
     private void renderElapsed() {
