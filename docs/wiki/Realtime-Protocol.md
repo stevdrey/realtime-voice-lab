@@ -35,7 +35,7 @@ RVL-010 adds the **Toy workspace** tool preset. The operator selects it before c
 | `incrementCounter` | Integer `delta` from −10 to 10. The result must stay between 0 and 100. |
 | `resetWorkspace` | An empty object. Restores indigo, slate, and 0. |
 
-Each successful workspace call returns `ok: true` and a `color`, `theme`, and `counter` snapshot after that call. An invalid call returns `ok: false` and a fixed `error` code. A batch applies valid calls in response order on the JavaFX Application Thread. The client checks the session, turn, and deadline again before applying the batch. Toy state stays in memory while the application is open, including across reconnects.
+Each successful workspace call returns `ok: true` and a `color`, `theme`, and `counter` snapshot after that call. An invalid call returns `ok: false` and a fixed `error` code. A batch applies valid calls in response order. The desktop app dispatches each batch to the JavaFX Application Thread. The client checks the session, turn, and deadline again before applying the batch. Toy state stays in memory while the application is open, including across reconnects.
 
 The app reads the complete argument strings from the `function_call` items in a successful, correlated `response.done`. Argument deltas and early completion signals never trigger execution. Call IDs are deduplicated for the connection. Each accepted call receives one `conversation.item.create` with a `function_call_output` item that echoes its `call_id`. Errors contain a fixed code and omit the supplied name and arguments. Invalid IDs end the session because a result cannot be correlated safely.
 

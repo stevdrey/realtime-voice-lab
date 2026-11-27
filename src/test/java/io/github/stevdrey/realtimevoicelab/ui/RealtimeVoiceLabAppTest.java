@@ -409,7 +409,7 @@ class RealtimeVoiceLabAppTest {
                 assertMinimumSizeLayout(stage);
                 var toy = (Region) scene.lookup("#toy-workspace");
                 var swatch = (Region) scene.lookup("#toy-swatch");
-                assertEquals(Color.web("#0f172a"), toy.getBackground().getFills().getFirst().getFill());
+                assertEquals(Color.web("#11151e"), toy.getBackground().getFills().getFirst().getFill());
                 assertEquals(Color.web("#4ade80"), swatch.getBackground().getFills().getFirst().getFill());
                 assertEquals("Color: green", ((Label) scene.lookup("#toy-color")).getText());
                 assertEquals("Theme: midnight", ((Label) scene.lookup("#toy-theme")).getText());

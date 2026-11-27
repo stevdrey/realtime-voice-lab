@@ -156,6 +156,11 @@ public final class RealtimeSession implements AutoCloseable {
         this(transport, statusChanged, microphone, speaker, eventsChanged, Runnable::run);
     }
 
+    /**
+     * Creates a session whose toy workspace batches run through {@code dispatchWorkspaceTools}. The desktop passes
+     * {@code Platform::runLater}. Constructors without a dispatcher run each batch on the thread that delivered the
+     * provider event.
+     */
     public RealtimeSession(RealtimeTransport transport, Runnable statusChanged, MicrophoneCapture microphone,
                            SpeakerPlayback speaker, Runnable eventsChanged, Consumer<Runnable> dispatchWorkspaceTools) {
         this(transport, statusChanged, Duration.ofSeconds(15), Duration.ofSeconds(3),
@@ -1671,6 +1676,8 @@ public final class RealtimeSession implements AutoCloseable {
         if (settings.toolPreset() == ToolPreset.TOY_WORKSPACE) {
             // The desktop dispatches one bounded batch to the FX thread. Cancellation can win while it is queued.
             dispatchWorkspaceTools.accept(() -> executeTools(attempt, turn, exchange, calls));
+            // Render the reconciled first response while the batch waits for its thread.
+            statusChanged.run();
         } else {
             executeTools(attempt, turn, exchange, calls);
         }

@@ -14,6 +14,7 @@
     -rv-success: #4ade80;
     -rv-outgoing: #60a5fa;
     -rv-danger: #f87171;
+    -rv-warning: #fbbf24;
 
     -fx-background-color: -rv-app;
     -fx-font-family: "System";
@@ -49,7 +50,7 @@
 }
 
 .toy-workspace:midnight {
-    -fx-background-color: #0f172a;
+    -fx-background-color: -rv-app;
     -fx-border-color: -rv-accent;
 }
 
@@ -63,7 +64,7 @@
 
 .toy-swatch:blue { -fx-background-color: -rv-outgoing; }
 .toy-swatch:green { -fx-background-color: -rv-success; }
-.toy-swatch:amber { -fx-background-color: #fbbf24; }
+.toy-swatch:amber { -fx-background-color: -rv-warning; }
 
 .label {
     -fx-text-fill: -rv-text;
