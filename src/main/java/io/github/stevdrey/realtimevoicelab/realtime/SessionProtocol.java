@@ -113,12 +113,12 @@ final class SessionProtocol {
         return command(command("conversation.item.delete", eventId).put("item_id", itemId), null);
     }
 
-    Command createResponse(ConversationTurn turn) {
+    Command createResponse(ConversationTurn turn, ToolPreset preset) {
         var event = command("response.create", turn.responseEventId());
         var response = event.putObject("response").put("max_output_tokens", MAX_OUTPUT_TOKENS);
         response.putArray("output_modalities").add(turn.isVoice() ? "audio" : "text");
         response.putObject("metadata").put(TURN_METADATA, turn.responseRequestKey());
-        if (turn.followingTools) {
+        if (turn.followingTools || preset == ToolPreset.NONE) {
             response.put("tool_choice", "none");
         }
         return command(event, null);

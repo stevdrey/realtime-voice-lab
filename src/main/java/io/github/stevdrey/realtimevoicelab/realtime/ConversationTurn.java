@@ -179,6 +179,10 @@ final class ConversationTurn {
         }
     }
 
+    void replaceReplyWithLocalMessage(String message) {
+        finishedText = message;
+    }
+
     void finish(TurnState outcome) {
         if (finishedText == null) {
             finishedText = streamedText();

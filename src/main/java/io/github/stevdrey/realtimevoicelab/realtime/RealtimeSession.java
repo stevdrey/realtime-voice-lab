@@ -35,6 +35,7 @@ public final class RealtimeSession implements AutoCloseable {
     public static final String DEFAULT_MODEL = Model.MINI.id();
     public static final int MAX_INPUT_CHARS = 4_000;
     private static final int MAX_HISTORY_TURNS = 60;
+    private static final String INTERVIEW_REDIRECT = "Return to the interview. Type start, answer: …, or clarify: ….";
     static final Duration MAX_SESSION_TIME = Duration.ofMinutes(5);
     static final Duration ITEM_ACK_TIMEOUT = Duration.ofSeconds(15);
     static final Duration RESPONSE_CORRELATION_TIMEOUT = Duration.ofSeconds(15);
@@ -60,14 +61,15 @@ public final class RealtimeSession implements AutoCloseable {
         MISSING_CREDENTIAL, AUTHENTICATION, CONNECTION, TIMEOUT, ITEM_ACK_TIMEOUT, RESPONSE_TIMEOUT, CANCEL_TIMEOUT,
         PROTOCOL, PROVIDER, REMOTE_CLOSE, SETTINGS_REJECTED, SETTINGS_MISMATCH, SETTINGS_TIMEOUT,
         SESSION_LIMIT, AUDIO_LIMIT, OUTPUT_LIMIT, TOOL_LIMIT, TRANSCRIPTION_CONFLICT,
-        SPEND_LIMIT, SPEND_ESTIMATE_UNAVAILABLE, SPEND_CONFIGURATION
+        SPEND_LIMIT, SPEND_ESTIMATE_UNAVAILABLE, SPEND_CONFIGURATION, RESTRICTED_TOOL_CALL
     }
 
     public record Status(State state, Failure failure) {
     }
 
     public enum TurnState {
-        WAITING, RESPONDING, CANCELLING, COMPLETED, CANCELLED, FAILED, INCOMPLETE, INTERRUPTED, CANCEL_REJECTED
+        WAITING, RESPONDING, CANCELLING, COMPLETED, CANCELLED, FAILED, INCOMPLETE, INTERRUPTED, CANCEL_REJECTED,
+        BLOCKED
     }
 
     public enum TranscriptionModel {
@@ -300,6 +302,17 @@ public final class RealtimeSession implements AutoCloseable {
                 || input == null || input.isBlank() || input.length() > MAX_INPUT_CHARS || !withinSessionTime(attempt)) {
             return false;
         }
+        if (settings.restrictedInterviewer()) {
+            input = input.strip();
+            if (!isInterviewInput(input)) {
+                var blocked = new ConversationTurn(++turnNumber, "Message withheld");
+                blocked.replaceReplyWithLocalMessage(INTERVIEW_REDIRECT);
+                blocked.finish(TurnState.BLOCKED);
+                appendHistory(blocked);
+                statusChanged.run();
+                return true;
+            }
+        }
         var turn = new ConversationTurn(++turnNumber, input);
         addTurn(attempt, turn);
         startDeadline(attempt, ITEM_ACK_TIMEOUT, Failure.ITEM_ACK_TIMEOUT);
@@ -308,6 +321,18 @@ public final class RealtimeSession implements AutoCloseable {
         }
         statusChanged.run();
         return true;
+    }
+
+    private boolean isInterviewInput(String input) {
+        if ("start".equals(input)) {
+            return true;
+        }
+        int separator = input.indexOf(':');
+        return separator >= 0 && !input.substring(separator + 1).isBlank()
+                && switch (input.substring(0, separator)) {
+                    case "answer", "clarify" -> true;
+                    default -> false;
+                };
     }
 
     private void addTurn(Attempt attempt, ConversationTurn turn) {
@@ -716,8 +741,7 @@ public final class RealtimeSession implements AutoCloseable {
             publish(State.ERROR, Failure.SETTINGS_REJECTED);
             return;
         }
-        settings = new SessionSettings(allowedModel, settings.voice(), settings.mode(), settings.instructions(),
-                settings.turnDetection(), settings.toolPreset());
+        settings = settings.withModel(allowedModel);
         connectSelected(transcriptionModel);
     }
 
@@ -727,6 +751,10 @@ public final class RealtimeSession implements AutoCloseable {
         }
 
         Objects.requireNonNull(transcriptionModel);
+        if (settings.restrictedInterviewer() && transcriptionModel != TranscriptionModel.OFF) {
+            publish(State.ERROR, Failure.SETTINGS_REJECTED);
+            return;
+        }
         if (!compatibleInput(settings, transcriptionModel)) {
             publish(State.ERROR, Failure.TRANSCRIPTION_CONFLICT);
             return;
@@ -824,10 +852,11 @@ public final class RealtimeSession implements AutoCloseable {
         resetInput(attempt, MicState.IDLE);
         stopPlayback(attempt);
         // OUTPUT_LIMIT arrives after the provider has already stopped generation.
-        boolean spendStop = limit == Failure.SPEND_LIMIT || limit == Failure.SPEND_ESTIMATE_UNAVAILABLE;
+        boolean cancelOnlyWhenPending = limit == Failure.SPEND_LIMIT || limit == Failure.SPEND_ESTIMATE_UNAVAILABLE
+                || limit == Failure.RESTRICTED_TOOL_CALL;
         attempt.cancelBeforeClose = limit != Failure.OUTPUT_LIMIT
                 && (attempt.turn == null || !attempt.turn.cancelSent)
-                && (spendStop ? generationPending : limit != null || generationPending);
+                && (cancelOnlyWhenPending ? generationPending : limit != null || generationPending);
         finishTurn(attempt, TurnState.INTERRUPTED);
         finishPendingVadTurn(attempt);
         startDeadline(attempt, closeTimeout, limit);
@@ -1690,6 +1719,17 @@ public final class RealtimeSession implements AutoCloseable {
         boolean completed = "completed".equals(outcome);
         var limit = responseLimit(attempt, response, outcome);
         boolean matchesTurn = turn != null && (id.equals(turn.responseId) || matchesRequest);
+        if (settings.restrictedInterviewer()) {
+            var blocked = restrictedToolFailure(attempt, id, response.path("output"));
+            if (blocked != null) {
+                if (matchesTurn) {
+                    turn.replaceReplyWithLocalMessage(INTERVIEW_REDIRECT);
+                    finishTurn(attempt, TurnState.BLOCKED);
+                }
+                stopAtLimit(attempt, limit == null ? blocked : limit);
+                return;
+            }
+        }
         if (matchesTurn) {
             if (limit == null && completed && attempt.interruption == null
                     && (turn.state == TurnState.WAITING || turn.state == TurnState.RESPONDING)
@@ -1729,6 +1769,30 @@ public final class RealtimeSession implements AutoCloseable {
             return Failure.SPEND_ESTIMATE_UNAVAILABLE;
         }
         return attempt.usage.reachedCutoff(pricing.cutoff()) ? Failure.SPEND_LIMIT : null;
+    }
+
+    private Failure restrictedToolFailure(Attempt attempt, String responseId, JsonNode output) {
+        if (!output.isArray()) {
+            return null;
+        }
+        boolean found = false;
+        var seen = new LinkedHashSet<String>();
+        for (var item : output) {
+            if (!"function_call".equals(item.path("type").textValue())) {
+                continue;
+            }
+            found = true;
+            var callId = item.path("call_id").textValue();
+            if (!localTools.validCallId(callId)) {
+                callId = null;
+            } else if (!seen.add(callId)) {
+                continue;
+            }
+            if (!attempt.toolCalls.reserve(responseId, callId)) {
+                return Failure.TOOL_LIMIT;
+            }
+        }
+        return found ? Failure.RESTRICTED_TOOL_CALL : null;
     }
 
     private boolean prepareToolFollowUp(Attempt attempt, ConversationTurn turn, String responseId,
@@ -1980,7 +2044,7 @@ public final class RealtimeSession implements AutoCloseable {
                 turn.firstAudioReceived = false;
                 attempt.usage.requestSent(turn.responseRequestKey());
                 statusChanged.run();
-                writeTurnEvent(attempt, protocol.createResponse(turn));
+                writeTurnEvent(attempt, protocol.createResponse(turn, settings.toolPreset()));
             }
         } else if (turn.responseId != null && turn.state == TurnState.CANCELLING && !turn.cancelSent) {
             turn.cancelSent = true;
@@ -2098,7 +2162,7 @@ public final class RealtimeSession implements AutoCloseable {
         var appliedDetection = acknowledged.turnDetection();
         // Historic manual sessions can still use text if PCM/turn detection was not confirmed.
         if (appliedDetection != requestedDetection
-                && (requestedDetection.automatic() || appliedDetection != null
+                && (update.requested.restrictedInterviewer() || requestedDetection.automatic() || appliedDetection != null
                     || settings.effectiveTurnDetection().automatic())) {
             fail(attempt, Failure.SETTINGS_MISMATCH);
         } else if (!acknowledged.boundedOutput() || update.requested.mode() == Mode.AUDIO && !acknowledged.pcmOutput()
