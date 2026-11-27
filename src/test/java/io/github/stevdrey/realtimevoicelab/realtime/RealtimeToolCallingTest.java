@@ -7,7 +7,9 @@ import java.util.ArrayDeque;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import static io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.Failure;
@@ -34,9 +37,10 @@ class RealtimeToolCallingTest {
     private final FakeTransport transport = new FakeTransport();
     private final ArrayDeque<Runnable> workspaceTasks = new ArrayDeque<>();
     private final AtomicLong now = new AtomicLong(Long.MAX_VALUE - Duration.ofSeconds(1).toNanos());
+    private LongSupplier clock = now::get;
     private CompletableFuture<Void> latestDeadline;
     private final RealtimeSession session = new RealtimeSession(transport, () -> {},
-            Duration.ofSeconds(15), Duration.ofSeconds(3), now::get,
+            Duration.ofSeconds(15), Duration.ofSeconds(3), () -> clock.getAsLong(),
             nanos -> latestDeadline = new CompletableFuture<>(), new MicrophoneCapture(),
             new SpeakerPlayback(), () -> {}, workspaceTasks::addLast);
     private FakeTransport.Socket socket;
@@ -213,6 +217,42 @@ class RealtimeToolCallingTest {
             assertFailure(Failure.ITEM_ACK_TIMEOUT);
         } else {
             assertTrue(session.workspace().canSend());
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Failure.class, names = {"ITEM_ACK_TIMEOUT", "SESSION_LIMIT"})
+    void discardsWorkspaceBatchIfADeadlineExpiresDuringExecution(Failure failure) throws Exception {
+        connectWorkspace();
+        if (failure == Failure.SESSION_LIMIT) {
+            now.addAndGet(RealtimeSession.MAX_SESSION_TIME.toNanos() - 1);
+        }
+        var key = startTurn("expiring");
+        socket.text(done("expiring", "completed", key, call("count", "incrementCounter", "{\"delta\":5}")), true);
+        if (failure == Failure.ITEM_ACK_TIMEOUT) {
+            now.addAndGet(RealtimeSession.TOOL_OUTPUT_TIMEOUT.toNanos() - 1);
+        }
+
+        // Both entry checks see a valid sample. The clock expires during execution, before any timer fires.
+        var entryChecks = new AtomicInteger(2);
+        clock = () -> {
+            long sample = now.get();
+            if (entryChecks.decrementAndGet() == 0) {
+                now.incrementAndGet();
+            }
+            return sample;
+        };
+        int writes = socket.writes.size();
+        workspaceTasks.removeFirst().run();
+
+        assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+        assertFalse(socket.writes.stream().skip(writes).anyMatch(write -> write.contains("\"function_call_output\"")));
+        if (failure == Failure.SESSION_LIMIT) {
+            assertEquals(State.CLOSING, session.status().state());
+            socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+            assertEquals(new RealtimeSession.Status(State.ERROR, failure), session.status());
+        } else {
+            assertFailure(failure);
         }
     }
 

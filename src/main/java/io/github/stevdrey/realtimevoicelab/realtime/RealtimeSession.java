@@ -904,10 +904,22 @@ public final class RealtimeSession implements AutoCloseable {
 
     // Also enforce the time at the point of use if the scheduled callback has not run yet.
     private boolean withinSessionTime(Attempt attempt) {
-        if (nanoTime.getAsLong() - attempt.startedAt < MAX_SESSION_TIME.toNanos()) {
+        return withinSessionTime(attempt, nanoTime.getAsLong());
+    }
+
+    private boolean withinSessionTime(Attempt attempt, long observedAt) {
+        if (observedAt - attempt.startedAt < MAX_SESSION_TIME.toNanos()) {
             return true;
         }
         stopAtLimit(attempt, Failure.SESSION_LIMIT);
+        return false;
+    }
+
+    private boolean withinToolOutputTime(Attempt attempt, ToolExchange exchange, long observedAt) {
+        if (!exchange.expired(observedAt, TOOL_OUTPUT_TIMEOUT.toNanos())) {
+            return true;
+        }
+        fail(attempt, Failure.ITEM_ACK_TIMEOUT);
         return false;
     }
 
@@ -1671,8 +1683,7 @@ public final class RealtimeSession implements AutoCloseable {
                 || turn.toolExchange != exchange || turn.state == TurnState.CANCELLING || !withinSessionTime(attempt)) {
             return;
         }
-        if (exchange.expired(nanoTime.getAsLong(), TOOL_OUTPUT_TIMEOUT.toNanos())) {
-            fail(attempt, Failure.ITEM_ACK_TIMEOUT);
+        if (!withinToolOutputTime(attempt, exchange, nanoTime.getAsLong())) {
             return;
         }
         var outputs = new ArrayList<ToolExchange.Output>();
@@ -1684,6 +1695,11 @@ public final class RealtimeSession implements AutoCloseable {
             outputs.add(new ToolExchange.Output(call.path("call_id").textValue(), result.output().toString()));
         }
         if (preset == ToolPreset.TOY_WORKSPACE) {
+            // A deadline callback can be waiting for this monitor while the batch is evaluated.
+            long observedAt = nanoTime.getAsLong();
+            if (!withinSessionTime(attempt, observedAt) || !withinToolOutputTime(attempt, exchange, observedAt)) {
+                return;
+            }
             toyWorkspace = workspace;
         }
         exchange.completeExecution(outputs);
@@ -1820,8 +1836,7 @@ public final class RealtimeSession implements AutoCloseable {
             return;
         }
         var exchange = turn.toolExchange;
-        if (exchange != null && exchange.expired(nanoTime.getAsLong(), TOOL_OUTPUT_TIMEOUT.toNanos())) {
-            fail(attempt, Failure.ITEM_ACK_TIMEOUT);
+        if (exchange != null && !withinToolOutputTime(attempt, exchange, nanoTime.getAsLong())) {
             return;
         }
         if (!turn.responseRequested && turn.state == TurnState.CANCELLING) {
