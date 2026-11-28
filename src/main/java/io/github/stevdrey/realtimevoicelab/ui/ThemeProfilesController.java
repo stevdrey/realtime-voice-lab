@@ -18,6 +18,7 @@ import javafx.scene.control.Label;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
@@ -38,14 +39,20 @@ public final class ThemeProfilesController {
     @FXML private Button closeButton;
     @FXML private HBox recordingIndicator;
     @FXML private Label recordingLabel;
+    @FXML private Region recordingRing;
+    @FXML private Button stopListeningButton;
 
-    void attach(Button opener, VBox workspace, ThemeProfileStore store, WorkspaceTheme theme) {
+    void attach(Button opener, VBox workspace, ThemeProfileStore store, WorkspaceTheme theme,
+                Runnable stopListening) {
         this.opener = opener;
         this.workspace = workspace;
         this.store = store;
         this.theme = theme;
         overlay.managedProperty().bind(overlay.visibleProperty());
         recordingIndicator.managedProperty().bind(recordingIndicator.visibleProperty());
+        recordingRing.managedProperty().bind(recordingRing.visibleProperty());
+        stopListeningButton.managedProperty().bind(stopListeningButton.visibleProperty());
+        stopListeningButton.setOnAction(event -> stopListening.run());
         profile.getEditor().setTextFormatter(TextInputLimit.formatter(ThemeProfileStore.MAX_NAME_LENGTH));
         opener.setOnAction(event -> open());
         overlay.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
@@ -60,9 +67,15 @@ public final class ThemeProfilesController {
         });
     }
 
-    void renderRecording(boolean recording, String status) {
-        recordingLabel.setText(recording ? status : "");
-        recordingIndicator.setVisible(recording);
+    void renderRecording(boolean recording, boolean listening, String status) {
+        boolean showCaptureState = recording || listening;
+        recordingLabel.setText(showCaptureState ? status : "");
+        recordingIndicator.setVisible(showCaptureState);
+        recordingRing.setVisible(recording);
+        if (!listening && stopListeningButton.isFocused()) {
+            closeButton.requestFocus();
+        }
+        stopListeningButton.setVisible(listening);
     }
 
     private void open() {
@@ -159,12 +172,14 @@ public final class ThemeProfilesController {
             }
         };
         pending = task;
-        // Disabling the actions moves focus away from the control that started the operation.
+        // Park focus on the overlay while the action is disabled so key repeats cannot activate Close.
         restoreFocus = null;
-        for (Node node = overlay.getScene() == null ? null : overlay.getScene().getFocusOwner();
-                node != null; node = node.getParent()) {
+        var scene = overlay.getScene();
+        var focused = scene == null ? null : scene.getFocusOwner();
+        for (Node node = focused; node != null; node = node.getParent()) {
             if (node == actions) {
-                restoreFocus = overlay.getScene().getFocusOwner();
+                restoreFocus = focused;
+                overlay.requestFocus();
                 break;
             }
         }
@@ -191,7 +206,7 @@ public final class ThemeProfilesController {
     private void finishIo() {
         pending = null;
         actions.setDisable(false);
-        if (restoreFocus != null && overlay.isVisible()) {
+        if (restoreFocus != null && overlay.isVisible() && overlay.getScene().getFocusOwner() == overlay) {
             restoreFocus.requestFocus();
         }
         restoreFocus = null;

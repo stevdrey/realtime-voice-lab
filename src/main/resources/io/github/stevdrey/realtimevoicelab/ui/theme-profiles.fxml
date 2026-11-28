@@ -31,10 +31,12 @@
         <HBox alignment="CENTER_LEFT" styleClass="theme-actions">
             <HBox fx:id="recordingIndicator" id="theme-recording" alignment="CENTER_LEFT"
                   styleClass="theme-actions" visible="false">
-                <Region id="theme-recording-ring" styleClass="theme-recording-ring"/>
-                <Label fx:id="recordingLabel" id="theme-recording-label" wrapText="true"/>
+                <Region fx:id="recordingRing" id="theme-recording-ring" styleClass="theme-recording-ring"/>
+                <Label fx:id="recordingLabel" id="theme-recording-label" wrapText="true" minWidth="0"/>
             </HBox>
             <Region HBox.hgrow="ALWAYS"/>
+            <Button fx:id="stopListeningButton" id="theme-stop-listening" text="Stop listening"
+                    visible="false" styleClass="text-action"/>
             <Button fx:id="closeButton" id="theme-close" text="Close" onAction="#close" styleClass="text-action"/>
         </HBox>
     </VBox>

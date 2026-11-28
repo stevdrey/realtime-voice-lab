@@ -617,6 +617,153 @@ class RealtimeVoiceLabAppTest {
         }
     }
 
+    @ParameterizedTest
+    @CsvSource({"SERVER_VAD, false", "SEMANTIC_VAD, true"})
+    void stopsVadFromThemeWithoutClosingItsSession(TurnDetection detection, boolean keyboard,
+                                                    @TempDir Path directory) throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone(), new FakeSpeaker().playback(),
+                        stage.focusedProperty(), new ThemeProfileStore(directory));
+                var settings = openSettings(stage);
+                this.<TurnDetection>combo(settings, "#settings-turn-detection").setValue(detection);
+                ((Button) settings.getScene().lookup("#apply-settings")).fire();
+                connectButton(stage).fire();
+                stage.requestFocus();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.opened();
+            socket.created();
+            socket.textWrite.complete(socket);
+            var defaults = SessionSettings.DEFAULT;
+            socket.updated(new SessionSettings(defaults.model(), defaults.voice(), defaults.mode(),
+                    defaults.instructions(), detection), null);
+            awaitOnFxThread(() -> stage.isFocused() && "Start listening".equals(micStatus(stage)),
+                    "VAD microphone was unavailable");
+            onFxThread(() -> {
+                ((Button) stage.getScene().lookup("#mic-button")).fire();
+                themeButton(stage, "#theme-button").fire();
+                return null;
+            });
+            microphone.queueBlocks(5);
+            awaitOnFxThread(() -> micStatus(stage).startsWith("Listening") && socket.writes.size() == 2
+                            && !themeButton(stage, "#theme-save").isDisabled(),
+                    "VAD and Theme did not become active");
+            onFxThread(() -> {
+                var stop = themeButton(stage, "#theme-stop-listening");
+                assertTrue(stop != null && stop.isVisible() && !stop.isDisabled(),
+                        "Active VAD has no available stop action in Theme");
+                if (keyboard) {
+                    var save = themeButton(stage, "#theme-save");
+                    themeProfile(stage).getEditor().setText("capture");
+                    save.requestFocus();
+                    save.fire();
+                    // Task completion cannot run until this FX callback returns.
+                    assertTrue(save.isDisabled());
+                    assertFalse(stop.isDisabled(), "Profile I/O disabled the stop action");
+                    stop.requestFocus();
+                    assertSame(stop, stage.getScene().getFocusOwner());
+                    pressFocusedKey(stage, KeyCode.SPACE);
+                    Event.fireEvent(stop, new KeyEvent(KeyEvent.KEY_RELEASED, "", "", KeyCode.SPACE,
+                            false, false, false, false));
+                } else {
+                    var root = stage.getScene().getRoot();
+                    root.applyCss();
+                    root.layout();
+                    var bounds = stop.localToScreen(stop.getBoundsInLocal());
+                    var robot = new Robot();
+                    robot.mouseMove(bounds.getCenterX(), bounds.getCenterY());
+                    robot.mouseClick(MouseButton.PRIMARY);
+                }
+                return null;
+            });
+            awaitOnFxThread(() -> microphone.closes.get() == 1
+                            && socket.writes.getLast().contains("input_audio_buffer.clear"),
+                    "Stop listening did not release the microphone and clear buffered input");
+            microphone.queueBlocks(5);
+            socket.text("""
+                    {"type":"input_audio_buffer.cleared"}
+                    """, true);
+            awaitOnFxThread(() -> "Start listening".equals(micStatus(stage))
+                            && !stage.getScene().lookup("#theme-recording").isVisible()
+                            && (!keyboard || themeStatus(stage).startsWith("Saved")),
+                    "The modal did not clear capture state after acknowledgement");
+            onFxThread(() -> {
+                assertTrue(stage.getScene().lookup("#theme-overlay").isVisible(), "Stopping closed Theme");
+                assertFalse(themeButton(stage, "#theme-stop-listening").isVisible());
+                if (keyboard) {
+                    assertSame(themeButton(stage, "#theme-close"), stage.getScene().getFocusOwner());
+                }
+                assertSession(stage, "Connected", "Disconnect", true);
+                assertEquals(List.of(socket), transport.attempts);
+                assertEquals(0, socket.closeWrites);
+                assertEquals(1, socket.writes.stream().filter(write -> write.contains("input_audio_buffer.append")).count());
+                assertFalse(socket.writes.stream().anyMatch(write -> write.contains("input_audio_buffer.commit")));
+                return null;
+            });
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    @Test
+    void restoresProfileActionFocusOnlyIfTheOperatorHasNotMovedIt(@TempDir Path directory) throws Exception {
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, new FakeTransport(), new FakeMicrophone().microphone(),
+                        new FakeSpeaker().playback(), stage.focusedProperty(), new ThemeProfileStore(directory));
+                themeButton(stage, "#theme-button").fire();
+                stage.requestFocus();
+                return null;
+            });
+            awaitOnFxThread(() -> stage.isFocused() && !themeButton(stage, "#theme-save").isDisabled(),
+                    "Theme profile actions were unavailable");
+            onFxThread(() -> {
+                var save = themeButton(stage, "#theme-save");
+                themeProfile(stage).getEditor().setText("first");
+                save.requestFocus();
+                save.fire();
+                assertTrue(save.isDisabled());
+                themeButton(stage, "#theme-close").fire();
+                themeButton(stage, "#theme-button").fire();
+                assertSame(themeButton(stage, "#theme-close"), stage.getScene().getFocusOwner());
+                return null;
+            });
+            awaitOnFxThread(() -> themeStatus(stage).contains("first"), "First save did not finish");
+            onFxThread(() -> {
+                assertSame(themeButton(stage, "#theme-close"), stage.getScene().getFocusOwner(),
+                        "Profile completion took focus away from the reopened dialog's Close button");
+                var save = themeButton(stage, "#theme-save");
+                themeProfile(stage).getEditor().setText("second");
+                save.requestFocus();
+                save.fire();
+                assertTrue(save.isDisabled());
+                assertSame(stage.getScene().lookup("#theme-overlay"), stage.getScene().getFocusOwner(),
+                        "A focused modal button can react to a repeated Space while the action is disabled");
+                return null;
+            });
+            awaitOnFxThread(() -> themeStatus(stage).contains("second"), "Second save did not finish");
+            onFxThread(() -> {
+                assertSame(themeButton(stage, "#theme-save"), stage.getScene().getFocusOwner(),
+                        "Completion did not restore a profile action whose focus was parked");
+                return null;
+            });
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
     private void assertThemeRecordingIndicator(Stage stage, ThemeTokens theme) {
         var scene = stage.getScene();
         scene.getRoot().applyCss();

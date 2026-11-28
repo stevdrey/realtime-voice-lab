@@ -18,7 +18,7 @@ The footer shows the latest voice response latency, elapsed session time and est
 
 Select **Restricted Interviewer** under **Settings → Preset** while disconnected to practice a software engineering interview in text with tools disabled. After connecting, type `start`, then use `answer:` or `clarify:` followed by your message. The app redirects messages outside those forms locally. See [RVL-013 and its test scenarios](docs/wiki/Testing.md#rvl-013-restricted-interviewer-verification).
 
-Open **Theme** in the app header to apply **Ocean**, save the current appearance under a name, or load a saved profile. Dismiss the dialog with **Close** or **Esc**. **Reset to default** restores the built-in indigo theme and keeps your saved profiles. Saving an existing name updates that profile. Profiles are case-insensitive and stored as versioned JSON under `~/.realtime-voice-lab/themes/`. The app starts with the default theme and you can load any saved profile after restart. Theme changes work during an active session.
+Open **Theme** in the app header to apply **Ocean**, save the current appearance under a name, or load a saved profile. Dismiss the dialog with **Close** or **Esc**. **Reset to default** restores the built-in indigo theme and keeps your saved profiles. Saving an existing name updates that profile. Profiles are case-insensitive and stored as versioned JSON under `~/.realtime-voice-lab/themes/`. The app starts with the default theme and you can load any saved profile after restart. Theme changes work during an active session. While VAD is capturing, the dialog offers **Stop listening**.
 
 ## Goals
 - Inspect GA WebSocket events and learn the session lifecycle.

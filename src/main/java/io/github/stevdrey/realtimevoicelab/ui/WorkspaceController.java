@@ -194,7 +194,7 @@ public final class WorkspaceController {
 
     @FXML
     private void initialize() {
-        themeProfilesController.attach(themeButton, root, themeProfiles, theme);
+        themeProfilesController.attach(themeButton, root, themeProfiles, theme, this::stopListeningFromTheme);
         sceneRoot.heightProperty().addListener((observable, previous, height) ->
                 root.pseudoClassStateChanged(COMPACT_HEIGHT, height.doubleValue() < COMPACT_WORKSPACE_HEIGHT));
         elapsedTimer.setCycleCount(Timeline.INDEFINITE);
@@ -412,6 +412,11 @@ public final class WorkspaceController {
         if (!session.stopListening()) {
             session.startAudio();
         }
+        renderSession();
+    }
+
+    private void stopListeningFromTheme() {
+        session.stopListening();
         renderSession();
     }
 
@@ -720,7 +725,7 @@ public final class WorkspaceController {
             case UNAVAILABLE -> "Microphone unavailable. Check your input device.";
             case BACKLOG -> "Audio upload fell behind. Listening stopped.";
         });
-        themeProfilesController.renderRecording(recording, micStatus.getText());
+        themeProfilesController.renderRecording(recording, listening, micStatus.getText());
     }
 
     private void sendText() {

@@ -95,9 +95,14 @@ public final class ThemeProfileStore {
         var path = profilePath(name);
         var profile = new StoredProfile(VERSION, validTokens(tokens));
         Files.createDirectories(directory);
-        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS) && names().size() >= MAX_PROFILES) {
-            throw new InvalidProfileException("Up to " + MAX_PROFILES
-                    + " theme profiles can be saved. Use an existing name to replace one.");
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+            if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+                throw new InvalidProfileException("A theme profile must be a regular file.");
+            }
+            if (names().size() >= MAX_PROFILES) {
+                throw new InvalidProfileException("Up to " + MAX_PROFILES
+                        + " theme profiles can be saved. Use an existing name to replace one.");
+            }
         }
         var temp = Files.createTempFile(directory, ".profile-", ".tmp");
         try {

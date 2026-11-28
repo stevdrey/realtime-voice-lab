@@ -1,9 +1,12 @@
 package io.github.stevdrey.realtimevoicelab.ui.theme;
 
+import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
 
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore.InvalidProfileException;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens.ColorRole;
@@ -22,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.abort;
 
 class ThemeProfileStoreTest {
     @TempDir Path directory;
@@ -84,9 +88,7 @@ class ThemeProfileStoreTest {
     @Test
     void capsNewProfilesAndListsTheFirstNamesInOrder() throws Exception {
         var store = new ThemeProfileStore(directory);
-        for (int i = ThemeProfileStore.MAX_PROFILES; i > 0; i--) {
-            store.save("p%03d".formatted(i), ThemeTokens.defaults());
-        }
+        fillProfileStore(store);
         var names = store.names();
         assertEquals(ThemeProfileStore.MAX_PROFILES, names.size());
         assertEquals("p001", names.getFirst());
@@ -94,6 +96,37 @@ class ThemeProfileStoreTest {
         assertThrows(InvalidProfileException.class, () -> store.save("p101", ThemeTokens.defaults()));
         store.save("P050", ThemeTokens.defaults());
         assertEquals(names, store.names());
+    }
+
+    @Test
+    void rejectsASymbolicLinkAsAProfileDestinationAtTheCap() throws Exception {
+        var store = new ThemeProfileStore(directory);
+        var target = Path.of("profile-p001.json");
+        var link = directory.resolve("profile-z-extra.json");
+        try {
+            Files.createSymbolicLink(link, target);
+        } catch (IOException | UnsupportedOperationException | SecurityException unavailable) {
+            abort("This test filesystem cannot create symbolic links");
+        }
+        fillProfileStore(store);
+        var originalTarget = Files.readString(directory.resolve(target));
+
+        assertThrows(InvalidProfileException.class, () -> store.save("z-extra", ThemeTokens.defaults()));
+        assertEquals(target, Files.readSymbolicLink(link));
+        assertEquals(originalTarget, Files.readString(directory.resolve(target)));
+        try (var paths = Files.list(directory)) {
+            assertEquals(ThemeProfileStore.MAX_PROFILES,
+                    paths.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)).count());
+        }
+        store.save("p050", ThemeTokens.defaults());
+        assertEquals(ThemeTokens.defaults(), store.load("p050"));
+        assertEquals(ThemeProfileStore.MAX_PROFILES, store.names().size());
+    }
+
+    private void fillProfileStore(ThemeProfileStore store) throws IOException {
+        for (int i = ThemeProfileStore.MAX_PROFILES; i > 0; i--) {
+            store.save(String.format(Locale.ROOT, "p%03d", i), ThemeTokens.defaults());
+        }
     }
 
     @ParameterizedTest
