@@ -104,6 +104,9 @@ public final class WorkspaceController {
     @FXML
     private ComboBox<TranscriptionModel> transcriptionSelector;
 
+    // Restored when the saved settings leave Restricted Interviewer.
+    private TranscriptionModel transcriptionBeforeRestricted;
+
     @FXML
     private Region statusDot;
 
@@ -198,8 +201,7 @@ public final class WorkspaceController {
             var saved = workspace.settings().values();
             var selected = modelSelector.getValue();
             if (selected != null && selected != saved.model()) {
-                session.configure(new SessionSettings(selected, saved.voice(), saved.mode(),
-                        saved.instructions(), saved.turnDetection(), saved.toolPreset()), workspace.status().state());
+                session.configure(saved.withModel(selected), workspace.status().state());
                 renderSession();
             }
         });
@@ -450,6 +452,7 @@ public final class WorkspaceController {
         var state = status.state();
         var settings = workspace.settings();
         var mode = settings.values().mode();
+        boolean restricted = settings.values().restrictedInterviewer();
         boolean disconnected = state == RealtimeSession.State.DISCONNECTED || state == RealtimeSession.State.ERROR;
         renderedState = state;
         sessionStatus.setText(switch (state) {
@@ -474,13 +477,21 @@ public final class WorkspaceController {
         connectButton.setDisable(state == RealtimeSession.State.CLOSING);
         connectButton.pseudoClassStateChanged(DISCONNECT, state == RealtimeSession.State.READY);
         composer.setDisable(state != RealtimeSession.State.READY);
+        composer.setPromptText(restricted ? "start, answer: …, or clarify: …" : "Type a message…");
         canSendText = workspace.canSend();
         updateSendButton();
         cancelButton.setDisable(!workspace.canCancel());
         modelSelector.setValue(settings.values().model());
         modelSelector.setDisable(!disconnected);
-        sessionMode.setText(mode.toString());
-        transcriptionSelector.setDisable(!disconnected);
+        sessionMode.setText(restricted ? SessionSettings.Preset.RESTRICTED_INTERVIEWER.toString() : mode.toString());
+        if (restricted && transcriptionSelector.getValue() != TranscriptionModel.OFF) {
+            transcriptionBeforeRestricted = transcriptionSelector.getValue();
+            transcriptionSelector.setValue(TranscriptionModel.OFF);
+        } else if (!restricted && transcriptionBeforeRestricted != null) {
+            transcriptionSelector.setValue(transcriptionBeforeRestricted);
+            transcriptionBeforeRestricted = null;
+        }
+        transcriptionSelector.setDisable(!disconnected || restricted);
         settingsButton.setDisable(!settings.canEdit());
         settingsTooltip.setText(settings.canEdit() ? "Settings" : "Settings (unavailable while busy)");
         if (settingsDialog != null && state != settingsDialogState) {
@@ -489,7 +500,7 @@ public final class WorkspaceController {
         }
         boolean vad = settings.values().effectiveTurnDetection().automatic();
         renderAudio(workspace.microphone(), workspace.speaker(), mode, vad, settings.applying());
-        renderConversation(workspace.turns(), mode, vad);
+        renderConversation(workspace.turns(), mode, vad, restricted);
         renderMetrics(workspace);
         toyPanel.setVisible(settings.values().toolPreset() == ToolPreset.TOY_WORKSPACE);
         if (toyPanel.isVisible()) {
@@ -679,9 +690,10 @@ public final class WorkspaceController {
         sendButton.setDisable(!canSendText || composer.getText().isBlank());
     }
 
-    private void renderConversation(List<RealtimeSession.TurnView> turns, Mode mode, boolean vad) {
+    private void renderConversation(List<RealtimeSession.TurnView> turns, Mode mode, boolean vad, boolean restricted) {
         conversationEmpty.setText(renderedState == RealtimeSession.State.READY
-                ? mode == Mode.TEXT ? "Send a message."
+                ? restricted ? "Type start to begin the interview."
+                    : mode == Mode.TEXT ? "Send a message."
                         : vad ? "Send a message or start listening." : "Send a message or hold the microphone to talk."
                 : "Connect to start a conversation.");
         conversationEmpty.setVisible(turns.isEmpty());
@@ -711,6 +723,7 @@ public final class WorkspaceController {
         private final long number;
         private final Label user = new Label("You");
         private final Label input = new Label();
+        private final Label assistant = new Label();
         private final Label reply = new Label();
         private final Label status = new Label();
 
@@ -724,7 +737,6 @@ public final class WorkspaceController {
             reply.managedProperty().bind(reply.visibleProperty());
             status.managedProperty().bind(status.visibleProperty());
             input.setWrapText(true);
-            var assistant = new Label("Assistant");
             user.getStyleClass().add("caption");
             assistant.getStyleClass().add("caption");
             getChildren().addAll(user, input, assistant, reply, status);
@@ -740,6 +752,7 @@ public final class WorkspaceController {
             });
             reply.setText(turn.output());
             reply.setVisible(!turn.output().isEmpty());
+            assistant.setText(turn.state() == RealtimeSession.TurnState.BLOCKED ? "Local redirect" : "Assistant");
             var message = switch (turn.state()) {
                 case WAITING -> "Waiting for response…";
                 case RESPONDING -> "Responding…";
@@ -751,6 +764,7 @@ public final class WorkspaceController {
                 case INCOMPLETE -> "Response incomplete";
                 case INTERRUPTED -> "Response interrupted";
                 case CANCEL_REJECTED -> "Cancellation failed. Try again or disconnect.";
+                case BLOCKED -> "";
             };
             status.setText(message);
             status.setVisible(!message.isEmpty());
@@ -776,6 +790,7 @@ public final class WorkspaceController {
             case AUDIO_LIMIT -> "Audio turn limit reached";
             case OUTPUT_LIMIT -> "Response output limit reached";
             case TOOL_LIMIT -> "Session tool-call limit reached";
+            case RESTRICTED_TOOL_CALL -> "Restricted Interviewer blocked a tool call. Reconnect to continue.";
             case SPEND_LIMIT -> "Estimated spend threshold reached";
             case SPEND_ESTIMATE_UNAVAILABLE -> "Estimated spend unavailable. Session stopped.";
             case SPEND_CONFIGURATION -> "Check the estimated spend limit and model pricing configuration.";

@@ -20,7 +20,8 @@ final class ToolCallBudget {
     }
 
     boolean reserve(String responseId, String callId) {
-        return reported.remove(new ReportedCall(responseId, callId)) || takeSlot();
+        // A missing or invalid call ID cannot correlate two events for quota accounting.
+        return (callId != null && reported.remove(new ReportedCall(responseId, callId))) || takeSlot();
     }
 
     boolean claim(String callId) {

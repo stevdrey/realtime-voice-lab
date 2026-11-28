@@ -16,6 +16,8 @@ To try voice control, select **Toy workspace** under **Settings → Tool preset*
 
 The footer shows the latest voice response latency, elapsed session time and estimated Realtime response cost in USD. Hover over **Est. cost** for usage, pricing date, rate limits and exclusions. Input transcription is billed separately. A local pricing file and an optional estimated spend cutoff are documented in [Security and cost](docs/wiki/Security-and-Cost.md). See [RVL-012](../../issues/18).
 
+Select **Restricted Interviewer** under **Settings → Preset** while disconnected to practice a software engineering interview in text with tools disabled. After connecting, type `start`, then use `answer:` or `clarify:` followed by your message. The app redirects messages outside those forms locally. See [RVL-013 and its test scenarios](docs/wiki/Testing.md#rvl-013-restricted-interviewer-verification).
+
 ## Goals
 - Inspect GA WebSocket events and learn the session lifecycle.
 - Talk to `gpt-realtime-2.1-mini` using text and push-to-talk audio.

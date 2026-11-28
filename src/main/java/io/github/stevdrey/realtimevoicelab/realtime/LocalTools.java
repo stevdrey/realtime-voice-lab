@@ -58,17 +58,18 @@ final class LocalTools {
                 parameter.declare(properties.putObject(parameter.name()));
             }
         }
-        session.put("tool_choice", "auto");
+        session.put("tool_choice", choiceFor(preset));
     }
 
     ToolPreset confirmedPreset(JsonNode session) {
         var tools = session.path("tools");
-        if (!"auto".equals(session.path("tool_choice").textValue()) || !tools.isArray()) {
+        if (!tools.isArray()) {
             return null;
         }
+        var choice = session.path("tool_choice").textValue();
         for (var preset : ToolPreset.values()) {
             var expected = toolsFor(preset);
-            if (tools.size() == expected.size()
+            if (choiceFor(preset).equals(choice) && tools.size() == expected.size()
                     && expected.stream().allMatch(tool -> tool.confirmedIn(tools))) {
                 return preset;
             }
@@ -76,10 +77,15 @@ final class LocalTools {
         return null;
     }
 
+    private String choiceFor(ToolPreset preset) {
+        return preset == ToolPreset.NONE ? "none" : "auto";
+    }
+
     private List<Tool> toolsFor(ToolPreset preset) {
         return switch (preset) {
             case DEMO_COUNTER -> DEMO_TOOLS;
             case TOY_WORKSPACE -> WORKSPACE_TOOLS;
+            case NONE -> List.of();
         };
     }
 

@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -35,6 +36,7 @@ public final class RealtimeSession implements AutoCloseable {
     public static final String DEFAULT_MODEL = Model.MINI.id();
     public static final int MAX_INPUT_CHARS = 4_000;
     private static final int MAX_HISTORY_TURNS = 60;
+    private static final String INTERVIEW_REDIRECT = "Return to the interview. Type start, answer: …, or clarify: ….";
     static final Duration MAX_SESSION_TIME = Duration.ofMinutes(5);
     static final Duration ITEM_ACK_TIMEOUT = Duration.ofSeconds(15);
     static final Duration RESPONSE_CORRELATION_TIMEOUT = Duration.ofSeconds(15);
@@ -60,14 +62,15 @@ public final class RealtimeSession implements AutoCloseable {
         MISSING_CREDENTIAL, AUTHENTICATION, CONNECTION, TIMEOUT, ITEM_ACK_TIMEOUT, RESPONSE_TIMEOUT, CANCEL_TIMEOUT,
         PROTOCOL, PROVIDER, REMOTE_CLOSE, SETTINGS_REJECTED, SETTINGS_MISMATCH, SETTINGS_TIMEOUT,
         SESSION_LIMIT, AUDIO_LIMIT, OUTPUT_LIMIT, TOOL_LIMIT, TRANSCRIPTION_CONFLICT,
-        SPEND_LIMIT, SPEND_ESTIMATE_UNAVAILABLE, SPEND_CONFIGURATION
+        SPEND_LIMIT, SPEND_ESTIMATE_UNAVAILABLE, SPEND_CONFIGURATION, RESTRICTED_TOOL_CALL
     }
 
     public record Status(State state, Failure failure) {
     }
 
     public enum TurnState {
-        WAITING, RESPONDING, CANCELLING, COMPLETED, CANCELLED, FAILED, INCOMPLETE, INTERRUPTED, CANCEL_REJECTED
+        WAITING, RESPONDING, CANCELLING, COMPLETED, CANCELLED, FAILED, INCOMPLETE, INTERRUPTED, CANCEL_REJECTED,
+        BLOCKED
     }
 
     public enum TranscriptionModel {
@@ -146,6 +149,7 @@ public final class RealtimeSession implements AutoCloseable {
     private ToyWorkspace toyWorkspace = ToyWorkspace.DEFAULT;
     private final ArrayDeque<ConversationTurn> history = new ArrayDeque<>();
     private long turnNumber;
+    private ConversationTurn localRedirect;
     private Attempt active;
     private UsageView closedUsage;
     private Duration closedElapsed;
@@ -300,6 +304,20 @@ public final class RealtimeSession implements AutoCloseable {
                 || input == null || input.isBlank() || input.length() > MAX_INPUT_CHARS || !withinSessionTime(attempt)) {
             return false;
         }
+        if (settings.restrictedInterviewer()) {
+            input = input.strip();
+            if (!isInterviewInput(input)) {
+                // Consecutive redirects share one row so they cannot evict interview turns.
+                if (localRedirect == null || history.peekLast() != localRedirect) {
+                    localRedirect = new ConversationTurn(++turnNumber, "Message withheld");
+                    localRedirect.replaceReplyWithLocalMessage(INTERVIEW_REDIRECT);
+                    localRedirect.finish(TurnState.BLOCKED);
+                    appendHistory(localRedirect);
+                }
+                statusChanged.run();
+                return true;
+            }
+        }
         var turn = new ConversationTurn(++turnNumber, input);
         addTurn(attempt, turn);
         startDeadline(attempt, ITEM_ACK_TIMEOUT, Failure.ITEM_ACK_TIMEOUT);
@@ -308,6 +326,18 @@ public final class RealtimeSession implements AutoCloseable {
         }
         statusChanged.run();
         return true;
+    }
+
+    private boolean isInterviewInput(String input) {
+        if ("start".equalsIgnoreCase(input)) {
+            return true;
+        }
+        int separator = input.indexOf(':');
+        return separator >= 0 && !input.substring(separator + 1).isBlank()
+                && switch (input.substring(0, separator).strip().toLowerCase(Locale.ROOT)) {
+                    case "answer", "clarify" -> true;
+                    default -> false;
+                };
     }
 
     private void addTurn(Attempt attempt, ConversationTurn turn) {
@@ -716,8 +746,7 @@ public final class RealtimeSession implements AutoCloseable {
             publish(State.ERROR, Failure.SETTINGS_REJECTED);
             return;
         }
-        settings = new SessionSettings(allowedModel, settings.voice(), settings.mode(), settings.instructions(),
-                settings.turnDetection(), settings.toolPreset());
+        settings = settings.withModel(allowedModel);
         connectSelected(transcriptionModel);
     }
 
@@ -727,6 +756,10 @@ public final class RealtimeSession implements AutoCloseable {
         }
 
         Objects.requireNonNull(transcriptionModel);
+        if (settings.restrictedInterviewer() && transcriptionModel != TranscriptionModel.OFF) {
+            publish(State.ERROR, Failure.SETTINGS_REJECTED);
+            return;
+        }
         if (!compatibleInput(settings, transcriptionModel)) {
             publish(State.ERROR, Failure.TRANSCRIPTION_CONFLICT);
             return;
@@ -824,10 +857,11 @@ public final class RealtimeSession implements AutoCloseable {
         resetInput(attempt, MicState.IDLE);
         stopPlayback(attempt);
         // OUTPUT_LIMIT arrives after the provider has already stopped generation.
-        boolean spendStop = limit == Failure.SPEND_LIMIT || limit == Failure.SPEND_ESTIMATE_UNAVAILABLE;
+        boolean cancelOnlyWhenPending = limit == Failure.SPEND_LIMIT || limit == Failure.SPEND_ESTIMATE_UNAVAILABLE
+                || limit == Failure.RESTRICTED_TOOL_CALL;
         attempt.cancelBeforeClose = limit != Failure.OUTPUT_LIMIT
                 && (attempt.turn == null || !attempt.turn.cancelSent)
-                && (spendStop ? generationPending : limit != null || generationPending);
+                && (cancelOnlyWhenPending ? generationPending : limit != null || generationPending);
         finishTurn(attempt, TurnState.INTERRUPTED);
         finishPendingVadTurn(attempt);
         startDeadline(attempt, closeTimeout, limit);
@@ -1157,18 +1191,28 @@ public final class RealtimeSession implements AutoCloseable {
                     statusChanged.run();
                 }
             }
-            case "response.function_call_arguments.done" -> {
+            case "response.function_call_arguments.delta", "response.function_call_arguments.done" -> {
                 if (status.state() == State.READY) {
-                    var signal = protocol.textEvent(message);
-                    var responseId = signal.path("response_id").textValue();
-                    var callId = signal.path("call_id").textValue();
-                    // These signals may also come from cancelled responses. Count them without dispatching.
-                    if (!attempt.toolCalls.recordSignal(
-                            responseId != null && responseId.length() <= SessionProtocol.MAX_ID_CHARS
-                                    ? responseId : null,
-                            localTools.validCallId(callId) ? callId : null)) {
-                        stopAtLimit(attempt, Failure.TOOL_LIMIT);
+                    if (settings.restrictedInterviewer()) {
+                        closeOnRestrictedToolSignal(attempt);
+                    } else if ("response.function_call_arguments.done".equals(event.type())) {
+                        var signal = protocol.textEvent(message);
+                        var responseId = signal.path("response_id").textValue();
+                        var callId = signal.path("call_id").textValue();
+                        // Completion signals may also come from cancelled responses. Count them without dispatching.
+                        if (!attempt.toolCalls.recordSignal(
+                                responseId != null && responseId.length() <= SessionProtocol.MAX_ID_CHARS
+                                        ? responseId : null,
+                                localTools.validCallId(callId) ? callId : null)) {
+                            stopAtLimit(attempt, Failure.TOOL_LIMIT);
+                        }
                     }
+                }
+            }
+            case "response.output_item.added", "response.output_item.done" -> {
+                if (status.state() == State.READY && settings.restrictedInterviewer()
+                        && "function_call".equals(protocol.textEvent(message).path("item").path("type").textValue())) {
+                    closeOnRestrictedToolSignal(attempt);
                 }
             }
             case "response.output_audio.done", "response.output_audio_transcript.delta",
@@ -1690,6 +1734,17 @@ public final class RealtimeSession implements AutoCloseable {
         boolean completed = "completed".equals(outcome);
         var limit = responseLimit(attempt, response, outcome);
         boolean matchesTurn = turn != null && (id.equals(turn.responseId) || matchesRequest);
+        if (settings.restrictedInterviewer()) {
+            var blocked = restrictedToolFailure(attempt, id, response.path("output"));
+            if (blocked != null) {
+                if (matchesTurn) {
+                    blockRestrictedTurn(attempt);
+                }
+                // The blocked call takes priority over a concurrent output or spend limit.
+                stopAtLimit(attempt, blocked);
+                return;
+            }
+        }
         if (matchesTurn) {
             if (limit == null && completed && attempt.interruption == null
                     && (turn.state == TurnState.WAITING || turn.state == TurnState.RESPONDING)
@@ -1729,6 +1784,48 @@ public final class RealtimeSession implements AutoCloseable {
             return Failure.SPEND_ESTIMATE_UNAVAILABLE;
         }
         return attempt.usage.reachedCutoff(pricing.cutoff()) ? Failure.SPEND_LIMIT : null;
+    }
+
+    private void closeOnRestrictedToolSignal(Attempt attempt) {
+        // Charge the first signal. Closing prevents subsequent fragments from being counted.
+        if (!attempt.toolCalls.recordSignal(null, null)) {
+            stopAtLimit(attempt, Failure.TOOL_LIMIT);
+            return;
+        }
+        blockRestrictedTurn(attempt);
+        stopAtLimit(attempt, Failure.RESTRICTED_TOOL_CALL);
+    }
+
+    private void blockRestrictedTurn(Attempt attempt) {
+        var turn = attempt.turn;
+        if (turn != null) {
+            turn.replaceReplyWithLocalMessage(INTERVIEW_REDIRECT);
+            finishTurn(attempt, TurnState.BLOCKED);
+        }
+    }
+
+    private Failure restrictedToolFailure(Attempt attempt, String responseId, JsonNode output) {
+        if (!output.isArray()) {
+            return null;
+        }
+        boolean found = false;
+        var seen = new LinkedHashSet<String>();
+        for (var item : output) {
+            if (!"function_call".equals(item.path("type").textValue())) {
+                continue;
+            }
+            found = true;
+            var callId = item.path("call_id").textValue();
+            if (!localTools.validCallId(callId)) {
+                callId = null;
+            } else if (!seen.add(callId)) {
+                continue;
+            }
+            if (!attempt.toolCalls.reserve(responseId, callId)) {
+                return Failure.TOOL_LIMIT;
+            }
+        }
+        return found ? Failure.RESTRICTED_TOOL_CALL : null;
     }
 
     private boolean prepareToolFollowUp(Attempt attempt, ConversationTurn turn, String responseId,
@@ -1980,7 +2077,7 @@ public final class RealtimeSession implements AutoCloseable {
                 turn.firstAudioReceived = false;
                 attempt.usage.requestSent(turn.responseRequestKey());
                 statusChanged.run();
-                writeTurnEvent(attempt, protocol.createResponse(turn));
+                writeTurnEvent(attempt, protocol.createResponse(turn, settings.toolPreset()));
             }
         } else if (turn.responseId != null && turn.state == TurnState.CANCELLING && !turn.cancelSent) {
             turn.cancelSent = true;
