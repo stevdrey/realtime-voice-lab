@@ -194,7 +194,6 @@ public final class WorkspaceController {
 
     @FXML
     private void initialize() {
-        themeProfilesController.attach(themeButton, root, themeProfiles, theme, session, this::stopListeningFromTheme);
         sceneRoot.heightProperty().addListener((observable, previous, height) ->
                 root.pseudoClassStateChanged(COMPACT_HEIGHT, height.doubleValue() < COMPACT_WORKSPACE_HEIGHT));
         elapsedTimer.setCycleCount(Timeline.INDEFINITE);
@@ -252,6 +251,8 @@ public final class WorkspaceController {
         Tooltip.install(settingsControl, settingsTooltip);
         settingsButton.setOnAction(event -> showSettings());
         installMicControls();
+        themeProfilesController.attach(themeButton, root, sceneRoot, themeProfiles, theme, session,
+                this::stopListeningFromTheme);
         connectButton.setTooltip(connectTooltip);
         connectButton.setOnAction(event -> {
             switch (renderedState) {
@@ -307,6 +308,7 @@ public final class WorkspaceController {
     void watchFocus(ObservableBooleanValue windowFocus) {
         windowFocus.addListener((observable, previous, focused) -> {
             if (!focused) {
+                themeProfilesController.cancelThemeKeyPresses();
                 // A release can occur outside this window. Keep only the microphone's repeat guard.
                 heldMicKeys.replaceAll((key, scope) -> MicKeyScope.MICROPHONE_ONLY);
                 finishMicGesture(false);

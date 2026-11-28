@@ -1,6 +1,8 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
 import java.nio.file.NoSuchFileException;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,6 +30,7 @@ import javafx.scene.layout.VBox;
 public final class ThemeProfilesController {
     private final ExecutorService executor =
             Executors.newSingleThreadExecutor(Thread.ofVirtual().name("rvl-theme-profiles").factory());
+    private final Set<KeyCode> heldThemeActionKeys = EnumSet.noneOf(KeyCode.class);
     private ThemeProfileStore store;
     private WorkspaceTheme theme;
     private RealtimeSession session;
@@ -36,6 +39,7 @@ public final class ThemeProfilesController {
     private VBox workspace;
     private Task<?> pending;
     private Node restoreFocus;
+    private KeyCode themeActionKey;
 
     @FXML private StackPane overlay;
     @FXML private VBox actions;
@@ -51,7 +55,7 @@ public final class ThemeProfilesController {
     @FXML private Region recordingRing;
     @FXML private Button stopListeningButton;
 
-    void attach(Button opener, VBox workspace, ThemeProfileStore store, WorkspaceTheme theme,
+    void attach(Button opener, VBox workspace, StackPane sceneRoot, ThemeProfileStore store, WorkspaceTheme theme,
                 RealtimeSession session, Runnable stopListening) {
         this.opener = opener;
         this.workspace = workspace;
@@ -69,6 +73,8 @@ public final class ThemeProfilesController {
         stopListeningButton.setOnAction(event -> stopListening.run());
         profile.getEditor().setTextFormatter(TextInputLimit.formatter(ThemeProfileStore.MAX_NAME_LENGTH));
         opener.setOnAction(event -> open());
+        sceneRoot.addEventFilter(KeyEvent.KEY_PRESSED, this::pressThemeActionKey);
+        sceneRoot.addEventFilter(KeyEvent.KEY_RELEASED, this::releaseThemeActionKey);
         overlay.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (event.getCode() == KeyCode.ESCAPE) {
                 if (profile.isShowing()) {
@@ -81,9 +87,53 @@ public final class ThemeProfilesController {
         });
     }
 
+    private void pressThemeActionKey(KeyEvent event) {
+        var key = event.getCode();
+        if (heldThemeActionKeys.contains(key)) {
+            // A repeat must not rearm the button after a theme update or focus change.
+            event.consume();
+        } else if ((key == KeyCode.SPACE || key == KeyCode.ENTER)
+                && (event.getTarget() == keepPreviewButton || event.getTarget() == undoButton)) {
+            heldThemeActionKeys.add(key);
+            if (themeActionKey == null) {
+                themeActionKey = key;
+            } else {
+                event.consume();
+            }
+        }
+    }
+
+    private void releaseThemeActionKey(KeyEvent event) {
+        var key = event.getCode();
+        if (heldThemeActionKeys.remove(key)) {
+            if (key == themeActionKey) {
+                // The button still receives the matching release and resets its keyboard state.
+                themeActionKey = null;
+            } else {
+                event.consume();
+            }
+        }
+    }
+
+    void cancelThemeKeyPresses() {
+        disarmHeldThemeAction();
+        heldThemeActionKeys.clear();
+        themeActionKey = null;
+    }
+
+    private void disarmHeldThemeAction() {
+        if (themeActionKey != null) {
+            keepPreviewButton.disarm();
+            undoButton.disarm();
+        }
+    }
+
     void renderTheme(WorkspaceAppearance appearance) {
         if (renderedAppearance == appearance) {
             return;
+        }
+        if (!appearance.equals(renderedAppearance)) {
+            disarmHeldThemeAction();
         }
         renderedAppearance = appearance;
         if (overlay.getScene() != null) {
