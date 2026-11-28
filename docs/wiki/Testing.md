@@ -108,3 +108,14 @@ The RVL-014 focused suite passed 227 cases on Fedora 45 with Temurin 27.0.1.1+4,
 | Inspector and usage | `EventInspectorTest` checked redaction, PCM byte counts, and eviction. `RealtimeUsageTest` checked synthetic token pricing, quotas and cutoff behavior. |
 
 Live text, physical audio, provider behavior and billing were unmeasured for RVL-014.
+
+## RVL-016 typed theme verification
+
+```sh
+env -u OPENAI_API_KEY ./gradlew --offline test --tests '*ThemeValidatorTest' --tests '*RealtimeVoiceLabAppTest.rendersDefaultThemeMetricsAndProtectedControlFocus'
+env -u OPENAI_API_KEY ./gradlew --offline clean build
+```
+
+The seven focused checks and all 305 tests in the clean build passed on Fedora 45 with Temurin 27.0.1.1+4 and headless JavaFX. The unit tests cover immutable token snapshots, missing values, invalid dimensions, contrast thresholds, full default fallback and parity with the packaged CSS palette. The JavaFX test uses a fake transport and Tab navigation to check visible microphone focus, accessible names, and the default control sizes and styling.
+
+Offline captures at 1100 × 720 and 760 × 520 showed the focused microphone, both panels and the session controls in view. Native display scaling, screen readers and live audio remain unverified. Dynamic application and profile loading are tracked in [RVL-017](https://github.com/stevdrey/realtime-voice-lab/issues/50).
