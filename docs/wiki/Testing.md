@@ -122,3 +122,20 @@ env -u OPENAI_API_KEY ./gradlew --offline clean build
 The twelve focused checks and all 309 tests in the clean build passed on Fedora 45 with Temurin 27.0.1.1+4 and headless JavaFX. The unit tests cover immutable token snapshots, invalid tokens, contrast thresholds, full default fallback and parity with the packaged CSS palette. The fallback regressions cover a low-contrast Midnight heading and swatches, a recording ring that matches its fill, and null color entries. The JavaFX tests use a fake transport and microphone to verify accessible names, control sizes, keyboard and mouse capture, and separate focus and recording rings during keyboard capture. Escape removes the recording ring and keeps the focus ring.
 
 Offline captures at 1100 × 720 and 760 × 520 showed both rings and the recording label during synthetic capture. Native display scaling, screen readers and live audio remain unverified. Dynamic application and profile loading are tracked in [RVL-017](https://github.com/stevdrey/realtime-voice-lab/issues/50).
+
+## RVL-017 dynamic theme verification
+
+```sh
+env -u OPENAI_API_KEY ./gradlew --offline test \
+  --tests '*ThemeProfileStoreTest' --tests '*ThemeValidatorTest' \
+  --tests '*RealtimeVoiceLabAppTest.*Theme*' \
+  --tests '*RealtimeVoiceLabAppTest.loadsValidatedAppearanceAndKeepsSavedProfilesAfterReset' \
+  --tests '*RealtimeVoiceLabAppTest.keepsBothDarkPanelsAndControlsVisibleAtMinimumSize'
+env -u OPENAI_API_KEY ./gradlew --offline clean build installDist
+```
+
+The 24 focused checks and all 321 tests in the clean build passed on Fedora 45 with Temurin 27.0.1.1+4 and headless JavaFX 27.0.1. Profile tests cover named round trips, replacement, corrupt or unsupported definitions, and invalid names. The JavaFX tests cover loaded colors, typography, spacing, radii and control sizes, reset behavior and preservation of the current appearance after a malformed load. The theme panel fits between the session toolbar and waveform at 760 × 520 with the largest supported tokens.
+
+The capture and playback journey used a fake socket and synthetic PCM. Applying Ocean from the keyboard and saving a profile preserved the active VAD input. Resetting and loading during a reply preserved playback on the same speaker. The socket saw no theme-triggered writes, and disconnect released both devices.
+
+A separate smoke test of the installed application on the module path exercised save, reset and reload against a temporary profile directory. Disconnected screenshots at 1100 × 720 and 760 × 520 showed the profile panel and unobstructed session and audio controls. This verification used the headless JavaFX backend. Native display scaling, screen readers, physical audio and the live Realtime service were outside these checks.

@@ -20,6 +20,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
 import io.github.stevdrey.realtimevoicelab.realtime.ToyWorkspace;
+import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
@@ -36,6 +37,7 @@ import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -75,6 +77,8 @@ public final class WorkspaceController {
     private static final PseudoClass AMBER = PseudoClass.getPseudoClass("amber");
 
     private final RealtimeSession session;
+    private final ThemeProfileStore themeProfiles;
+    private final WorkspaceTheme theme;
     private final Tooltip connectTooltip = new Tooltip();
     private final Tooltip micTooltip = new Tooltip();
     private final Tooltip costTooltip = new Tooltip();
@@ -94,6 +98,9 @@ public final class WorkspaceController {
 
     @FXML
     private VBox root;
+
+    @FXML private ToggleButton themeToggle;
+    @FXML private ThemeProfilesController themeProfilesController;
 
     @FXML
     private ComboBox<Model> modelSelector;
@@ -174,13 +181,17 @@ public final class WorkspaceController {
     @FXML private Label toyTheme;
     @FXML private Label toyCounter;
 
-    WorkspaceController(RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker) {
+    WorkspaceController(RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker,
+                        ThemeProfileStore themeProfiles, WorkspaceTheme theme) {
+        this.themeProfiles = themeProfiles;
+        this.theme = theme;
         session = new RealtimeSession(transport, this::scheduleRender, microphone, speaker,
                 this::scheduleInspectorRender, Platform::runLater);
     }
 
     @FXML
     private void initialize() {
+        themeProfilesController.attach(themeToggle, themeProfiles, theme);
         elapsedTimer.setCycleCount(Timeline.INDEFINITE);
         costState.managedProperty().bind(costState.visibleProperty());
         transcriptionCost.managedProperty().bind(transcriptionCost.visibleProperty());
@@ -409,6 +420,9 @@ public final class WorkspaceController {
         elapsedTimer.stop();
         if (settingsDialog != null) {
             settingsDialog.close();
+        }
+        if (themeProfilesController != null) {
+            themeProfilesController.dispose();
         }
         session.close();
         if (composer != null) {

@@ -8,4 +8,5 @@ module io.github.stevdrey.realtimevoicelab {
 
     exports io.github.stevdrey.realtimevoicelab.ui to javafx.graphics;
     opens io.github.stevdrey.realtimevoicelab.ui to javafx.fxml;
+    opens io.github.stevdrey.realtimevoicelab.ui.theme to com.fasterxml.jackson.databind;
 }

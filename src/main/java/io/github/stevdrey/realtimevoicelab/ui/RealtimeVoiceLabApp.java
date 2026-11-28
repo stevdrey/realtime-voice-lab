@@ -1,11 +1,14 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
 import java.io.IOException;
+import java.nio.file.Path;
 
 import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
 import io.github.stevdrey.realtimevoicelab.audio.SpeakerPlayback;
 import io.github.stevdrey.realtimevoicelab.realtime.JdkRealtimeTransport;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeTransport;
+import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore;
+import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens;
 import javafx.application.Application;
 import javafx.beans.value.ObservableBooleanValue;
 import javafx.fxml.FXMLLoader;
@@ -39,13 +42,21 @@ public final class RealtimeVoiceLabApp extends Application {
 
     void start(Stage stage, RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker,
                ObservableBooleanValue windowFocus) throws IOException {
+        var profiles = new ThemeProfileStore(Path.of(System.getProperty("user.home"), ".realtime-voice-lab", "themes"));
+        start(stage, transport, microphone, speaker, windowFocus, profiles);
+    }
+
+    void start(Stage stage, RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker,
+               ObservableBooleanValue windowFocus, ThemeProfileStore profiles) throws IOException {
         var loader = new FXMLLoader(getClass().getResource("workspace.fxml"));
-        workspace = new WorkspaceController(transport, microphone, speaker);
+        var theme = new WorkspaceTheme();
+        workspace = new WorkspaceController(transport, microphone, speaker, profiles, theme);
         loader.setController(workspace);
         Scene scene;
         try {
             scene = new Scene(loader.load(), 1100, 720);
             scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+            theme.apply(scene, ThemeTokens.defaults());
         } catch (IOException | RuntimeException error) {
             workspace.dispose();
             workspace = null;

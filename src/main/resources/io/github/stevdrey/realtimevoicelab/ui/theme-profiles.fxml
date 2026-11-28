@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.FlowPane?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox fx:id="panel" xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="io.github.stevdrey.realtimevoicelab.ui.ThemeProfilesController"
+      styleClass="theme-panel" maxWidth="640" maxHeight="-Infinity">
+    <FlowPane fx:id="actions" alignment="CENTER_LEFT" styleClass="theme-actions">
+        <Button id="theme-ocean" text="Use Ocean" onAction="#useOcean" styleClass="text-action"/>
+        <Button id="theme-reset" text="Reset to default" onAction="#reset" styleClass="text-action"/>
+        <ComboBox fx:id="profile" id="theme-profile" editable="true" prefWidth="180"
+                  promptText="Profile name" accessibleText="Theme profile name"/>
+        <Button id="theme-load" text="Load" onAction="#load" styleClass="text-action"/>
+        <Button id="theme-save" text="Save" onAction="#save" styleClass="text-action"/>
+    </FlowPane>
+    <Label fx:id="status" id="theme-status" text="Default theme applied." styleClass="caption"
+           wrapText="true" minHeight="-Infinity"/>
+</VBox>
