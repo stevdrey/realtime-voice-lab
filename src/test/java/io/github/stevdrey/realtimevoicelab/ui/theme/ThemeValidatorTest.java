@@ -110,6 +110,23 @@ class ThemeValidatorTest {
     }
 
     @Test
+    void fallsBackWhenTheRecordingRingMatchesTheMicrophoneFill() {
+        var colors = new EnumMap<>(defaults.colors());
+        var gray = new Rgb(0x818181);
+        colors.put(ColorRole.PRIMARY_HOVER, gray);
+        colors.put(ColorRole.DANGER, gray);
+        colors.put(ColorRole.DIVIDER, new Rgb(0x2f343d));
+        var candidate = new ThemeTokens(colors, defaults.typography(), defaults.spacing(), defaults.radii(),
+                defaults.density());
+
+        var resolved = ThemeValidator.resolve(candidate);
+
+        assertTrue(resolved.usesFallback());
+        assertSame(defaults, resolved.theme());
+        assertEquals(List.of("DANGER / PRIMARY_HOVER contrast must be at least 3.0:1"), resolved.violations());
+    }
+
+    @Test
     void fallsBackForAbsentOrIncompleteCandidates() {
         var missingRole = new EnumMap<>(defaults.colors());
         missingRole.remove(ColorRole.ACCENT);

@@ -214,10 +214,12 @@ class RealtimeVoiceLabAppTest {
     void rendersDefaultThemeMetricsAndProtectedControlFocus() throws Exception {
         var theme = ThemeTokens.defaults();
         var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var focusColor = Color.web("#%06x".formatted(theme.colors().get(ColorRole.FOCUS).value()));
         var stage = onFxThread(Stage::new);
         try {
             var socket = onFxThread(() -> {
-                new RealtimeVoiceLabApp().start(stage, transport);
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone());
                 connectButton(stage).fire();
                 stage.requestFocus();
                 return transport.attempts.getFirst();
@@ -261,15 +263,48 @@ class RealtimeVoiceLabAppTest {
 
                 int primary = theme.colors().get(ColorRole.PRIMARY).value();
                 int onPrimary = theme.colors().get(ColorRole.ON_PRIMARY).value();
-                int focus = theme.colors().get(ColorRole.FOCUS).value();
                 assertEquals(Color.web("#%06x".formatted(primary)),
                         mic.getBackground().getFills().getFirst().getFill());
                 assertEquals(Color.web("#%06x".formatted(onPrimary)), ((SVGPath) mic.lookup(".icon")).getStroke());
-                assertEquals(Color.web("#%06x".formatted(focus)), mic.getBorder().getStrokes().getFirst().getTopStroke());
+                assertEquals(focusColor, mic.getBorder().getStrokes().getFirst().getTopStroke());
                 assertTrue(mic.isFocusTraversable());
                 assertFalse(mic.isDisabled());
                 assertEquals("Microphone", mic.getAccessibleText());
                 assertSession(stage, "Connected", "Disconnect", false);
+                new Robot().keyPress(KeyCode.SPACE);
+                return null;
+            });
+            microphone.queueBlocks(3);
+            awaitOnFxThread(() -> hasRecordingLevel(stage), "Keyboard hold did not start recording");
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                var mic = (Button) scene.lookup("#mic-button");
+                scene.getRoot().applyCss();
+                int recordingFill = theme.colors().get(ColorRole.PRIMARY_HOVER).value();
+                int recordingRing = theme.colors().get(ColorRole.DANGER).value();
+                assertEquals(Color.web("#%06x".formatted(recordingFill)),
+                        mic.getBackground().getFills().getFirst().getFill());
+                var strokes = mic.getBorder().getStrokes();
+                assertEquals(2, strokes.size());
+                assertEquals(Color.web("#%06x".formatted(recordingRing)), strokes.getFirst().getTopStroke());
+                var focusStroke = strokes.getLast();
+                assertEquals(focusColor, focusStroke.getTopStroke());
+                assertTrue(focusStroke.getInsets().getTop() + focusStroke.getWidths().getTop()
+                        < strokes.getFirst().getInsets().getTop(), "Recording and focus rings need a visible gap");
+                var robot = new Robot();
+                robot.keyType(KeyCode.ESCAPE);
+                robot.keyRelease(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> microphone.closes.get() == 1 && "Hold to talk".equals(micStatus(stage)),
+                    "Escape did not cancel recording");
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                scene.getRoot().applyCss();
+                var mic = (Button) scene.lookup("#mic-button");
+                var strokes = mic.getBorder().getStrokes();
+                assertEquals(1, strokes.size());
+                assertEquals(focusColor, strokes.getFirst().getTopStroke());
                 return null;
             });
         } finally {

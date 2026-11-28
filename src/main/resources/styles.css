@@ -11,7 +11,7 @@
     -rv-focus: #dbe1ff;
     -rv-heading: #a5b4fc;
     -rv-primary: #6366f1;
-    -rv-primary-hover: #5558db;
+    -rv-primary-hover: #37399e;
     -rv-on-primary: #ffffff;
     -rv-success: #4ade80;
     -rv-outgoing: #60a5fa;
@@ -381,6 +381,13 @@
 
 .round-control:focus-visible, .mic-button:focus-visible {
     -fx-border-color: -rv-focus;
+}
+
+.mic-button:recording:focus-visible {
+    -fx-border-color: -rv-danger, -rv-focus;
+    -fx-border-insets: 0, -4;
+    -fx-border-width: 2, 2;
+    -fx-border-radius: 999, 999;
 }
 
 .round-control:disabled, .combo-box:disabled {

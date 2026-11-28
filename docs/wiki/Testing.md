@@ -112,10 +112,13 @@ Live text, physical audio, provider behavior and billing were unmeasured for RVL
 ## RVL-016 typed theme verification
 
 ```sh
-env -u OPENAI_API_KEY ./gradlew --offline test --tests '*ThemeValidatorTest' --tests '*RealtimeVoiceLabAppTest.rendersDefaultThemeMetricsAndProtectedControlFocus'
+env -u OPENAI_API_KEY ./gradlew --offline test \
+  --tests '*ThemeValidatorTest' \
+  --tests '*RealtimeVoiceLabAppTest.rendersDefaultThemeMetricsAndProtectedControlFocus' \
+  --tests '*RealtimeVoiceLabAppTest.holdsToRecordWithMouseAndKeyboardAndClosesAudioOnCancellationOrWindowClose'
 env -u OPENAI_API_KEY ./gradlew --offline clean build
 ```
 
-The eight focused checks and all 306 tests in the clean build passed on Fedora 45 with Temurin 27.0.1.1+4 and headless JavaFX. The unit tests cover immutable token snapshots, missing values, invalid dimensions, contrast thresholds, full default fallback and parity with the packaged CSS palette. The Midnight regression test checks fallback for a heading with 3.67:1 contrast on the Midnight surface. The JavaFX test uses a fake transport and Tab navigation to check visible microphone focus, accessible names, and the default control sizes and styling.
+The ten focused checks and all 307 tests in the clean build passed on Fedora 45 with Temurin 27.0.1.1+4 and headless JavaFX. The unit tests cover immutable token snapshots, invalid tokens, contrast thresholds, full default fallback and parity with the packaged CSS palette. The contrast regressions cover a low-contrast Midnight heading and a recording ring that matches its fill. The JavaFX tests use a fake transport and microphone to verify accessible names, control sizes, keyboard and mouse capture, and separate focus and recording rings during keyboard capture. Escape removes the recording ring and keeps the focus ring.
 
-Offline captures at 1100 × 720 and 760 × 520 showed the focused microphone, both panels and the session controls in view. Native display scaling, screen readers and live audio remain unverified. Dynamic application and profile loading are tracked in [RVL-017](https://github.com/stevdrey/realtime-voice-lab/issues/50).
+Offline captures at 1100 × 720 and 760 × 520 showed both rings and the recording label during synthetic capture. Native display scaling, screen readers and live audio remain unverified. Dynamic application and profile loading are tracked in [RVL-017](https://github.com/stevdrey/realtime-voice-lab/issues/50).

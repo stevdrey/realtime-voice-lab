@@ -78,11 +78,11 @@ At narrower sizes, allow wrapping in toolbar, horizontal scrolling or truncation
 | focus | #DBE1FF | Keyboard focus outlines and the selected event border |
 | indigo heading | #A5B4FC | Panel headings |
 | indigo primary | #6366F1 | Microphone button background |
-| indigo hover | #5558DB | Primary button hover |
+| indigo hover | #37399E | Microphone hover, pressed and recording background |
 | on primary | #FFFFFF | Microphone icon on primary and hover backgrounds |
 | connected / incoming | #4ADE80 | Connection status and received events |
 | outgoing | #60A5FA | Sent event direction |
-| danger / disconnect | #F87171 | Errors and disconnect icon |
+| danger / disconnect | #F87171 | Errors, disconnect icon and microphone recording ring |
 | warning | #FBBF24 | Limits or unavailable resources |
 
 Use system sans-serif (e.g. available Inter or Noto Sans, otherwise JavaFX System), no font download required. 20 px semibold app title, 11–12 px uppercase panel headings, 14 px conversation, 12 px metadata, 12–13 px monospace event names (system monospace fallback), 19 px semibold metrics and 16 px metrics in narrow layouts. Use tabular digits if available. Shared spacing steps are 4, 8, 12 and 16 px. Use a 9 px radius on panels and keep icon controls circular. Avoid gradients, heavy shadows, saturated surfaces or decorative animation. Retain legibility on hover, pressed, disabled and selected states. Use text or icon semantics in addition to color.
@@ -107,7 +107,7 @@ Define view structure in FXML using JavaFX layout panes and controls such as Bor
     -rv-focus: #dbe1ff;
     -rv-heading: #a5b4fc;
     -rv-primary: #6366f1;
-    -rv-primary-hover: #5558db;
+    -rv-primary-hover: #37399e;
     -rv-on-primary: #ffffff;
     -rv-success: #4ade80;
     -rv-outgoing: #60a5fa;
@@ -184,7 +184,7 @@ Style ComboBox popup, ListView cells, TextArea, ScrollPane viewport, scrollbars,
 | Disconnected | Neutral dot + “Disconnected”; Connect enabled, model selectable; mic disabled, metrics shown as em dash when unknown. |
 | Connecting | “Connecting…” + progress indicator, disable repeated connect; cancellation available where supported. |
 | Connected / ready | Green dot + “Connected”; microphone enabled when audio feature exists; idle waveform. |
-| Capturing | Clearly visible “Recording” label and active mic state; waveform from microphone level only; elapsed recording available; release to end push-to-talk. |
+| Capturing | “Recording” label and a high-contrast recording ring. Keyboard focus uses a separate outer ring. The waveform shows microphone level. Release to end push-to-talk. |
 | Responding / playback | “Responding” or “Speaking” status, playback waveform from output audio, Stop/Interrupt available once implemented; never silently keep playing after disconnect. |
 | Closing | Disable new actions; “Disconnecting…” until cleanup completes. |
 | Error / limit | Red or amber inline status, human-readable sanitized reason, recovery action when safe; do not expose raw secrets/errors. |

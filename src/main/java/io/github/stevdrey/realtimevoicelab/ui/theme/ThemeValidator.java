@@ -62,7 +62,7 @@ public final class ThemeValidator {
         requireContrast(colors, violations, CONTROL_CONTRAST, FOCUS,
                 APP, WORKSPACE, PANEL, CONTROL, DIVIDER, PRIMARY, PRIMARY_HOVER);
         requireContrast(colors, violations, CONTROL_CONTRAST, ON_PRIMARY, PRIMARY, PRIMARY_HOVER);
-        requireContrast(colors, violations, CONTROL_CONTRAST, DANGER, CONTROL, DIVIDER);
+        requireContrast(colors, violations, CONTROL_CONTRAST, DANGER, CONTROL, DIVIDER, PRIMARY_HOVER);
         requireContrast(colors, violations, CONTROL_CONTRAST, WARNING, APP, PANEL);
         requireContrast(colors, violations, CONTROL_CONTRAST, MUTED, DIVIDER);
     }

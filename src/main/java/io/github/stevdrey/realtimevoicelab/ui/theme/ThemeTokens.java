@@ -24,7 +24,7 @@ public record ThemeTokens(
                     Map.entry(ColorRole.FOCUS, new Rgb(0xdbe1ff)),
                     Map.entry(ColorRole.HEADING, new Rgb(0xa5b4fc)),
                     Map.entry(ColorRole.PRIMARY, new Rgb(0x6366f1)),
-                    Map.entry(ColorRole.PRIMARY_HOVER, new Rgb(0x5558db)),
+                    Map.entry(ColorRole.PRIMARY_HOVER, new Rgb(0x37399e)),
                     Map.entry(ColorRole.ON_PRIMARY, new Rgb(0xffffff)),
                     Map.entry(ColorRole.SUCCESS, new Rgb(0x4ade80)),
                     Map.entry(ColorRole.OUTGOING, new Rgb(0x60a5fa)),
