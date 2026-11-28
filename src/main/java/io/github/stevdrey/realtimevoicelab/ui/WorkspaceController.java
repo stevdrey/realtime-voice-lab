@@ -308,7 +308,7 @@ public final class WorkspaceController {
     void watchFocus(ObservableBooleanValue windowFocus) {
         windowFocus.addListener((observable, previous, focused) -> {
             if (!focused) {
-                themeProfilesController.cancelThemeKeyPresses();
+                themeProfilesController.cancelThemeActions();
                 // A release can occur outside this window, so scope the microphone's guard to its control.
                 heldMicKeys.replaceAll((key, scope) -> MicKeyScope.MICROPHONE_ONLY);
                 finishMicGesture(false);

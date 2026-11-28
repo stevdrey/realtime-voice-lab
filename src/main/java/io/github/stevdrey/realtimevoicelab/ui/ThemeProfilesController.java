@@ -21,6 +21,8 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
@@ -43,6 +45,7 @@ public final class ThemeProfilesController {
     private Task<?> pending;
     private Node restoreFocus;
     private KeyCode themeActionKey;
+    private Button mousePressedThemeButton;
 
     @FXML private StackPane overlay;
     @FXML private VBox actions;
@@ -78,6 +81,8 @@ public final class ThemeProfilesController {
         opener.setOnAction(event -> open());
         sceneRoot.addEventFilter(KeyEvent.KEY_PRESSED, this::pressThemeActionKey);
         sceneRoot.addEventFilter(KeyEvent.KEY_RELEASED, this::releaseThemeActionKey);
+        guardThemeMouseAction(keepPreviewButton);
+        guardThemeMouseAction(undoButton);
         overlay.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (event.getCode() == KeyCode.ESCAPE) {
                 if (profile.isShowing()) {
@@ -86,6 +91,24 @@ public final class ThemeProfilesController {
                     close();
                 }
                 event.consume();
+            }
+        });
+    }
+
+    private void guardThemeMouseAction(Button button) {
+        button.addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
+            if (event.getButton() == MouseButton.PRIMARY) {
+                mousePressedThemeButton = button;
+            }
+        });
+        button.addEventFilter(MouseEvent.MOUSE_RELEASED, event -> {
+            boolean primaryRelease = event.getButton() == MouseButton.PRIMARY;
+            // JavaFX can rearm a pressed button when the pointer comes back inside.
+            if ((primaryRelease || event.isPrimaryButtonDown()) && mousePressedThemeButton != button) {
+                button.disarm();
+            }
+            if (primaryRelease) {
+                mousePressedThemeButton = null;
             }
         });
     }
@@ -123,18 +146,17 @@ public final class ThemeProfilesController {
         return event.getTarget() == keepPreviewButton || event.getTarget() == undoButton;
     }
 
-    void cancelThemeKeyPresses() {
-        disarmHeldThemeAction();
+    void cancelThemeActions() {
+        disarmThemeActions();
         // A release may occur outside the window. Retain protection for these actions until a release is observed.
         heldThemeActionKeys.replaceAll((key, scope) -> ThemeKeyScope.THEME_ACTIONS_ONLY);
         themeActionKey = null;
     }
 
-    private void disarmHeldThemeAction() {
-        if (themeActionKey != null) {
-            keepPreviewButton.disarm();
-            undoButton.disarm();
-        }
+    private void disarmThemeActions() {
+        mousePressedThemeButton = null;
+        keepPreviewButton.disarm();
+        undoButton.disarm();
     }
 
     void renderTheme(WorkspaceAppearance appearance) {
@@ -142,7 +164,7 @@ public final class ThemeProfilesController {
             return;
         }
         if (!appearance.equals(renderedAppearance)) {
-            disarmHeldThemeAction();
+            disarmThemeActions();
         }
         renderedAppearance = appearance;
         if (overlay.getScene() != null) {

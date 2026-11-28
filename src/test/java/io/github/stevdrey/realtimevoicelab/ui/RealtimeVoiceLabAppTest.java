@@ -41,6 +41,7 @@ import javafx.beans.value.ObservableBooleanValue;
 import javafx.collections.ListChangeListener;
 import javafx.css.PseudoClass;
 import javafx.event.Event;
+import javafx.event.EventType;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -1240,16 +1241,7 @@ class RealtimeVoiceLabAppTest {
         var windowFocus = new SimpleBooleanProperty(true);
         try {
             var socket = connectTextThemeTools(stage, new ThemeProfileStore(directory), windowFocus);
-            requestOceanPreview(stage, socket, "initial");
-            if (undo) {
-                onFxThread(() -> {
-                    themeButton(stage, "#theme-button").fire();
-                    themeButton(stage, "#theme-keep-preview").fire();
-                    assertTrue(themeButton(stage, buttonId).isVisible());
-                    themeButton(stage, "#theme-close").fire();
-                    return null;
-                });
-            }
+            prepareOceanThemeAction(stage, socket, undo);
 
             var turn = startThemeTurn(stage, socket, mapper, "Show the default theme");
             onFxThread(() -> {
@@ -1303,6 +1295,95 @@ class RealtimeVoiceLabAppTest {
                 return null;
             });
         }
+    }
+
+    @ParameterizedTest(name = "Mouse held during theme replacement, undo={0}, pointer reentered={1}")
+    @CsvSource({"false, false", "true, false", "false, true", "true, true"})
+    void cancelsHeldThemeMouseActionWhenItsTargetChanges(boolean undo, boolean reenter, @TempDir Path directory)
+            throws Exception {
+        var stage = onFxThread(Stage::new);
+        var robot = onFxThread(Robot::new);
+        var buttonId = undo ? "#theme-undo" : "#theme-keep-preview";
+        var mapper = new ObjectMapper();
+        try {
+            var socket = connectTextThemeTools(stage, new ThemeProfileStore(directory));
+            prepareOceanThemeAction(stage, socket, undo);
+            var turn = startThemeTurn(stage, socket, mapper, "Show the default theme");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-button").fire();
+                return null;
+            });
+            var initialStatus = undo ? "Ocean theme applied." : "Previewing Ocean.";
+            awaitOnFxThread(() -> themeButton(stage, buttonId).isVisible() && initialStatus.equals(themeStatus(stage)),
+                    "The theme action did not appear for the original theme");
+            onFxThread(() -> {
+                moveMouseToThemeButton(stage, robot, buttonId);
+                robot.mousePress(MouseButton.PRIMARY);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, buttonId).isArmed() && themeButton(stage, buttonId).isPressed(),
+                    "Mouse press did not arm the theme action");
+
+            completeThemeToolCall(socket, mapper, "replacement", turn,
+                    undo ? "applyWorkspaceTheme" : "previewWorkspaceTheme", "default");
+            var replacementStatus = undo ? "Default theme applied." : "Previewing Default.";
+            awaitOnFxThread(() -> replacementStatus.equals(themeStatus(stage)), "Replacement theme did not render");
+            if (reenter) {
+                onFxThread(() -> {
+                    moveMouseToThemeButton(stage, robot, "#theme-close");
+                    return null;
+                });
+                awaitOnFxThread(() -> !themeButton(stage, buttonId).isHover(), "Pointer did not leave the theme action");
+                onFxThread(() -> {
+                    moveMouseToThemeButton(stage, robot, buttonId);
+                    return null;
+                });
+                awaitOnFxThread(() -> themeButton(stage, buttonId).isHover(), "Pointer did not reenter the theme action");
+            }
+
+            onFxThread(() -> {
+                var button = themeButton(stage, buttonId);
+                fireThemeButtonMouseEvent(button, MouseEvent.MOUSE_RELEASED);
+                assertEquals(replacementStatus, themeStatus(stage), "The held click acted on the replacement theme");
+                fireThemeButtonMouseEvent(button, MouseEvent.MOUSE_PRESSED);
+                fireThemeButtonMouseEvent(button, MouseEvent.MOUSE_RELEASED);
+                return null;
+            });
+            var confirmedStatus = undo ? "Ocean theme applied." : "Default theme applied.";
+            awaitOnFxThread(() -> confirmedStatus.equals(themeStatus(stage)), "A fresh click did not activate the action");
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    private void fireThemeButtonMouseEvent(Button button, EventType<MouseEvent> type) {
+        Event.fireEvent(button, new MouseEvent(type, 0, 0, 0, 0, MouseButton.PRIMARY, 1,
+                false, false, false, false, type == MouseEvent.MOUSE_PRESSED, false, false, false, false, true, null));
+    }
+
+    private void prepareOceanThemeAction(Stage stage, FakeTransport.Socket socket, boolean undo) throws Exception {
+        requestOceanPreview(stage, socket, "initial");
+        if (undo) {
+            onFxThread(() -> {
+                themeButton(stage, "#theme-button").fire();
+                themeButton(stage, "#theme-keep-preview").fire();
+                assertTrue(themeButton(stage, "#theme-undo").isVisible());
+                themeButton(stage, "#theme-close").fire();
+                return null;
+            });
+        }
+    }
+
+    private void moveMouseToThemeButton(Stage stage, Robot robot, String buttonId) {
+        var sceneRoot = stage.getScene().getRoot();
+        sceneRoot.applyCss();
+        sceneRoot.layout();
+        var button = themeButton(stage, buttonId);
+        var bounds = button.localToScreen(button.getBoundsInLocal());
+        robot.mouseMove(bounds.getCenterX(), bounds.getCenterY());
     }
 
     @Test
