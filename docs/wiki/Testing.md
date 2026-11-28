@@ -153,11 +153,14 @@ env -u OPENAI_API_KEY -u RVL_PRICING_FILE -u RVL_ESTIMATED_SPEND_LIMIT_USD \
   ./gradlew --offline test --tests '*RealtimeToolCallingTest' \
   --tests '*RealtimeVoiceLabAppTest.previewsAndRevertsThemeToolsWithKeyboardFocusIntact'
 env -u OPENAI_API_KEY -u RVL_PRICING_FILE -u RVL_ESTIMATED_SPEND_LIMIT_USD \
+  ./gradlew --offline test --tests '*RealtimeVoiceLabAppTest.cancelsHeldThemeActionWhenItsTargetChanges' \
+  --tests '*RealtimeVoiceLabAppTest.closeAcceptsItsFirstPressAfterThemeActionKeyWasReleasedOutsideTheWindow'
+env -u OPENAI_API_KEY -u RVL_PRICING_FILE -u RVL_ESTIMATED_SPEND_LIMIT_USD \
   ./gradlew --offline clean build
 ```
 
-The original focused run passed 69 cases. The clean build with the keyboard fix passed all 346 tests on Fedora 45 with Temurin 27.0.1.1+4, headless JavaFX 27.0.1, fake transport and synthetic devices. The tool tests cover the declared schemas, preset authorization, invalid arguments, ordered results, restoration of a custom theme through a single undo entry, and cancellation before execution or while an output is pending. Reconnects, observed deadlines, provider rejection and disconnect exercise cleanup of queued work or previews.
+The original focused run passed 69 cases. The clean build passed all 351 tests on Fedora 45 with Temurin 27.0.1.1+4, headless JavaFX 27.0.1, fake transport and synthetic devices. The tool tests cover the declared schemas, preset authorization, invalid arguments, ordered results, restoration of a custom theme through a single undo entry, and cancellation before execution or while an output is pending. Reconnects, observed deadlines, provider rejection and disconnect exercise cleanup of queued work or previews.
 
 At 760 × 520, a synthetic theme call applied Ocean colors without moving the focus away from the composer. Space opened Theme. The journey checked that Save used the committed theme while the preview was visible. Escape discarded the preview and returned focus to the header. Shift+Tab reached the preview actions and Undo. The test checked the visible focus ring and used Space to keep and undo the change. Native display scaling, screen readers, physical audio and live Realtime behavior remain unverified for this change.
 
-The keyboard regression tests replace the appearance while Space or Enter is held on Keep preview or Undo. Key repeat and release leave the replacement appearance in place. A fresh press activates the focused action. These four cases failed before the fix and passed after it.
+The nine focused keyboard cases include Space and Enter held on Keep preview or Undo while the appearance changes, with and without a simulated window focus change. All four refocus cases reproduced the bug before the fix. With the fix, repeat and release leave the replacement appearance in place and a fresh press activates the focused action. A separate case verifies that Close responds to its first press after a release outside the workspace. The two theme actions keep their guard until the app observes a release, so a press on either can be absorbed if the previous release occurred in another window. Native window-manager key delivery remains unverified.

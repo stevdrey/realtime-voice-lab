@@ -1,8 +1,7 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
 import java.nio.file.NoSuchFileException;
-import java.util.EnumSet;
-import java.util.Set;
+import java.util.EnumMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,9 +27,13 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
 public final class ThemeProfilesController {
+    private enum ThemeKeyScope {
+        WORKSPACE, THEME_ACTIONS_ONLY
+    }
+
     private final ExecutorService executor =
             Executors.newSingleThreadExecutor(Thread.ofVirtual().name("rvl-theme-profiles").factory());
-    private final Set<KeyCode> heldThemeActionKeys = EnumSet.noneOf(KeyCode.class);
+    private final EnumMap<KeyCode, ThemeKeyScope> heldThemeActionKeys = new EnumMap<>(KeyCode.class);
     private ThemeProfileStore store;
     private WorkspaceTheme theme;
     private RealtimeSession session;
@@ -89,12 +92,13 @@ public final class ThemeProfilesController {
 
     private void pressThemeActionKey(KeyEvent event) {
         var key = event.getCode();
-        if (heldThemeActionKeys.contains(key)) {
+        var scope = heldThemeActionKeys.get(key);
+        boolean onThemeAction = targetsThemeAction(event);
+        if (scope == ThemeKeyScope.WORKSPACE || scope == ThemeKeyScope.THEME_ACTIONS_ONLY && onThemeAction) {
             // A repeat must not rearm the button after a theme update or focus change.
             event.consume();
-        } else if ((key == KeyCode.SPACE || key == KeyCode.ENTER)
-                && (event.getTarget() == keepPreviewButton || event.getTarget() == undoButton)) {
-            heldThemeActionKeys.add(key);
+        } else if ((key == KeyCode.SPACE || key == KeyCode.ENTER) && onThemeAction) {
+            heldThemeActionKeys.put(key, ThemeKeyScope.WORKSPACE);
             if (themeActionKey == null) {
                 themeActionKey = key;
             } else {
@@ -105,19 +109,24 @@ public final class ThemeProfilesController {
 
     private void releaseThemeActionKey(KeyEvent event) {
         var key = event.getCode();
-        if (heldThemeActionKeys.remove(key)) {
-            if (key == themeActionKey) {
-                // The button still receives the matching release and resets its keyboard state.
-                themeActionKey = null;
-            } else {
-                event.consume();
-            }
+        var scope = heldThemeActionKeys.remove(key);
+        if (key == themeActionKey) {
+            // The button still receives the matching release and resets its keyboard state.
+            themeActionKey = null;
+        } else if (scope == ThemeKeyScope.WORKSPACE
+                || scope == ThemeKeyScope.THEME_ACTIONS_ONLY && targetsThemeAction(event)) {
+            event.consume();
         }
+    }
+
+    private boolean targetsThemeAction(KeyEvent event) {
+        return event.getTarget() == keepPreviewButton || event.getTarget() == undoButton;
     }
 
     void cancelThemeKeyPresses() {
         disarmHeldThemeAction();
-        heldThemeActionKeys.clear();
+        // A release may occur outside the window. Retain protection for these actions until a release is observed.
+        heldThemeActionKeys.replaceAll((key, scope) -> ThemeKeyScope.THEME_ACTIONS_ONLY);
         themeActionKey = null;
     }
 

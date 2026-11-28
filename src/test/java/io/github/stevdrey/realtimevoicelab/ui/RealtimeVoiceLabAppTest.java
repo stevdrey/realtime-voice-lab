@@ -37,6 +37,7 @@ import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens.ColorRole;
 import io.github.stevdrey.realtimevoicelab.ui.theme.WorkspaceAppearance.BuiltIn;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.value.ObservableBooleanValue;
 import javafx.collections.ListChangeListener;
 import javafx.css.PseudoClass;
 import javafx.event.Event;
@@ -1219,15 +1220,26 @@ class RealtimeVoiceLabAppTest {
         }
     }
 
-    @ParameterizedTest(name = "{0} held during theme replacement, undo={1}")
-    @CsvSource({"SPACE, false", "ENTER, false", "SPACE, true", "ENTER, true"})
-    void cancelsHeldThemeActionWhenItsTargetChanges(KeyCode key, boolean undo, @TempDir Path directory) throws Exception {
+    @ParameterizedTest(name = "{0} held during theme replacement, undo={1}, window refocused={2}")
+    @CsvSource(textBlock = """
+            SPACE, false, false
+            ENTER, false, false
+            SPACE, true,  false
+            ENTER, true,  false
+            SPACE, false, true
+            ENTER, false, true
+            SPACE, true,  true
+            ENTER, true,  true
+            """)
+    void cancelsHeldThemeActionWhenItsTargetChanges(KeyCode key, boolean undo, boolean refocusWindow,
+                                                    @TempDir Path directory) throws Exception {
         assumeFalse(key == KeyCode.ENTER && OS.MAC.isCurrentOs(), "JavaFX reserves Enter for default buttons on macOS");
         var stage = onFxThread(Stage::new);
         var buttonId = undo ? "#theme-undo" : "#theme-keep-preview";
         var mapper = new ObjectMapper();
+        var windowFocus = new SimpleBooleanProperty(true);
         try {
-            var socket = connectTextThemeTools(stage, new ThemeProfileStore(directory));
+            var socket = connectTextThemeTools(stage, new ThemeProfileStore(directory), windowFocus);
             requestOceanPreview(stage, socket, "initial");
             if (undo) {
                 onFxThread(() -> {
@@ -1262,6 +1274,11 @@ class RealtimeVoiceLabAppTest {
             onFxThread(() -> {
                 var button = themeButton(stage, buttonId);
                 assertTrue(button.isFocused(), "Replacement theme moved focus away from the action");
+                if (refocusWindow) {
+                    refocusThemeWindow(stage, windowFocus);
+                    button.requestFocus();
+                    assertTrue(button.isFocused(), "Focus did not return to the action");
+                }
                 Event.fireEvent(button, new KeyEvent(KeyEvent.KEY_PRESSED, "", "", key, false, false, false, false));
                 stage.getScene().addEventFilter(KeyEvent.KEY_RELEASED, event -> {
                     if (event.getCode() == key) {
@@ -1288,14 +1305,62 @@ class RealtimeVoiceLabAppTest {
         }
     }
 
+    @Test
+    void closeAcceptsItsFirstPressAfterThemeActionKeyWasReleasedOutsideTheWindow(@TempDir Path directory)
+            throws Exception {
+        var stage = onFxThread(Stage::new);
+        var windowFocus = new SimpleBooleanProperty(true);
+        try {
+            var socket = connectTextThemeTools(stage, new ThemeProfileStore(directory), windowFocus);
+            requestOceanPreview(stage, socket, "initial");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-button").fire();
+                themeButton(stage, "#theme-keep-preview").requestFocus();
+                new Robot().keyPress(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, "#theme-keep-preview").isArmed(), "Space did not arm Keep preview");
+            onFxThread(() -> {
+                // The workspace never sees the release that occurs while another window has focus.
+                refocusThemeWindow(stage, windowFocus);
+                var close = themeButton(stage, "#theme-close");
+                Event.fireEvent(close, new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.SPACE,
+                        false, false, false, false));
+                new Robot().keyRelease(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, "#theme-button").isFocused()
+                    && !stage.getScene().lookup("#theme-overlay").isVisible(),
+                    "The theme key guard blocked Space on Close");
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    private void refocusThemeWindow(Stage stage, SimpleBooleanProperty windowFocus) {
+        windowFocus.set(false);
+        var close = themeButton(stage, "#theme-close");
+        close.requestFocus();
+        assertTrue(close.isFocused(), "Focus did not leave the theme action");
+        windowFocus.set(true);
+    }
+
     private FakeTransport.Socket connectTextThemeTools(Stage stage, ThemeProfileStore store) throws Exception {
+        return connectTextThemeTools(stage, store, stage.focusedProperty());
+    }
+
+    private FakeTransport.Socket connectTextThemeTools(Stage stage, ThemeProfileStore store,
+                                                       ObservableBooleanValue windowFocus) throws Exception {
         var transport = new FakeTransport();
         var defaults = SessionSettings.DEFAULT;
         var settings = new SessionSettings(defaults.model(), defaults.voice(), Mode.TEXT, defaults.instructions(),
                 defaults.turnDetection(), ToolPreset.TOY_WORKSPACE);
         onFxThread(() -> {
             new RealtimeVoiceLabApp().start(stage, transport, new FakeMicrophone().microphone(),
-                    new FakeSpeaker().playback(), stage.focusedProperty(), store);
+                    new FakeSpeaker().playback(), windowFocus, store);
             var dialog = openSettings(stage);
             this.<Mode>combo(dialog, "#settings-mode").setValue(Mode.TEXT);
             this.<ToolPreset>combo(dialog, "#settings-tool-preset").setValue(ToolPreset.TOY_WORKSPACE);

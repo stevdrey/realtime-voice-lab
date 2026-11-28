@@ -309,7 +309,7 @@ public final class WorkspaceController {
         windowFocus.addListener((observable, previous, focused) -> {
             if (!focused) {
                 themeProfilesController.cancelThemeKeyPresses();
-                // A release can occur outside this window. Keep only the microphone's repeat guard.
+                // A release can occur outside this window, so scope the microphone's guard to its control.
                 heldMicKeys.replaceAll((key, scope) -> MicKeyScope.MICROPHONE_ONLY);
                 finishMicGesture(false);
                 session.stopListening();
