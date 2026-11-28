@@ -8,9 +8,11 @@
     -rv-secondary: #d1d5db;
     -rv-muted: #9ca3af;
     -rv-accent: #818cf8;
+    -rv-focus: #dbe1ff;
     -rv-heading: #a5b4fc;
     -rv-primary: #6366f1;
-    -rv-primary-hover: #5558db;
+    -rv-primary-hover: #37399e;
+    -rv-on-primary: #ffffff;
     -rv-success: #4ade80;
     -rv-outgoing: #60a5fa;
     -rv-danger: #f87171;
@@ -20,7 +22,7 @@
     -fx-font-family: "System";
     -fx-font-size: 14px;
     -fx-accent: -rv-accent;
-    -fx-focus-color: -rv-accent;
+    -fx-focus-color: -rv-focus;
     -fx-faint-focus-color: transparent;
 }
 
@@ -43,9 +45,9 @@
 
 .toy-workspace {
     -fx-background-color: -rv-panel;
-    -fx-background-radius: 8;
+    -fx-background-radius: 9;
     -fx-border-color: -rv-divider;
-    -fx-border-radius: 8;
+    -fx-border-radius: 9;
     -fx-padding: 8 12;
 }
 
@@ -106,7 +108,7 @@
 
 .combo-box {
     -fx-background-color: -rv-control;
-    -fx-background-radius: 8;
+    -fx-background-radius: 6;
     -fx-font-size: 12px;
 }
 
@@ -123,8 +125,13 @@
     -fx-background-color: -rv-control;
 }
 
-.combo-box-popup .list-cell:hover, .combo-box-popup .list-cell:selected {
+.combo-box-popup .list-cell:hover {
     -fx-background-color: -rv-divider;
+}
+
+.combo-box-popup .list-cell:selected {
+    -fx-background-color: -rv-accent;
+    -fx-text-fill: -rv-app;
 }
 
 .split-pane {
@@ -133,7 +140,7 @@
 }
 
 .split-pane > .split-pane-divider {
-    -fx-background-color: -rv-divider;
+    -fx-background-color: -rv-muted;
     -fx-background-insets: 0 5 0 5;
     -fx-padding: 0 6 0 6;
 }
@@ -164,7 +171,7 @@
 }
 
 .combo-box:focus-visible, .scroll-pane:focus-visible, .list-view:focus-visible {
-    -fx-border-color: -rv-accent;
+    -fx-border-color: -rv-focus;
 }
 
 .conversation-turn {
@@ -185,12 +192,17 @@
     -fx-prompt-text-fill: -rv-muted;
 }
 
+.text-input {
+    -fx-highlight-fill: -rv-accent;
+    -fx-highlight-text-fill: -rv-app;
+}
+
 .text-action:hover, .text-action:pressed {
     -fx-background-color: -rv-divider;
 }
 
 .text-field:focus-visible, .text-action:focus-visible {
-    -fx-border-color: -rv-accent;
+    -fx-border-color: -rv-focus;
 }
 
 .settings-dialog .text-area, .settings-dialog .text-area .content {
@@ -205,7 +217,7 @@
 }
 
 .settings-dialog .text-area:focus-visible {
-    -fx-border-color: -rv-accent;
+    -fx-border-color: -rv-focus;
 }
 
 .settings-error {
@@ -232,7 +244,7 @@
 }
 
 .event-inspector .list-cell:filled:selected {
-    -fx-border-color: -rv-accent;
+    -fx-border-color: -rv-focus;
     -fx-border-radius: 4;
     -fx-background-radius: 4;
 }
@@ -251,7 +263,7 @@
 
 .event-inspector .titled-pane:focus-visible > .title,
 .event-inspector .text-area:focus-visible {
-    -fx-border-color: -rv-accent;
+    -fx-border-color: -rv-focus;
 }
 
 .event-inspector .titled-pane > .title .arrow {
@@ -276,7 +288,7 @@
 }
 
 .scroll-bar > .thumb {
-    -fx-background-color: -rv-divider;
+    -fx-background-color: -rv-muted;
 }
 
 .scroll-bar .increment-arrow, .scroll-bar .decrement-arrow {
@@ -340,7 +352,7 @@
 }
 
 .mic-button .icon {
-    -fx-stroke: white;
+    -fx-stroke: -rv-on-primary;
 }
 
 .round-control:hover, .round-control:pressed {
@@ -368,7 +380,14 @@
 }
 
 .round-control:focus-visible, .mic-button:focus-visible {
-    -fx-border-color: -rv-accent;
+    -fx-border-color: -rv-focus;
+}
+
+.mic-button:recording:focus-visible {
+    -fx-border-color: -rv-danger, -rv-focus;
+    -fx-border-insets: 0, -4;
+    -fx-border-width: 2, 2;
+    -fx-border-radius: 999, 999;
 }
 
 .round-control:disabled, .combo-box:disabled {

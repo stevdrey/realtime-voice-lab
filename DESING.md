@@ -57,7 +57,7 @@ Logical JavaFX pixels, independent of display scaling. Initial window 1100 × 72
 | Conversation | Scrollable chronological entries, speaker label then message; quiet divider between messages. Optional text composer at bottom when text feature is available. |
 | Event inspector | Virtualized ListView or TableView; independent scroll, compact rows, direction and type always visible. Filter and event detail added by RVL-006; detail shown in an inspector-local expandable area or dialog. |
 | Audio visualization | Full-width 44–64 px canvas/region below panels. Approximately 64–80 narrow rounded bars in indigo; centered baseline; idle waveform flat or quiet. |
-| Controls | Centered HBox: Settings (36–40 px), primary microphone (56–64 px), Connect/Disconnect (36–40 px); 16 px gap. |
+| Controls | Centered HBox: Settings (40 px), primary microphone (60 px), Connect/Disconnect (40 px); 16 px gap in the default theme. |
 | Metrics | Subtle top divider, three equal-width columns for Latency, Session and Est. cost; labels above values, aligned left. |
 
 At narrower sizes, allow wrapping in toolbar, horizontal scrolling or truncation with tooltip for event names, and independent panel scrolling. Do not clip critical controls. Keep both panels visible above minimum size; let the divider be adjusted. Do not add extra pages or navigation unless a future issue requires them.
@@ -73,17 +73,21 @@ At narrower sizes, allow wrapping in toolbar, horizontal scrolling or truncation
 | divider | #343B49 | Quiet borders and separators |
 | text primary | #F3F4F6 | Main content |
 | text secondary | #D1D5DB | Labels and icons |
-| text muted | #9CA3AF | Metadata and captions |
-| indigo accent | #818CF8 | Waveform and selected/focus accents |
+| text muted | #9CA3AF | Metadata, captions and scrollbar/split-pane handles |
+| indigo accent | #818CF8 | Waveform and selection backgrounds |
+| focus | #DBE1FF | Keyboard focus outlines and the selected event border |
 | indigo heading | #A5B4FC | Panel headings |
 | indigo primary | #6366F1 | Microphone button background |
-| indigo hover | #5558DB | Primary button hover |
+| indigo hover | #37399E | Microphone hover, pressed and recording background |
+| on primary | #FFFFFF | Microphone icon on primary and hover backgrounds |
 | connected / incoming | #4ADE80 | Connection status and received events |
 | outgoing | #60A5FA | Sent event direction |
-| danger / disconnect | #F87171 | Errors and disconnect icon |
+| danger / disconnect | #F87171 | Errors, disconnect icon and microphone recording ring |
 | warning | #FBBF24 | Limits or unavailable resources |
 
-Use system sans-serif (e.g. available Inter or Noto Sans, otherwise JavaFX System), no font download required. 20 px semibold app title, 11–12 px uppercase panel headings, 14 px conversation, 12 px metadata, 12–13 px monospace event names (system monospace fallback), 18–20 px semibold metrics. Use tabular digits if available. Spacing scale: 4, 8, 12, 16, 20, 24 px. Panel corner radius 8–10 px; circular icon controls. Avoid gradients, heavy shadows, saturated surfaces or decorative animation. Retain contrast on hover, pressed, disabled and selected states; use text or icon semantics in addition to color. Use white text/icon on a sufficiently dark primary control, checking contrast for actual font sizes.
+Use system sans-serif (e.g. available Inter or Noto Sans, otherwise JavaFX System), no font download required. 20 px semibold app title, 11–12 px uppercase panel headings, 14 px conversation, 12 px metadata, 12–13 px monospace event names (system monospace fallback), 19 px semibold metrics and 16 px metrics in narrow layouts. Use tabular digits if available. Shared spacing steps are 4, 8, 12 and 16 px. Use a 9 px radius on panels and keep icon controls circular. Avoid gradients, heavy shadows, saturated surfaces or decorative animation. Retain legibility on hover, pressed, disabled and selected states. Use text or icon semantics in addition to color.
+
+RVL-016 defines the immutable `ThemeTokens` schema. `ThemeValidator.resolve` checks a complete candidate and returns the built-in dark theme with validation diagnostics if any token fails. It validates opaque sRGB colors against the backgrounds for each role, using 4.5:1 for normal text and 3:1 for essential non-text indicators. Shared dimensions are bounded in logical pixels, including minimum 40 px and 60 px targets for the round secondary controls and microphone. The packaged CSS renders the built-in theme. [WCAG minimum text contrast](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html) · [WCAG non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html)
 
 ## 5. JavaFX implementation guidance
 
@@ -100,9 +104,11 @@ Define view structure in FXML using JavaFX layout panes and controls such as Bor
     -rv-secondary: #d1d5db;
     -rv-muted: #9ca3af;
     -rv-accent: #818cf8;
+    -rv-focus: #dbe1ff;
     -rv-heading: #a5b4fc;
     -rv-primary: #6366f1;
-    -rv-primary-hover: #5558db;
+    -rv-primary-hover: #37399e;
+    -rv-on-primary: #ffffff;
     -rv-success: #4ade80;
     -rv-outgoing: #60a5fa;
     -rv-danger: #f87171;
@@ -111,7 +117,7 @@ Define view structure in FXML using JavaFX layout panes and controls such as Bor
     -fx-font-family: "System";
     -fx-font-size: 14px;
     -fx-accent: -rv-accent;
-    -fx-focus-color: -rv-accent;
+    -fx-focus-color: -rv-focus;
     -fx-faint-focus-color: transparent;
 }
 .workspace {
@@ -147,16 +153,16 @@ Define view structure in FXML using JavaFX layout panes and controls such as Bor
 }
 .mic-button {
     -fx-background-color: -rv-primary;
-    -fx-text-fill: white;
     -fx-min-width: 60;
     -fx-min-height: 60;
     -fx-pref-width: 60;
     -fx-pref-height: 60;
     -fx-background-radius: 999;
 }
+.mic-button .icon { -fx-stroke: -rv-on-primary; }
 .mic-button:hover { -fx-background-color: -rv-primary-hover; }
-.round-control:focused, .mic-button:focused {
-    -fx-border-color: -rv-accent;
+.round-control:focus-visible, .mic-button:focus-visible {
+    -fx-border-color: -rv-focus;
     -fx-border-width: 2;
     -fx-border-radius: 999;
 }
@@ -178,7 +184,7 @@ Style ComboBox popup, ListView cells, TextArea, ScrollPane viewport, scrollbars,
 | Disconnected | Neutral dot + “Disconnected”; Connect enabled, model selectable; mic disabled, metrics shown as em dash when unknown. |
 | Connecting | “Connecting…” + progress indicator, disable repeated connect; cancellation available where supported. |
 | Connected / ready | Green dot + “Connected”; microphone enabled when audio feature exists; idle waveform. |
-| Capturing | Clearly visible “Recording” label and active mic state; waveform from microphone level only; elapsed recording available; release to end push-to-talk. |
+| Capturing | “Recording” label and a high-contrast recording ring. Keyboard focus uses a separate outer ring. The waveform shows microphone level. Release to end push-to-talk. |
 | Responding / playback | “Responding” or “Speaking” status, playback waveform from output audio, Stop/Interrupt available once implemented; never silently keep playing after disconnect. |
 | Closing | Disable new actions; “Disconnecting…” until cleanup completes. |
 | Error / limit | Red or amber inline status, human-readable sanitized reason, recovery action when safe; do not expose raw secrets/errors. |
