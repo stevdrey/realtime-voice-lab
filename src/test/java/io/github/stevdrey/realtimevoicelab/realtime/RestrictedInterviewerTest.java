@@ -103,11 +103,12 @@ class RestrictedInterviewerTest {
             assertFalse(session.workspace().canCancel());
         }
         assertEquals(1, socket.writes.size());
+        assertEquals(1, session.workspace().turns().size());
         assertFalse(session.workspace().usage().pending());
 
         int index = 0;
         for (var input : new String[]{"start", "clarify: Could you explain what you mean by a trade-off?",
-                "answer: A cache trades memory for a faster read."}) {
+                "answer: A cache trades memory for a faster read.", "START", "Answer : Synthetic answer."}) {
             var id = "reply-" + ++index;
             requestResponse(socket, input, id);
             socket.text(completed(id).toString(), true);
@@ -116,7 +117,7 @@ class RestrictedInterviewerTest {
             assertEquals(input, turn.input());
             assertEquals("Synthetic interview response", turn.output());
         }
-        assertEquals(7, socket.writes.size());
+        assertEquals(11, socket.writes.size());
     }
 
     @ParameterizedTest
@@ -139,40 +140,64 @@ class RestrictedInterviewerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"call-1", "invalid call id"})
-    void closesWhenTheTerminalResponseOmitsASignaledCall(String callId) throws Exception {
+    @ValueSource(strings = {"call-1", "invalid call id", "no response id"})
+    void closesOnAnyFunctionCallSignal(String variant) throws Exception {
         var socket = connectInterview();
         requestResponse(socket, "start", "reply");
-        signal(socket, callId);
-        socket.text(completed("unrelated-reply").toString(), true);
-        assertEquals(State.READY, session.status().state());
-        assertEquals(0, socket.closeWrites);
-
-        socket.text(completed("reply").toString(), true);
+        signal(socket, "no response id".equals(variant) ? "call-1" : variant,
+                "no response id".equals(variant) ? null : "reply");
 
         assertEquals(State.CLOSING, session.status().state());
         assertEquals(TurnState.BLOCKED, session.workspace().turns().getLast().state());
         assertTrue(session.workspace().turns().getLast().output().contains("Return to the interview"));
         assertFalse(session.sendText("start"));
-        assertEquals(3, socket.writes.size());
-        assertEquals(1, socket.closeWrites);
+        assertEquals("response.cancel", json.readTree(socket.writes.getLast()).path("type").textValue());
+        assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
         socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
         assertEquals(new RealtimeSession.Status(State.ERROR, Failure.RESTRICTED_TOOL_CALL), session.status());
     }
 
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void appliesTheSharedQuotaToSignalsAndTerminalCalls(boolean overQuota) throws Exception {
+    @Test
+    void reportsTheBlockedCallBeforeAConcurrentOutputLimit() throws Exception {
         var socket = connectInterview();
         requestResponse(socket, "start", "reply");
-        for (int index = 0; index < RealtimeSession.MAX_TOOL_CALLS - 1; index++) {
-            signal(socket, "call-" + index);
-        }
         var done = completed("reply");
-        addCall(done, "call-0", "setTheme");
-        addCall(done, "terminal-only", "setTheme");
-        if (overQuota) {
-            addCall(done, "overflow", "setTheme");
+        ((ObjectNode) done.path("response")).put("status", "incomplete")
+                .putObject("status_details").put("reason", "max_output_tokens");
+        addCall(done, "call-1", "setTheme");
+        socket.text(done.toString(), true);
+
+        assertEquals(TurnState.BLOCKED, session.workspace().turns().getLast().state());
+        assertEquals(3, socket.writes.size());
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        assertEquals(new RealtimeSession.Status(State.ERROR, Failure.RESTRICTED_TOOL_CALL), session.status());
+    }
+
+    @Test
+    void acceptsAnAcknowledgementThatOmitsTurnDetection() throws Exception {
+        assertTrue(session.configure(INTERVIEW, State.DISCONNECTED));
+        session.connectSelected(TranscriptionModel.OFF);
+        var socket = openSocket();
+        var effective = (ObjectNode) json.readTree(socket.writes.getFirst()).path("session");
+        effective.put("id", "test-session").put("model", Model.MINI.id());
+        ((ObjectNode) effective.path("audio").path("input")).remove("turn_detection");
+        var event = json.createObjectNode().put("type", "session.updated");
+        event.set("session", effective);
+        socket.text(event.toString(), true);
+
+        assertEquals(new RealtimeSession.Status(State.READY, null), session.status());
+        assertFalse(session.startAudio());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void appliesTheSessionQuotaToTerminalCalls(boolean overQuota) throws Exception {
+        var socket = connectInterview();
+        requestResponse(socket, "start", "reply");
+        var done = completed("reply");
+        int calls = RealtimeSession.MAX_TOOL_CALLS + (overQuota ? 1 : 0);
+        for (int index = 0; index < calls; index++) {
+            addCall(done, "call-" + index, "setTheme");
         }
         socket.text(done.toString(), true);
 
@@ -232,9 +257,12 @@ class RestrictedInterviewerTest {
                 .put("call_id", callId).put("name", tool).put("arguments", "{\"theme\":\"midnight\"}");
     }
 
-    private void signal(FakeTransport.Socket socket, String callId) {
+    private void signal(FakeTransport.Socket socket, String callId, String responseId) {
         var event = json.createObjectNode().put("type", "response.function_call_arguments.done")
-                .put("response_id", "reply").put("call_id", callId);
+                .put("call_id", callId);
+        if (responseId != null) {
+            event.put("response_id", responseId);
+        }
         socket.text(event.toString(), true);
     }
 }

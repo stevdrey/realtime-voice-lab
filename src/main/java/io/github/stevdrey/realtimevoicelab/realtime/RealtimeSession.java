@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -148,6 +149,7 @@ public final class RealtimeSession implements AutoCloseable {
     private ToyWorkspace toyWorkspace = ToyWorkspace.DEFAULT;
     private final ArrayDeque<ConversationTurn> history = new ArrayDeque<>();
     private long turnNumber;
+    private ConversationTurn localRedirect;
     private Attempt active;
     private UsageView closedUsage;
     private Duration closedElapsed;
@@ -305,10 +307,13 @@ public final class RealtimeSession implements AutoCloseable {
         if (settings.restrictedInterviewer()) {
             input = input.strip();
             if (!isInterviewInput(input)) {
-                var blocked = new ConversationTurn(++turnNumber, "Message withheld");
-                blocked.replaceReplyWithLocalMessage(INTERVIEW_REDIRECT);
-                blocked.finish(TurnState.BLOCKED);
-                appendHistory(blocked);
+                // Consecutive redirects share one row so they cannot evict interview turns.
+                if (localRedirect == null || history.peekLast() != localRedirect) {
+                    localRedirect = new ConversationTurn(++turnNumber, "Message withheld");
+                    localRedirect.replaceReplyWithLocalMessage(INTERVIEW_REDIRECT);
+                    localRedirect.finish(TurnState.BLOCKED);
+                    appendHistory(localRedirect);
+                }
                 statusChanged.run();
                 return true;
             }
@@ -324,12 +329,12 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private boolean isInterviewInput(String input) {
-        if ("start".equals(input)) {
+        if ("start".equalsIgnoreCase(input)) {
             return true;
         }
         int separator = input.indexOf(':');
         return separator >= 0 && !input.substring(separator + 1).isBlank()
-                && switch (input.substring(0, separator)) {
+                && switch (input.substring(0, separator).strip().toLowerCase(Locale.ROOT)) {
                     case "answer", "clarify" -> true;
                     default -> false;
                 };
@@ -1197,6 +1202,10 @@ public final class RealtimeSession implements AutoCloseable {
                                     ? responseId : null,
                             localTools.validCallId(callId) ? callId : null)) {
                         stopAtLimit(attempt, Failure.TOOL_LIMIT);
+                    } else if (settings.restrictedInterviewer()) {
+                        // Any signal proves a call, even when it cannot be correlated with a response.
+                        blockRestrictedTurn(attempt);
+                        stopAtLimit(attempt, Failure.RESTRICTED_TOOL_CALL);
                     }
                 }
             }
@@ -1721,15 +1730,12 @@ public final class RealtimeSession implements AutoCloseable {
         boolean matchesTurn = turn != null && (id.equals(turn.responseId) || matchesRequest);
         if (settings.restrictedInterviewer()) {
             var blocked = restrictedToolFailure(attempt, id, response.path("output"));
-            if (blocked == null && attempt.toolCalls.hasUnmatchedSignal(id)) {
-                blocked = Failure.RESTRICTED_TOOL_CALL;
-            }
             if (blocked != null) {
                 if (matchesTurn) {
-                    turn.replaceReplyWithLocalMessage(INTERVIEW_REDIRECT);
-                    finishTurn(attempt, TurnState.BLOCKED);
+                    blockRestrictedTurn(attempt);
                 }
-                stopAtLimit(attempt, limit == null ? blocked : limit);
+                // The blocked call takes priority over a concurrent output or spend limit.
+                stopAtLimit(attempt, blocked);
                 return;
             }
         }
@@ -1772,6 +1778,14 @@ public final class RealtimeSession implements AutoCloseable {
             return Failure.SPEND_ESTIMATE_UNAVAILABLE;
         }
         return attempt.usage.reachedCutoff(pricing.cutoff()) ? Failure.SPEND_LIMIT : null;
+    }
+
+    private void blockRestrictedTurn(Attempt attempt) {
+        var turn = attempt.turn;
+        if (turn != null) {
+            turn.replaceReplyWithLocalMessage(INTERVIEW_REDIRECT);
+            finishTurn(attempt, TurnState.BLOCKED);
+        }
     }
 
     private Failure restrictedToolFailure(Attempt attempt, String responseId, JsonNode output) {
@@ -2165,7 +2179,7 @@ public final class RealtimeSession implements AutoCloseable {
         var appliedDetection = acknowledged.turnDetection();
         // Historic manual sessions can still use text if PCM/turn detection was not confirmed.
         if (appliedDetection != requestedDetection
-                && (update.requested.restrictedInterviewer() || requestedDetection.automatic() || appliedDetection != null
+                && (requestedDetection.automatic() || appliedDetection != null
                     || settings.effectiveTurnDetection().automatic())) {
             fail(attempt, Failure.SETTINGS_MISMATCH);
         } else if (!acknowledged.boundedOutput() || update.requested.mode() == Mode.AUDIO && !acknowledged.pcmOutput()

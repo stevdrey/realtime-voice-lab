@@ -13,7 +13,7 @@ final class ToolCallBudget {
         if (!takeSlot()) {
             return false;
         }
-        if (responseId != null) {
+        if (responseId != null && callId != null) {
             reported.add(new ReportedCall(responseId, callId));
         }
         return true;
@@ -22,10 +22,6 @@ final class ToolCallBudget {
     boolean reserve(String responseId, String callId) {
         // A missing or invalid call ID cannot correlate two events for quota accounting.
         return (callId != null && reported.remove(new ReportedCall(responseId, callId))) || takeSlot();
-    }
-
-    boolean hasUnmatchedSignal(String responseId) {
-        return reported.stream().anyMatch(call -> responseId.equals(call.responseId()));
     }
 
     boolean claim(String callId) {

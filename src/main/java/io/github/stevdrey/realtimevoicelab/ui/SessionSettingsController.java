@@ -55,7 +55,7 @@ public final class SessionSettingsController {
         voice.setDisable(settings.voiceLocked());
         mode.getItems().setAll(Mode.values());
         mode.setValue(current.mode());
-        unrestrictedMode = current.mode();
+        unrestrictedMode = current.restrictedInterviewer() ? SessionSettings.DEFAULT.mode() : current.mode();
         unrestrictedTools = current.restrictedInterviewer() ? SessionSettings.DEFAULT.toolPreset() : current.toolPreset();
         turnDetection.getItems().setAll(TurnDetection.values());
         turnDetection.setValue(current.turnDetection());

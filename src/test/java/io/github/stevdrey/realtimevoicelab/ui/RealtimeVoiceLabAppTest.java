@@ -353,6 +353,19 @@ class RealtimeVoiceLabAppTest {
                 var transcription = combo(stage, "#transcription-selector");
                 assertTrue(transcription.isDisabled());
                 assertEquals(TranscriptionModel.OFF, transcription.getValue());
+
+                var leave = openSettings(stage);
+                this.<Preset>combo(leave, "#settings-preset").setValue(Preset.FREE_CONVERSATION);
+                assertEquals(Mode.AUDIO, combo(leave, "#settings-mode").getValue());
+                assertEquals(ToolPreset.DEMO_COUNTER, combo(leave, "#settings-tool-preset").getValue());
+                ((Button) leave.getScene().lookup("#apply-settings")).fire();
+                assertFalse(transcription.isDisabled());
+                assertEquals(TranscriptionModel.TRANSCRIBE, transcription.getValue());
+
+                var reenter = openSettings(stage);
+                this.<Preset>combo(reenter, "#settings-preset").setValue(Preset.RESTRICTED_INTERVIEWER);
+                ((Button) reenter.getScene().lookup("#apply-settings")).fire();
+                assertEquals(TranscriptionModel.OFF, transcription.getValue());
                 connectButton(stage).fire();
                 return null;
             });

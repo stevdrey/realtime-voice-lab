@@ -104,6 +104,9 @@ public final class WorkspaceController {
     @FXML
     private ComboBox<TranscriptionModel> transcriptionSelector;
 
+    // Restored when the saved settings leave Restricted Interviewer.
+    private TranscriptionModel transcriptionBeforeRestricted;
+
     @FXML
     private Region statusDot;
 
@@ -481,8 +484,12 @@ public final class WorkspaceController {
         modelSelector.setValue(settings.values().model());
         modelSelector.setDisable(!disconnected);
         sessionMode.setText(restricted ? SessionSettings.Preset.RESTRICTED_INTERVIEWER.toString() : mode.toString());
-        if (restricted) {
+        if (restricted && transcriptionSelector.getValue() != TranscriptionModel.OFF) {
+            transcriptionBeforeRestricted = transcriptionSelector.getValue();
             transcriptionSelector.setValue(TranscriptionModel.OFF);
+        } else if (!restricted && transcriptionBeforeRestricted != null) {
+            transcriptionSelector.setValue(transcriptionBeforeRestricted);
+            transcriptionBeforeRestricted = null;
         }
         transcriptionSelector.setDisable(!disconnected || restricted);
         settingsButton.setDisable(!settings.canEdit());
