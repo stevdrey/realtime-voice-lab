@@ -8,122 +8,128 @@
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.SplitPane?>
 <?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.FlowPane?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
 <?import javafx.scene.shape.SVGPath?>
 
-<VBox fx:id="root" xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1" styleClass="app-shell">
-    <HBox spacing="10" styleClass="app-header">
-        <SVGPath content="M1 12h3l3-7 4 14 4-16 4 9h4" styleClass="icon"/>
-        <Label text="Realtime Voice Lab" styleClass="app-title"/>
-        <Region HBox.hgrow="ALWAYS"/>
-        <Label text="JavaFX Desktop" styleClass="caption"/>
-    </HBox>
-
-    <VBox styleClass="workspace" VBox.vgrow="ALWAYS">
-        <HBox alignment="CENTER_LEFT" spacing="8">
-            <Region fx:id="statusDot" styleClass="status-dot"/>
-            <!-- Use the preferred height so status messages can wrap at the minimum window width. -->
-            <Label fx:id="sessionStatus" id="session-status" text="Disconnected" styleClass="session-status"
-                   wrapText="true" minWidth="0" minHeight="-Infinity"/>
-            <ProgressIndicator fx:id="sessionProgress" visible="false"
-                               maxWidth="16" maxHeight="16"/>
+<StackPane fx:id="sceneRoot" xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1">
+    <VBox fx:id="root" styleClass="app-shell">
+        <HBox spacing="10" styleClass="app-header">
+            <SVGPath content="M1 12h3l3-7 4 14 4-16 4 9h4" styleClass="icon"/>
+            <Label text="Realtime Voice Lab" styleClass="app-title"/>
             <Region HBox.hgrow="ALWAYS"/>
-            <Label text="Input transcription" styleClass="caption" labelFor="${transcriptionSelector}"/>
-            <ComboBox fx:id="transcriptionSelector" id="transcription-selector"/>
-            <Label fx:id="sessionMode" id="session-mode" styleClass="caption"/>
-            <ComboBox fx:id="modelSelector" id="model-selector"/>
+            <Label text="JavaFX Desktop" styleClass="caption"/>
+            <Button fx:id="themeButton" id="theme-button" text="Theme" styleClass="text-action"/>
         </HBox>
 
-        <SplitPane id="main-panels" dividerPositions="0.5" VBox.vgrow="ALWAYS">
-            <VBox spacing="8" minWidth="260" styleClass="lab-panel">
-                <Label text="CONVERSATION" styleClass="panel-title" labelFor="${conversation}"/>
-                <StackPane VBox.vgrow="ALWAYS">
-                    <ScrollPane fx:id="conversation" id="conversation-content" accessibleText="Conversation"
-                                focusTraversable="true" fitToWidth="true" hbarPolicy="NEVER">
-                        <content>
-                            <VBox fx:id="turnRows" id="conversation-turns"/>
-                        </content>
-                    </ScrollPane>
-                    <Label fx:id="conversationEmpty" text="Connect to start a conversation."
-                           styleClass="empty-message" wrapText="true" mouseTransparent="true"/>
-                </StackPane>
-                <HBox spacing="8" alignment="CENTER_LEFT">
-                    <TextField fx:id="composer" id="text-composer" promptText="Type a message…"
-                               accessibleText="Message" minWidth="0" HBox.hgrow="ALWAYS"/>
-                    <Button fx:id="sendButton" id="send-text" text="Send" styleClass="text-action"/>
-                    <Button fx:id="cancelButton" id="cancel-text" text="Cancel" accessibleText="Cancel turn"
-                            styleClass="text-action"/>
+        <VBox styleClass="workspace" VBox.vgrow="ALWAYS">
+            <HBox alignment="CENTER_LEFT" styleClass="session-toolbar">
+                <Region fx:id="statusDot" styleClass="status-dot"/>
+                <!-- Use the preferred height so status messages can wrap at the minimum window width. -->
+                <Label fx:id="sessionStatus" id="session-status" text="Disconnected" styleClass="session-status"
+                       wrapText="true" minWidth="0" minHeight="-Infinity"/>
+                <ProgressIndicator fx:id="sessionProgress" visible="false"
+                                   maxWidth="16" maxHeight="16"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Label text="Input transcription" styleClass="caption" labelFor="${transcriptionSelector}"/>
+                <ComboBox fx:id="transcriptionSelector" id="transcription-selector"/>
+                <Label fx:id="sessionMode" id="session-mode" styleClass="caption"/>
+                <ComboBox fx:id="modelSelector" id="model-selector"/>
+            </HBox>
+
+            <SplitPane id="main-panels" dividerPositions="0.5" VBox.vgrow="ALWAYS">
+                <VBox minWidth="260" styleClass="lab-panel">
+                    <Label text="CONVERSATION" styleClass="panel-title" labelFor="${conversation}"/>
+                    <StackPane VBox.vgrow="ALWAYS">
+                        <ScrollPane fx:id="conversation" id="conversation-content" accessibleText="Conversation"
+                                    focusTraversable="true" fitToWidth="true" hbarPolicy="NEVER">
+                            <content>
+                                <VBox fx:id="turnRows" id="conversation-turns"/>
+                            </content>
+                        </ScrollPane>
+                        <Label fx:id="conversationEmpty" text="Connect to start a conversation."
+                               styleClass="empty-message" wrapText="true" mouseTransparent="true"/>
+                    </StackPane>
+                    <HBox alignment="CENTER_LEFT" styleClass="composer-actions">
+                        <TextField fx:id="composer" id="text-composer" promptText="Type a message…"
+                                   accessibleText="Message" minWidth="0" HBox.hgrow="ALWAYS"/>
+                        <Button fx:id="sendButton" id="send-text" text="Send" styleClass="text-action"/>
+                        <Button fx:id="cancelButton" id="cancel-text" text="Cancel" accessibleText="Cancel turn"
+                                styleClass="text-action"/>
+                    </HBox>
+                </VBox>
+                <fx:include fx:id="eventInspector" source="event-inspector.fxml"/>
+            </SplitPane>
+
+            <StackPane styleClass="waveform">
+                <Region styleClass="waveform-baseline"/>
+                <ProgressBar fx:id="micLevel" id="mic-level" visible="false" progress="0" maxWidth="280"
+                             maxHeight="8" accessibleText="Microphone level" styleClass="mic-level"/>
+            </StackPane>
+
+            <VBox alignment="CENTER" spacing="6">
+                <HBox alignment="CENTER" fillHeight="false" styleClass="audio-controls">
+                    <StackPane fx:id="settingsControl">
+                        <Button fx:id="settingsButton" id="settings-button" accessibleText="Settings" styleClass="round-control">
+                            <graphic>
+                                <SVGPath styleClass="icon"
+                                         content="M10 2h4l.7 3 2 .9 2.7-1.5 2 3.5-2.2 2.1v3l2.2 2.1-2 3.5
+                                                  -2.7-1.5-2 .9-.7 3h-4l-.7-3-2-.9-2.7 1.5-2-3.5L4.8 13v-3L2.6 7.9l2-3.5 2.7 1.5 2-.9z
+                                                  M15 11.5a3 3 0 1 1-6 0 3 3 0 1 1 6 0z"/>
+                            </graphic>
+                        </Button>
+                    </StackPane>
+                    <StackPane fx:id="micControl">
+                        <Button fx:id="micButton" id="mic-button" accessibleText="Microphone"
+                                disable="true" styleClass="mic-button">
+                            <graphic>
+                                <SVGPath styleClass="icon"
+                                         content="M12 2a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V6a4 4 0 0 0-4-4z M5 11v1a7 7 0 0 0 14 0v-1 M12 19v4 M8 23h8"/>
+                            </graphic>
+                        </Button>
+                    </StackPane>
+                    <Button fx:id="connectButton" id="connect-button" accessibleText="Connect"
+                            styleClass="round-control">
+                        <graphic>
+                            <SVGPath content="M12 2v10 M6.4 5.4a8 8 0 1 0 11.2 0" styleClass="icon"/>
+                        </graphic>
+                    </Button>
                 </HBox>
+                <Label fx:id="micStatus" id="mic-status" styleClass="caption" minHeight="18" wrapText="true"/>
             </VBox>
-            <fx:include fx:id="eventInspector" source="event-inspector.fxml"/>
-        </SplitPane>
 
-        <StackPane styleClass="waveform">
-            <Region styleClass="waveform-baseline"/>
-            <ProgressBar fx:id="micLevel" id="mic-level" visible="false" progress="0" maxWidth="280"
-                         maxHeight="8" accessibleText="Microphone level" styleClass="mic-level"/>
-        </StackPane>
-
-        <VBox alignment="CENTER" spacing="6">
-            <HBox alignment="CENTER" spacing="16" fillHeight="false">
-                <StackPane fx:id="settingsControl">
-                    <Button fx:id="settingsButton" id="settings-button" accessibleText="Settings" styleClass="round-control">
-                        <graphic>
-                            <SVGPath styleClass="icon"
-                                     content="M10 2h4l.7 3 2 .9 2.7-1.5 2 3.5-2.2 2.1v3l2.2 2.1-2 3.5
-                                              -2.7-1.5-2 .9-.7 3h-4l-.7-3-2-.9-2.7 1.5-2-3.5L4.8 13v-3L2.6 7.9l2-3.5 2.7 1.5 2-.9z
-                                              M15 11.5a3 3 0 1 1-6 0 3 3 0 1 1 6 0z"/>
-                        </graphic>
-                    </Button>
-                </StackPane>
-                <StackPane fx:id="micControl">
-                    <Button fx:id="micButton" id="mic-button" accessibleText="Microphone"
-                            disable="true" styleClass="mic-button">
-                        <graphic>
-                            <SVGPath styleClass="icon"
-                                     content="M12 2a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V6a4 4 0 0 0-4-4z M5 11v1a7 7 0 0 0 14 0v-1 M12 19v4 M8 23h8"/>
-                        </graphic>
-                    </Button>
-                </StackPane>
-                <Button fx:id="connectButton" id="connect-button" accessibleText="Connect"
-                        styleClass="round-control">
-                    <graphic>
-                        <SVGPath content="M12 2v10 M6.4 5.4a8 8 0 1 0 11.2 0" styleClass="icon"/>
-                    </graphic>
-                </Button>
+            <HBox alignment="CENTER_LEFT" styleClass="workspace-footer">
+                <FlowPane fx:id="toyPanel" id="toy-workspace" alignment="CENTER_LEFT"
+                      prefWrapLength="440" maxWidth="-Infinity"
+                      visible="false" styleClass="toy-workspace">
+                    <Label text="TOY WORKSPACE" styleClass="panel-title"/>
+                    <Region fx:id="toySwatch" id="toy-swatch" styleClass="toy-swatch"/>
+                    <Label fx:id="toyColor" id="toy-color"/>
+                    <Label fx:id="toyTheme" id="toy-theme"/>
+                    <Label fx:id="toyCounter" id="toy-counter"/>
+                </FlowPane>
+                <HBox fx:id="metrics" id="metrics" HBox.hgrow="ALWAYS" styleClass="metrics">
+                    <VBox fx:id="latencyMetric" spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
+                        <Label text="Latency" styleClass="caption"/>
+                        <Label fx:id="latencyValue" id="latency-value" text="—" styleClass="metric-value"/>
+                    </VBox>
+                    <VBox fx:id="elapsedMetric" spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
+                        <Label text="Session" styleClass="caption"/>
+                        <Label fx:id="elapsedValue" id="elapsed-value" text="—" styleClass="metric-value"/>
+                    </VBox>
+                    <VBox fx:id="costMetric" spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
+                        <Label text="Est. cost" styleClass="caption"/>
+                        <Label fx:id="costValue" id="cost-value" text="—" styleClass="metric-value"/>
+                        <Label fx:id="costState" id="cost-state" styleClass="caption" wrapText="true" minWidth="0"/>
+                        <Label fx:id="transcriptionCost" id="transcription-cost" styleClass="caption"
+                               wrapText="true" minWidth="0" text="Transcription extra"/>
+                    </VBox>
+                </HBox>
             </HBox>
-            <Label fx:id="micStatus" id="mic-status" styleClass="caption" minHeight="18" wrapText="true"/>
         </VBox>
-
-        <HBox alignment="CENTER_LEFT" spacing="16" styleClass="workspace-footer">
-            <HBox fx:id="toyPanel" id="toy-workspace" alignment="CENTER_LEFT" spacing="12"
-                  visible="false" styleClass="toy-workspace">
-                <Label text="TOY WORKSPACE" styleClass="panel-title"/>
-                <Region fx:id="toySwatch" id="toy-swatch" styleClass="toy-swatch"/>
-                <Label fx:id="toyColor" id="toy-color"/>
-                <Label fx:id="toyTheme" id="toy-theme"/>
-                <Label fx:id="toyCounter" id="toy-counter"/>
-            </HBox>
-            <HBox fx:id="metrics" id="metrics" spacing="16" HBox.hgrow="ALWAYS" styleClass="metrics">
-                <VBox fx:id="latencyMetric" spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
-                    <Label text="Latency" styleClass="caption"/>
-                    <Label fx:id="latencyValue" id="latency-value" text="—" styleClass="metric-value"/>
-                </VBox>
-                <VBox fx:id="elapsedMetric" spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
-                    <Label text="Session" styleClass="caption"/>
-                    <Label fx:id="elapsedValue" id="elapsed-value" text="—" styleClass="metric-value"/>
-                </VBox>
-                <VBox fx:id="costMetric" spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
-                    <Label text="Est. cost" styleClass="caption"/>
-                    <Label fx:id="costValue" id="cost-value" text="—" styleClass="metric-value"/>
-                    <Label fx:id="costState" id="cost-state" styleClass="caption" wrapText="true" minWidth="0"/>
-                    <Label fx:id="transcriptionCost" id="transcription-cost" styleClass="caption"
-                           wrapText="true" minWidth="0" text="Transcription extra"/>
-                </VBox>
-            </HBox>
-        </HBox>
     </VBox>
-</VBox>
+    <fx:include fx:id="themeProfiles" source="theme-profiles.fxml"/>
+</StackPane>

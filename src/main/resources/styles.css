@@ -20,35 +20,22 @@
 
     -fx-background-color: -rv-app;
     -fx-font-family: "System";
-    -fx-font-size: 14px;
     -fx-accent: -rv-accent;
     -fx-focus-color: -rv-focus;
     -fx-faint-focus-color: transparent;
 }
 
-.app-shell {
-    -fx-padding: 16;
-    -fx-spacing: 12;
-}
-
 .app-header {
     -fx-alignment: center-left;
-    -fx-padding: 0 4 0 4;
 }
 
 .workspace {
     -fx-background-color: -rv-workspace;
-    -fx-background-radius: 12;
-    -fx-padding: 16;
-    -fx-spacing: 12;
 }
 
 .toy-workspace {
     -fx-background-color: -rv-panel;
-    -fx-background-radius: 9;
     -fx-border-color: -rv-divider;
-    -fx-border-radius: 9;
-    -fx-padding: 8 12;
 }
 
 .toy-workspace:midnight {
@@ -72,17 +59,12 @@
     -fx-text-fill: -rv-text;
 }
 
-.app-title {
-    -fx-font-size: 20px;
+.app-title, .dialog-title {
     -fx-font-weight: 600;
 }
 
 .caption, .empty-message {
     -fx-text-fill: -rv-muted;
-}
-
-.caption, .session-status {
-    -fx-font-size: 12px;
 }
 
 .status-dot {
@@ -108,8 +90,6 @@
 
 .combo-box {
     -fx-background-color: -rv-control;
-    -fx-background-radius: 6;
-    -fx-font-size: 12px;
 }
 
 .combo-box > .list-cell, .combo-box-popup .list-cell {
@@ -119,6 +99,15 @@
 
 .combo-box > .arrow-button > .arrow {
     -fx-background-color: -rv-secondary;
+}
+
+.theme-dialog .combo-box > .arrow-button {
+    -fx-background-color: -rv-control;
+    -fx-background-insets: 0;
+}
+
+.theme-dialog .combo-box > .arrow-button:hover {
+    -fx-background-color: -rv-divider;
 }
 
 .combo-box-popup .list-view {
@@ -145,17 +134,28 @@
     -fx-padding: 0 6 0 6;
 }
 
-.lab-panel {
+.theme-overlay {
+    -fx-background-color: rgba(0, 0, 0, 0.48);
+}
+
+.theme-recording-ring {
+    -fx-min-width: 14;
+    -fx-min-height: 14;
+    -fx-max-height: 14;
+    -fx-background-color: -rv-primary-hover;
+    -fx-background-radius: 999;
+    -fx-border-color: -rv-danger;
+    -fx-border-width: 2;
+    -fx-border-radius: 999;
+}
+
+.lab-panel, .theme-dialog {
     -fx-background-color: -rv-panel;
-    -fx-background-radius: 9;
     -fx-border-color: -rv-divider;
-    -fx-border-radius: 9;
-    -fx-padding: 12;
 }
 
 .panel-title {
     -fx-text-fill: -rv-heading;
-    -fx-font-size: 12px;
     -fx-font-weight: bold;
 }
 
@@ -175,15 +175,11 @@
 }
 
 .conversation-turn {
-    -fx-spacing: 4;
-    -fx-padding: 8;
     -fx-border-color: transparent transparent -rv-divider transparent;
 }
 
 .text-field, .text-action {
     -fx-background-color: -rv-control;
-    -fx-background-radius: 6;
-    -fx-border-radius: 6;
     -fx-border-color: transparent;
     -fx-text-fill: -rv-text;
 }
@@ -207,12 +203,10 @@
 
 .settings-dialog .text-area, .settings-dialog .text-area .content {
     -fx-background-color: -rv-control;
-    -fx-background-radius: 6;
 }
 
 .settings-dialog .text-area {
     -fx-border-color: transparent;
-    -fx-border-radius: 6;
     -fx-text-fill: -rv-text;
 }
 
@@ -226,7 +220,6 @@
 
 .event-inspector .list-cell {
     -fx-font-family: "Monospaced";
-    -fx-font-size: 12px;
     -fx-text-overrun: ellipsis;
 }
 
@@ -251,14 +244,11 @@
 
 .event-inspector .titled-pane {
     -fx-text-fill: -rv-secondary;
-    -fx-font-size: 12px;
 }
 
 .event-inspector .titled-pane > .title {
     -fx-background-color: -rv-control;
-    -fx-background-radius: 6;
     -fx-border-color: transparent;
-    -fx-border-radius: 6;
 }
 
 .event-inspector .titled-pane:focus-visible > .title,
@@ -296,7 +286,8 @@
 }
 
 .waveform {
-    -fx-min-height: 52;
+    /* Let the waveform yield vertical space to the controls and metrics at short heights. */
+    -fx-min-height: 16;
     -fx-pref-height: 52;
     -fx-padding: 0 12 0 12;
 }
@@ -337,18 +328,10 @@
 
 .round-control {
     -fx-background-color: -rv-control;
-    -fx-min-width: 40;
-    -fx-min-height: 40;
-    -fx-pref-width: 40;
-    -fx-pref-height: 40;
 }
 
 .mic-button {
     -fx-background-color: -rv-primary;
-    -fx-min-width: 60;
-    -fx-min-height: 60;
-    -fx-pref-width: 60;
-    -fx-pref-height: 60;
 }
 
 .mic-button .icon {
@@ -415,14 +398,8 @@
 
 .workspace-footer {
     -fx-border-color: -rv-divider transparent transparent transparent;
-    -fx-padding: 8 0 0 0;
 }
 
 .metric-value {
-    -fx-font-size: 19px;
     -fx-font-weight: 600;
-}
-
-.metrics:narrow .metric-value {
-    -fx-font-size: 16px;
 }

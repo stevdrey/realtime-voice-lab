@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<StackPane fx:id="overlay" id="theme-overlay" xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="io.github.stevdrey.realtimevoicelab.ui.ThemeProfilesController"
+      styleClass="theme-overlay" visible="false" managed="false">
+    <VBox id="theme-dialog" styleClass="theme-dialog" maxWidth="480" maxHeight="-Infinity">
+        <Label text="Theme" styleClass="dialog-title"/>
+        <VBox fx:id="actions" styleClass="theme-fields">
+            <HBox styleClass="theme-actions">
+                <Button id="theme-ocean" text="Use Ocean" onAction="#useOcean" styleClass="text-action"/>
+                <Button id="theme-reset" text="Reset to default" onAction="#reset" styleClass="text-action"/>
+            </HBox>
+            <Label text="Profile name" labelFor="${profile}"/>
+            <HBox alignment="CENTER_LEFT" styleClass="theme-actions">
+                <ComboBox fx:id="profile" id="theme-profile" editable="true" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                          accessibleText="Theme profile name"/>
+                <Button id="theme-load" text="Load" onAction="#load" styleClass="text-action"/>
+                <Button id="theme-save" text="Save" onAction="#save" styleClass="text-action"/>
+            </HBox>
+        </VBox>
+        <Label fx:id="status" id="theme-status" text="Default theme applied." styleClass="caption"
+               wrapText="true" minHeight="-Infinity"/>
+        <HBox alignment="CENTER_LEFT" styleClass="theme-actions">
+            <HBox fx:id="recordingIndicator" id="theme-recording" alignment="CENTER_LEFT"
+                  styleClass="theme-actions" visible="false">
+                <Region fx:id="recordingRing" id="theme-recording-ring" styleClass="theme-recording-ring"/>
+                <Label fx:id="recordingLabel" id="theme-recording-label" wrapText="true" minWidth="0"/>
+            </HBox>
+            <Region HBox.hgrow="ALWAYS"/>
+            <Button fx:id="stopListeningButton" id="theme-stop-listening" text="Stop listening"
+                    visible="false" styleClass="text-action"/>
+            <Button fx:id="closeButton" id="theme-close" text="Close" onAction="#close" styleClass="text-action"/>
+        </HBox>
+    </VBox>
+</StackPane>

@@ -20,6 +20,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
 import io.github.stevdrey.realtimevoicelab.realtime.ToyWorkspace;
+import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
@@ -28,6 +29,7 @@ import javafx.beans.value.ObservableBooleanValue;
 import javafx.css.PseudoClass;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
@@ -51,9 +53,9 @@ import javafx.util.Duration;
 import javafx.util.StringConverter;
 
 public final class WorkspaceController {
-    private static final double METRIC_GAP = 16;
     private static final double MIN_EQUAL_METRIC_WIDTH = 100;
     private static final double NARROW_METRICS_WIDTH = 280;
+    private static final double COMPACT_WORKSPACE_HEIGHT = 620;
 
     private enum MicGesture {
         MOUSE, SPACE, ENTER
@@ -69,12 +71,16 @@ public final class WorkspaceController {
     private static final PseudoClass RECORDING = PseudoClass.getPseudoClass("recording");
     private static final PseudoClass WAITING_FOR_SPEAKER = PseudoClass.getPseudoClass("waiting-for-speaker");
     private static final PseudoClass NARROW = PseudoClass.getPseudoClass("narrow");
+    private static final PseudoClass COMPACT_METRICS = PseudoClass.getPseudoClass("compact-metrics");
+    private static final PseudoClass COMPACT_HEIGHT = PseudoClass.getPseudoClass("compact-height");
     private static final PseudoClass MIDNIGHT = PseudoClass.getPseudoClass("midnight");
     private static final PseudoClass BLUE = PseudoClass.getPseudoClass("blue");
     private static final PseudoClass GREEN = PseudoClass.getPseudoClass("green");
     private static final PseudoClass AMBER = PseudoClass.getPseudoClass("amber");
 
     private final RealtimeSession session;
+    private final ThemeProfileStore themeProfiles;
+    private final WorkspaceTheme theme;
     private final Tooltip connectTooltip = new Tooltip();
     private final Tooltip micTooltip = new Tooltip();
     private final Tooltip costTooltip = new Tooltip();
@@ -94,6 +100,10 @@ public final class WorkspaceController {
 
     @FXML
     private VBox root;
+
+    @FXML private StackPane sceneRoot;
+    @FXML private Button themeButton;
+    @FXML private ThemeProfilesController themeProfilesController;
 
     @FXML
     private ComboBox<Model> modelSelector;
@@ -174,13 +184,19 @@ public final class WorkspaceController {
     @FXML private Label toyTheme;
     @FXML private Label toyCounter;
 
-    WorkspaceController(RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker) {
+    WorkspaceController(RealtimeTransport transport, MicrophoneCapture microphone, SpeakerPlayback speaker,
+                        ThemeProfileStore themeProfiles, WorkspaceTheme theme) {
+        this.themeProfiles = themeProfiles;
+        this.theme = theme;
         session = new RealtimeSession(transport, this::scheduleRender, microphone, speaker,
                 this::scheduleInspectorRender, Platform::runLater);
     }
 
     @FXML
     private void initialize() {
+        themeProfilesController.attach(themeButton, root, themeProfiles, theme, this::stopListeningFromTheme);
+        sceneRoot.heightProperty().addListener((observable, previous, height) ->
+                root.pseudoClassStateChanged(COMPACT_HEIGHT, height.doubleValue() < COMPACT_WORKSPACE_HEIGHT));
         elapsedTimer.setCycleCount(Timeline.INDEFINITE);
         costState.managedProperty().bind(costState.visibleProperty());
         transcriptionCost.managedProperty().bind(transcriptionCost.visibleProperty());
@@ -191,8 +207,16 @@ public final class WorkspaceController {
         modelSelector.getItems().setAll(Model.values());
         toyPanel.managedProperty().bind(toyPanel.visibleProperty());
         metrics.widthProperty().addListener((observable, previous, width) -> layoutMetrics());
-        costValue.fontProperty().addListener((observable, previous, font) -> layoutMetrics());
-        costValue.textProperty().addListener((observable, previous, text) -> layoutMetrics());
+        metrics.spacingProperty().addListener((observable, previous, spacing) -> layoutMetrics());
+        for (var column : List.of(latencyMetric, elapsedMetric, costMetric)) {
+            for (var child : column.getChildren()) {
+                if (child instanceof Label label) {
+                    label.fontProperty().addListener((observable, previous, font) -> layoutMetrics());
+                    label.textProperty().addListener((observable, previous, text) -> layoutMetrics());
+                    label.managedProperty().addListener((observable, previous, managed) -> layoutMetrics());
+                }
+            }
+        }
         sessionProgress.managedProperty().bind(sessionProgress.visibleProperty());
         modelSelector.accessibleTextProperty().bind(Bindings.createStringBinding(
                 () -> "Model: " + modelSelector.getValue(), modelSelector.valueProperty()));
@@ -332,7 +356,8 @@ public final class WorkspaceController {
                 event.consume();
             }
         });
-        root.addEventFilter(KeyEvent.KEY_RELEASED, event -> {
+        // The modal and the workspace share sceneRoot. A release may land in either subtree.
+        sceneRoot.addEventFilter(KeyEvent.KEY_RELEASED, event -> {
             var key = event.getCode();
             var scope = heldMicKeys.remove(key);
             if (scope != null && (scope == MicKeyScope.WORKSPACE || event.getTarget() == micButton)) {
@@ -342,12 +367,14 @@ public final class WorkspaceController {
                 event.consume();
             }
         });
-        root.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-            var key = event.getCode();
+        sceneRoot.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             // Consume repeats across controls while the window retains focus.
-            if (heldMicKeys.get(key) == MicKeyScope.WORKSPACE) {
+            if (heldMicKeys.get(event.getCode()) == MicKeyScope.WORKSPACE) {
                 event.consume();
-            } else if (key == KeyCode.ESCAPE) {
+            }
+        });
+        root.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.ESCAPE) {
                 if (activeMicGesture != null) {
                     finishMicGesture(false);
                     event.consume();
@@ -388,6 +415,11 @@ public final class WorkspaceController {
         renderSession();
     }
 
+    private void stopListeningFromTheme() {
+        session.stopListening();
+        renderSession();
+    }
+
     private void finishMicGesture(boolean submit) {
         if (activeMicGesture == null || disposed) {
             return;
@@ -409,6 +441,9 @@ public final class WorkspaceController {
         elapsedTimer.stop();
         if (settingsDialog != null) {
             settingsDialog.close();
+        }
+        if (themeProfilesController != null) {
+            themeProfilesController.dispose();
         }
         session.close();
         if (composer != null) {
@@ -526,18 +561,31 @@ public final class WorkspaceController {
 
     private void layoutMetrics() {
         metrics.pseudoClassStateChanged(NARROW, metrics.getWidth() < NARROW_METRICS_WIDTH);
-        double costWidth = Math.ceil(costValue.prefWidth(-1));
-        double equalColumnsWidth = 3 * Math.max(MIN_EQUAL_METRIC_WIDTH, costWidth) + 2 * METRIC_GAP;
+        double latencyWidth = metricColumnWidth(latencyMetric);
+        double elapsedWidth = metricColumnWidth(elapsedMetric);
+        double costWidth = metricColumnWidth(costMetric);
+        double widestColumn = Math.max(costWidth, Math.max(latencyWidth, elapsedWidth));
+        var spacing = theme.current().spacing();
+        double equalColumnsWidth = 3 * Math.max(MIN_EQUAL_METRIC_WIDTH, widestColumn) + 2 * spacing.large();
         boolean compact = metrics.getWidth() < equalColumnsWidth;
-        metrics.setSpacing(compact ? 8 : METRIC_GAP);
-        elapsedValue.setMinWidth(compact ? Region.USE_PREF_SIZE : Region.USE_COMPUTED_SIZE);
+        // The theme overlay sets the gap for each state.
+        metrics.pseudoClassStateChanged(COMPACT_METRICS, compact);
+        latencyMetric.setMinWidth(compact ? latencyWidth : Region.USE_COMPUTED_SIZE);
+        elapsedMetric.setMinWidth(compact ? elapsedWidth : Region.USE_COMPUTED_SIZE);
         if (compact) {
-            double available = metrics.getWidth() - elapsedMetric.minWidth(-1) - latencyMetric.minWidth(-1)
-                    - 2 * metrics.getSpacing();
+            double available = metrics.getWidth() - latencyWidth - elapsedWidth - 2 * spacing.small();
             costMetric.setMinWidth(Math.min(costWidth, Math.max(0, available)));
         } else {
             costMetric.setMinWidth(Region.USE_COMPUTED_SIZE);
         }
+        // Reserve space for complete labels before the adjacent toy pane takes its share.
+        metrics.setMinWidth(latencyWidth + elapsedWidth + costWidth + 2 * spacing.small());
+    }
+
+    private double metricColumnWidth(VBox column) {
+        // The footer keeps one line per caption at short heights, so wrapped captions would be elided.
+        return Math.ceil(column.getChildren().stream()
+                .filter(Node::isManaged).mapToDouble(child -> child.prefWidth(-1)).max().orElse(0));
     }
 
     private void renderElapsed() {
@@ -677,6 +725,7 @@ public final class WorkspaceController {
             case UNAVAILABLE -> "Microphone unavailable. Check your input device.";
             case BACKLOG -> "Audio upload fell behind. Listening stopped.";
         });
+        themeProfilesController.renderRecording(recording, listening, micStatus.getText());
     }
 
     private void sendText() {

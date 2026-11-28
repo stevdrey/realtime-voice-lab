@@ -9,7 +9,7 @@
 
 <VBox xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="io.github.stevdrey.realtimevoicelab.ui.EventInspectorController"
-      spacing="8" minWidth="260" styleClass="lab-panel,event-inspector">
+      minWidth="260" styleClass="lab-panel,event-inspector">
     <Label text="EVENT INSPECTOR" styleClass="panel-title" labelFor="${eventList}"/>
     <TextField fx:id="eventFilter" id="event-filter" promptText="Filter by type, direction or ID"
                accessibleText="Filter events by type, direction or ID" minWidth="0"/>

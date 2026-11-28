@@ -1,9 +1,13 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
 import java.net.http.WebSocket;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Base64;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -27,6 +31,7 @@ import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Preset;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.TurnDetection;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Voice;
+import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens.ColorRole;
 import javafx.application.Platform;
@@ -34,6 +39,7 @@ import javafx.beans.property.SimpleBooleanProperty;
 import javafx.collections.ListChangeListener;
 import javafx.css.PseudoClass;
 import javafx.event.Event;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
@@ -54,12 +60,16 @@ import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
 import javafx.scene.robot.Robot;
 import javafx.scene.shape.SVGPath;
+import javafx.scene.text.Font;
 import javafx.scene.text.Text;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -208,6 +218,606 @@ class RealtimeVoiceLabAppTest {
             assertSame(conversation, conversationHeading.getLabelFor());
             assertSame(events, inspectorHeading.getLabelFor());
         });
+    }
+
+    @Test
+    void loadsValidatedAppearanceAndKeepsSavedProfilesAfterReset(@TempDir Path directory) throws Exception {
+        var store = new ThemeProfileStore(directory);
+        var custom = largestTheme();
+        store.save("custom", custom);
+        Files.writeString(directory.resolve("profile-broken.json"), "{");
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, new FakeTransport(), new FakeMicrophone().microphone(),
+                        new FakeSpeaker().playback(), stage.focusedProperty(), store);
+                themeButton(stage, "#theme-button").fire();
+                stage.requestFocus();
+                return null;
+            });
+            awaitOnFxThread(() -> themeProfile(stage).getItems().equals(List.of("broken", "custom")),
+                    "Saved profiles were not discovered on startup");
+            awaitOnFxThread(stage::isFocused, "Workspace never received focus");
+            onFxThread(() -> {
+                assertTrue(connectButton(stage).isDisabled(), "The underlying workspace accepted input");
+                assertSame(themeButton(stage, "#theme-close"), stage.getScene().getFocusOwner());
+                new Robot().keyType(KeyCode.TAB);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, "#theme-ocean").isFocused(),
+                    "Tab from Close did not wrap inside the modal");
+            onFxThread(() -> {
+                themeProfile(stage).setValue("custom");
+                themeButton(stage, "#theme-load").fire();
+                return null;
+            });
+            awaitOnFxThread(() -> themeStatus(stage).startsWith("Loaded"), "Valid profile did not apply");
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                scene.getRoot().applyCss();
+                var workspace = (Region) scene.lookup(".workspace");
+                var panel = (Region) scene.lookup(".lab-panel");
+                var title = (Label) scene.lookup(".app-title");
+                var caption = (Label) scene.lookup("#theme-status");
+                var metric = (Label) scene.lookup("#latency-value");
+                var composer = (TextField) scene.lookup("#text-composer");
+                var mic = (Button) scene.lookup("#mic-button");
+                assertEquals(20, workspace.getPadding().getTop());
+                assertEquals(14, panel.getPadding().getTop());
+                assertEquals(16, panel.getBackground().getFills().getFirst().getRadii().getTopLeftHorizontalRadius());
+                assertEquals(Color.web("#1a2a2b"), panel.getBackground().getFills().getFirst().getFill());
+                assertEquals(24, title.getFont().getSize());
+                assertEquals(16, caption.getFont().getSize());
+                assertEquals(24, metric.getFont().getSize());
+                assertEquals(18, composer.getFont().getSize());
+                assertEquals(Font.font("SansSerif").getFamily(), composer.getFont().getFamily());
+                assertEquals(68, mic.getMinWidth());
+                assertEquals(48, connectButton(stage).getMinWidth());
+                stage.setWidth(stage.getMinWidth());
+                stage.setHeight(stage.getMinHeight());
+                return null;
+            });
+            awaitOnFxThread(() -> stage.getScene().getWidth() == 760 && stage.getScene().getHeight() == 520,
+                    "The scene did not shrink while the custom theme was active");
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                scene.getRoot().layout();
+                for (var selector : List.of("#main-panels", "#model-selector", "#mic-button", "#connect-button", "#theme-save")) {
+                    var control = scene.lookup(selector);
+                    var bounds = control.localToScene(control.getBoundsInLocal());
+                    assertTrue(bounds.getWidth() > 0 && bounds.getHeight() > 0, selector);
+                    assertTrue(bounds.getMinX() >= 0 && bounds.getMaxX() <= scene.getWidth(), selector);
+                    assertTrue(bounds.getMinY() >= 0 && bounds.getMaxY() <= scene.getHeight(),
+                            () -> selector + " extends outside the scene: " + bounds);
+                }
+                var dialog = scene.lookup("#theme-dialog");
+                var themeBounds = dialog.localToScene(dialog.getBoundsInLocal());
+                assertEquals(scene.getWidth() / 2, themeBounds.getCenterX(), 1);
+                assertEquals(scene.getHeight() / 2, themeBounds.getCenterY(), 1);
+                assertTrue(themeBounds.getWidth() < scene.getWidth());
+                assertTrue(themeBounds.getHeight() < scene.getHeight());
+                themeProfile(stage).setValue("broken");
+                themeButton(stage, "#theme-load").fire();
+                return null;
+            });
+            awaitOnFxThread(() -> "Theme profile is invalid.".equals(themeStatus(stage)),
+                    "Malformed profile did not report an error");
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                scene.getRoot().applyCss();
+                assertEquals(68, ((Button) scene.lookup("#mic-button")).getMinWidth());
+                assertEquals(2, scene.getStylesheets().size());
+                themeButton(stage, "#theme-reset").fire();
+                scene.getRoot().applyCss();
+                assertEquals("Default theme applied.", themeStatus(stage));
+                assertEquals(60, ((Button) scene.lookup("#mic-button")).getMinWidth());
+                assertEquals(2, scene.getStylesheets().size());
+                themeProfile(stage).requestFocus();
+                themeProfile(stage).show();
+                return null;
+            });
+            awaitOnFxThread(() -> themeProfile(stage).isShowing(), "Profile choices did not open");
+            onFxThread(() -> {
+                new Robot().keyType(KeyCode.ESCAPE);
+                return null;
+            });
+            awaitOnFxThread(() -> !themeProfile(stage).isShowing(), "Escape did not dismiss the profile choices");
+            onFxThread(() -> {
+                assertTrue(stage.getScene().lookup("#theme-overlay").isVisible());
+                new Robot().keyType(KeyCode.ESCAPE);
+                return null;
+            });
+            awaitOnFxThread(() -> !stage.getScene().lookup("#theme-overlay").isVisible(),
+                    "Escape did not close the theme modal");
+            onFxThread(() -> {
+                assertSame(themeButton(stage, "#theme-button"), stage.getScene().getFocusOwner());
+                assertFalse(connectButton(stage).isDisabled());
+                return null;
+            });
+            assertEquals(custom, new ThemeProfileStore(directory).load("custom"));
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    @Test
+    void releasesMicrophoneEnterWhenThemeHasFocus(@TempDir Path directory) throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone(), new FakeSpeaker().playback(),
+                        stage.focusedProperty(), new ThemeProfileStore(directory));
+                connectButton(stage).fire();
+                stage.requestFocus();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.ready();
+            awaitOnFxThread(() -> stage.isFocused() && "Hold to talk".equals(micStatus(stage)),
+                    "The workspace microphone was unavailable");
+            onFxThread(() -> {
+                stage.getScene().lookup("#mic-button").requestFocus();
+                new Robot().keyPress(KeyCode.ENTER);
+                return null;
+            });
+            microphone.queueBlocks(5);
+            awaitOnFxThread(() -> hasRecordingLevel(stage), "Holding Enter did not start recording");
+            onFxThread(() -> {
+                var opener = themeButton(stage, "#theme-button");
+                var bounds = opener.localToScreen(opener.getBoundsInLocal());
+                var robot = new Robot();
+                robot.mouseMove(bounds.getCenterX(), bounds.getCenterY());
+                robot.mouseClick(MouseButton.PRIMARY);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, "#theme-close").isFocused(), "Theme did not receive focus");
+            onFxThread(() -> {
+                new Robot().keyRelease(KeyCode.ENTER);
+                return null;
+            });
+            awaitOnFxThread(() -> microphone.closes.get() == 1, "Leaving the microphone did not cancel capture");
+            onFxThread(() -> {
+                assertTrue(stage.getScene().lookup("#theme-overlay").isVisible());
+                themeButton(stage, "#theme-close").fire();
+                var composer = (TextField) stage.getScene().lookup("#text-composer");
+                composer.setText("Synthetic keyboard turn");
+                composer.requestFocus();
+                new Robot().keyType(KeyCode.ENTER);
+                return null;
+            });
+            awaitOnFxThread(() -> socket.writes.size() > 1, "The first fresh Enter did not send the draft");
+            assertEquals("conversation.item.create", new ObjectMapper().readTree(socket.writes.get(1)).path("type").asText());
+        } finally {
+            onFxThread(() -> {
+                new Robot().keyRelease(KeyCode.ENTER);
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    @Test
+    void keepsPopulatedFooterVisibleWithTheLargestThemeAndToyWorkspace(@TempDir Path directory) throws Exception {
+        var store = new ThemeProfileStore(directory);
+        store.save("largest", largestTheme());
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, new FakeTransport(), new FakeMicrophone().microphone(),
+                        new FakeSpeaker().playback(), stage.focusedProperty(), store);
+                var settings = openSettings(stage);
+                this.<ToolPreset>combo(settings, "#settings-tool-preset").setValue(ToolPreset.TOY_WORKSPACE);
+                ((Button) settings.getScene().lookup("#apply-settings")).fire();
+                stage.setWidth(stage.getMinWidth());
+                stage.setHeight(stage.getMinHeight());
+                themeButton(stage, "#theme-button").fire();
+                return null;
+            });
+            awaitOnFxThread(() -> themeProfile(stage).getItems().contains("largest"), "Theme list was unavailable");
+            onFxThread(() -> {
+                themeProfile(stage).setValue("largest");
+                themeButton(stage, "#theme-load").fire();
+                return null;
+            });
+            awaitOnFxThread(() -> themeStatus(stage).startsWith("Loaded"), "Largest theme did not apply");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-close").fire();
+                var scene = stage.getScene();
+                ((Label) scene.lookup("#toy-color")).setText("Color: green");
+                ((Label) scene.lookup("#toy-theme")).setText("Theme: midnight");
+                ((Label) scene.lookup("#toy-counter")).setText("Counter: 3");
+                ((Label) scene.lookup("#latency-value")).setText("920 ms");
+                ((Label) scene.lookup("#elapsed-value")).setText("01:00");
+                ((Label) scene.lookup("#cost-value")).setText("$0.000148");
+                var costState = (Label) scene.lookup("#cost-state");
+                costState.setText("Pricing unavailable");
+                costState.setVisible(true);
+                scene.lookup("#transcription-cost").setVisible(true);
+                return null;
+            });
+            awaitOnFxThread(() -> stage.getScene().getWidth() == 760 && stage.getScene().getHeight() == 520,
+                    "The workspace did not resize to its minimum");
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                scene.getRoot().applyCss();
+                scene.getRoot().layout();
+                assertTrue(scene.lookup("#toy-workspace").isVisible());
+                assertEquals("920 ms", ((Label) scene.lookup("#latency-value")).getText());
+                assertEquals("01:00", ((Label) scene.lookup("#elapsed-value")).getText());
+                assertEquals("$0.000148", ((Label) scene.lookup("#cost-value")).getText());
+                for (var selector : List.of("#latency-value", "#elapsed-value", "#cost-value",
+                        "#toy-color", "#toy-theme", "#toy-counter")) {
+                    var label = (Label) scene.lookup(selector);
+                    assertTrue(label.getWidth() + 1 >= label.prefWidth(-1), () -> selector + " text is clipped");
+                }
+                for (var caption : scene.lookup("#metrics").lookupAll(".caption")) {
+                    var label = (Label) caption;
+                    assertEquals(label.getText(), ((Text) label.lookup(".text")).getText());
+                }
+                var footer = scene.lookup(".workspace-footer");
+                var bounds = footer.localToScene(footer.getBoundsInLocal());
+                assertTrue(bounds.getMaxX() <= scene.getWidth() && bounds.getMaxY() <= scene.getHeight(),
+                        () -> "The footer extends outside the scene: " + bounds);
+                var header = scene.lookup(".app-header");
+                assertTrue(header.localToScene(header.getBoundsInLocal()).getMinY() >= 0,
+                        "The header was pushed out to fit the footer");
+                return null;
+            });
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    private ThemeTokens largestTheme() {
+        var colors = new EnumMap<>(ThemeTokens.defaults().colors());
+        colors.put(ColorRole.PANEL, new ThemeTokens.Rgb(0x1a2a2b));
+        return new ThemeTokens(colors,
+                new ThemeTokens.Typography(ThemeTokens.FontFamily.SANS_SERIF, 18, 16, 24, 24, 20),
+                new ThemeTokens.Spacing(6, 10, 14, 20), new ThemeTokens.Radii(3, 16, 20),
+                new ThemeTokens.Density(48, 68));
+    }
+
+    @Test
+    void changesThemeAndProfilesWithoutInterruptingVadCaptureOrPlayback(@TempDir Path directory) throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var speaker = new FakeSpeaker();
+        var store = new ThemeProfileStore(directory);
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone(), speaker.playback(),
+                        stage.focusedProperty(), store);
+                ((Button) stage.getScene().lookup("#settings-button")).fire();
+                var settings = Window.getWindows().stream()
+                        .filter(window -> window instanceof Stage child && child.getOwner() == stage)
+                        .findFirst().orElseThrow();
+                @SuppressWarnings("unchecked")
+                var detection = (ComboBox<TurnDetection>) settings.getScene().lookup("#settings-turn-detection");
+                detection.setValue(TurnDetection.SERVER_VAD);
+                ((Button) settings.getScene().lookup("#apply-settings")).fire();
+                connectButton(stage).fire();
+                stage.requestFocus();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.opened();
+            socket.created();
+            socket.textWrite.complete(socket);
+            var defaults = SessionSettings.DEFAULT;
+            socket.updated(new SessionSettings(defaults.model(), defaults.voice(), defaults.mode(),
+                    defaults.instructions(), TurnDetection.SERVER_VAD), null);
+            awaitOnFxThread(() -> "Start listening".equals(micStatus(stage)), "VAD microphone was unavailable");
+            awaitOnFxThread(stage::isFocused, "Workspace never received focus");
+            onFxThread(() -> {
+                ((Button) stage.getScene().lookup("#mic-button")).fire();
+                themeButton(stage, "#theme-button").fire();
+                return null;
+            });
+            microphone.queueBlocks(5);
+            awaitOnFxThread(() -> socket.writes.size() == 2 && !themeButton(stage, "#theme-ocean").isDisabled(),
+                    "VAD input and theme controls did not become available");
+            onFxThread(() -> {
+                assertThemeRecordingIndicator(stage, ThemeTokens.defaults());
+                var ocean = themeButton(stage, "#theme-ocean");
+                ocean.requestFocus();
+                new Robot().keyType(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> "Ocean theme applied.".equals(themeStatus(stage)), "Keyboard did not apply Ocean");
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                scene.getRoot().applyCss();
+                assertEquals(Color.web("#5eead4"),
+                        ((Region) scene.lookup(".waveform-baseline")).getBackground().getFills().getFirst().getFill());
+                assertTrue(stage.isFocused());
+                assertTrue(micStatus(stage).startsWith("Listening"));
+                assertThemeRecordingIndicator(stage, WorkspaceTheme.OCEAN);
+                themeProfile(stage).getEditor().setText("During audio");
+                themeButton(stage, "#theme-save").fire();
+                return null;
+            });
+            awaitOnFxThread(() -> themeStatus(stage).startsWith("Saved"), "Profile was not saved");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-close").requestFocus();
+                new Robot().keyType(KeyCode.ESCAPE);
+                return null;
+            });
+            awaitOnFxThread(() -> !stage.getScene().lookup("#theme-overlay").isVisible(),
+                    "Escape did not dismiss the modal during VAD capture");
+            onFxThread(() -> {
+                assertSame(themeButton(stage, "#theme-button"), stage.getScene().getFocusOwner());
+                return null;
+            });
+            microphone.queueBlocks(5);
+            awaitOnFxThread(() -> socket.writes.size() == 3, "VAD did not continue after applying a theme and closing the modal");
+            assertEquals(0, microphone.closes.get());
+
+            for (var type : List.of("speech_started", "speech_stopped", "committed")) {
+                socket.text("{\"type\":\"input_audio_buffer." + type + "\",\"item_id\":\"input-1\"}", true);
+            }
+            var responseRequest = new ObjectMapper().readTree(socket.writes.getLast());
+            assertEquals("response.create", responseRequest.path("type").asText());
+            socket.text("""
+                    {"type":"response.created","response":{"id":"reply-1","metadata":%s}}
+                    """.formatted(responseRequest.at("/response/metadata")), true);
+            var pcm = microphone.block(1);
+            sendVoiceChunk(socket, 1, pcm);
+            awaitOnFxThread(() -> !speaker.devices.isEmpty() && speaker.devices.getFirst().written().length == pcm.length,
+                    "The VAD reply did not reach the speaker");
+            var device = speaker.devices.getFirst();
+            var writes = List.copyOf(socket.writes);
+            onFxThread(() -> {
+                themeButton(stage, "#theme-button").fire();
+                return null;
+            });
+            awaitOnFxThread(() -> !themeButton(stage, "#theme-load").isDisabled(), "Theme controls did not reopen");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-reset").fire();
+                themeButton(stage, "#theme-load").fire();
+                return null;
+            });
+            awaitOnFxThread(() -> themeStatus(stage).startsWith("Loaded"), "Profile did not reload during playback");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-close").fire();
+                assertFalse(stage.getScene().lookup("#theme-overlay").isVisible());
+                return null;
+            });
+            assertFalse(device.closed || device.stopped || device.flushed);
+            device.playBufferedFrames();
+            sendVoiceChunk(socket, 1, pcm);
+            awaitOnFxThread(() -> device.written().length == 2 * pcm.length, "Audio stopped on the original speaker");
+            assertEquals(writes, socket.writes);
+            assertEquals(1, microphone.opens.get());
+            assertEquals(1, speaker.devices.size());
+            onFxThread(() -> {
+                assertSession(stage, "Connected", "Disconnect", false);
+                assertEquals(List.of(socket), transport.attempts);
+                assertEquals(0, socket.closeWrites);
+                connectButton(stage).fire();
+                return null;
+            });
+            awaitOnFxThread(() -> device.closed && microphone.closes.get() == 1,
+                    "Disconnect did not release the original audio devices");
+            awaitOnFxThread(() -> !stage.getScene().lookup("#theme-recording").isVisible(),
+                    "The modal still reports recording after disconnect");
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"SERVER_VAD, false", "SEMANTIC_VAD, true"})
+    void stopsVadFromThemeWithoutClosingItsSession(TurnDetection detection, boolean keyboard,
+                                                    @TempDir Path directory) throws Exception {
+        var transport = new FakeTransport();
+        var microphone = new FakeMicrophone();
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, transport, microphone.microphone(), new FakeSpeaker().playback(),
+                        stage.focusedProperty(), new ThemeProfileStore(directory));
+                var settings = openSettings(stage);
+                this.<TurnDetection>combo(settings, "#settings-turn-detection").setValue(detection);
+                ((Button) settings.getScene().lookup("#apply-settings")).fire();
+                connectButton(stage).fire();
+                stage.requestFocus();
+                return null;
+            });
+            var socket = transport.attempts.getFirst();
+            socket.opened();
+            socket.created();
+            socket.textWrite.complete(socket);
+            var defaults = SessionSettings.DEFAULT;
+            socket.updated(new SessionSettings(defaults.model(), defaults.voice(), defaults.mode(),
+                    defaults.instructions(), detection), null);
+            awaitOnFxThread(() -> stage.isFocused() && "Start listening".equals(micStatus(stage)),
+                    "VAD microphone was unavailable");
+            onFxThread(() -> {
+                ((Button) stage.getScene().lookup("#mic-button")).fire();
+                themeButton(stage, "#theme-button").fire();
+                return null;
+            });
+            microphone.queueBlocks(5);
+            awaitOnFxThread(() -> micStatus(stage).startsWith("Listening") && socket.writes.size() == 2
+                            && !themeButton(stage, "#theme-save").isDisabled(),
+                    "VAD and Theme did not become active");
+            onFxThread(() -> {
+                var stop = themeButton(stage, "#theme-stop-listening");
+                assertTrue(stop != null && stop.isVisible() && !stop.isDisabled(),
+                        "Active VAD has no available stop action in Theme");
+                if (keyboard) {
+                    var save = themeButton(stage, "#theme-save");
+                    themeProfile(stage).getEditor().setText("capture");
+                    save.requestFocus();
+                    save.fire();
+                    // Task completion cannot run until this FX callback returns.
+                    assertTrue(save.isDisabled());
+                    assertFalse(stop.isDisabled(), "Profile I/O disabled the stop action");
+                    stop.requestFocus();
+                    assertSame(stop, stage.getScene().getFocusOwner());
+                    pressFocusedKey(stage, KeyCode.SPACE);
+                    Event.fireEvent(stop, new KeyEvent(KeyEvent.KEY_RELEASED, "", "", KeyCode.SPACE,
+                            false, false, false, false));
+                } else {
+                    var root = stage.getScene().getRoot();
+                    root.applyCss();
+                    root.layout();
+                    var bounds = stop.localToScreen(stop.getBoundsInLocal());
+                    var robot = new Robot();
+                    robot.mouseMove(bounds.getCenterX(), bounds.getCenterY());
+                    robot.mouseClick(MouseButton.PRIMARY);
+                }
+                return null;
+            });
+            awaitOnFxThread(() -> microphone.closes.get() == 1
+                            && socket.writes.getLast().contains("input_audio_buffer.clear"),
+                    "Stop listening did not release the microphone and clear buffered input");
+            microphone.queueBlocks(5);
+            socket.text("""
+                    {"type":"input_audio_buffer.cleared"}
+                    """, true);
+            awaitOnFxThread(() -> "Start listening".equals(micStatus(stage))
+                            && !stage.getScene().lookup("#theme-recording").isVisible()
+                            && (!keyboard || themeStatus(stage).startsWith("Saved")),
+                    "The modal did not clear capture state after acknowledgement");
+            onFxThread(() -> {
+                assertTrue(stage.getScene().lookup("#theme-overlay").isVisible(), "Stopping closed Theme");
+                assertFalse(themeButton(stage, "#theme-stop-listening").isVisible());
+                if (keyboard) {
+                    assertSame(themeButton(stage, "#theme-close"), stage.getScene().getFocusOwner());
+                }
+                assertSession(stage, "Connected", "Disconnect", true);
+                assertEquals(List.of(socket), transport.attempts);
+                assertEquals(0, socket.closeWrites);
+                assertEquals(1, socket.writes.stream().filter(write -> write.contains("input_audio_buffer.append")).count());
+                assertFalse(socket.writes.stream().anyMatch(write -> write.contains("input_audio_buffer.commit")));
+                return null;
+            });
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    @Test
+    void restoresProfileActionFocusOnlyIfTheOperatorHasNotMovedIt(@TempDir Path directory) throws Exception {
+        var stage = onFxThread(Stage::new);
+        try {
+            onFxThread(() -> {
+                new RealtimeVoiceLabApp().start(stage, new FakeTransport(), new FakeMicrophone().microphone(),
+                        new FakeSpeaker().playback(), stage.focusedProperty(), new ThemeProfileStore(directory));
+                themeButton(stage, "#theme-button").fire();
+                stage.requestFocus();
+                return null;
+            });
+            awaitOnFxThread(() -> stage.isFocused() && !themeButton(stage, "#theme-save").isDisabled(),
+                    "Theme profile actions were unavailable");
+            onFxThread(() -> {
+                var save = themeButton(stage, "#theme-save");
+                themeProfile(stage).getEditor().setText("first");
+                save.requestFocus();
+                save.fire();
+                assertTrue(save.isDisabled());
+                themeButton(stage, "#theme-close").fire();
+                themeButton(stage, "#theme-button").fire();
+                assertSame(themeButton(stage, "#theme-close"), stage.getScene().getFocusOwner());
+                return null;
+            });
+            awaitOnFxThread(() -> themeStatus(stage).contains("first"), "First save did not finish");
+            onFxThread(() -> {
+                assertSame(themeButton(stage, "#theme-close"), stage.getScene().getFocusOwner(),
+                        "Profile completion took focus away from the reopened dialog's Close button");
+                var save = themeButton(stage, "#theme-save");
+                themeProfile(stage).getEditor().setText("second");
+                save.requestFocus();
+                save.fire();
+                assertTrue(save.isDisabled());
+                assertSame(stage.getScene().lookup("#theme-overlay"), stage.getScene().getFocusOwner(),
+                        "A focused modal button can react to a repeated Space while the action is disabled");
+                return null;
+            });
+            awaitOnFxThread(() -> themeStatus(stage).contains("second"), "Second save did not finish");
+            onFxThread(() -> {
+                assertSame(themeButton(stage, "#theme-save"), stage.getScene().getFocusOwner(),
+                        "Completion did not restore a profile action whose focus was parked");
+                return null;
+            });
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    private void assertThemeRecordingIndicator(Stage stage, ThemeTokens theme) {
+        var scene = stage.getScene();
+        scene.getRoot().applyCss();
+        var indicator = scene.lookup("#theme-recording");
+        assertTrue(indicator != null && indicator.isVisible(), "Active capture has no foreground indicator");
+        var label = (Label) scene.lookup("#theme-recording-label");
+        assertEquals(micStatus(stage), label.getText());
+        assertFalse(label.isDisabled());
+        assertEquals(Color.web("#%06x".formatted(theme.colors().get(ColorRole.TEXT).value())), label.getTextFill());
+        var ring = (Region) scene.lookup("#theme-recording-ring");
+        assertEquals(Color.web("#%06x".formatted(theme.colors().get(ColorRole.DANGER).value())),
+                ring.getBorder().getStrokes().getFirst().getTopStroke());
+        assertEquals(Color.web("#%06x".formatted(theme.colors().get(ColorRole.PRIMARY_HOVER).value())),
+                ring.getBackground().getFills().getFirst().getFill());
+        for (Node node = ring; node != null; node = node.getParent()) {
+            assertEquals(1.0, node.getOpacity(), "The foreground ring is dimmed");
+        }
+    }
+
+    private Button themeButton(Stage stage, String selector) {
+        return (Button) stage.getScene().lookup(selector);
+    }
+
+    private String themeStatus(Stage stage) {
+        return ((Label) stage.getScene().lookup("#theme-status")).getText();
+    }
+
+    @SuppressWarnings("unchecked")
+    private ComboBox<String> themeProfile(Stage stage) {
+        return (ComboBox<String>) stage.getScene().lookup("#theme-profile");
+    }
+
+    @Test
+    @ResourceLock(Resources.LOCALE)
+    void rendersThemeDimensionsWithAnArabicFormatLocale() throws Exception {
+        var original = Locale.getDefault(Locale.Category.FORMAT);
+        try {
+            Locale.setDefault(Locale.Category.FORMAT, Locale.forLanguageTag("ar-EG"));
+            withWindow(stage -> {
+                var scene = stage.getScene();
+                scene.getRoot().applyCss();
+                var theme = ThemeTokens.defaults();
+                var title = (Label) scene.lookup(".app-title");
+                var workspace = (Region) scene.lookup(".workspace");
+                var mic = (Button) scene.lookup("#mic-button");
+                assertEquals(theme.typography().title(), title.getFont().getSize());
+                assertEquals(theme.spacing().large(), workspace.getPadding().getTop());
+                assertEquals(theme.radii().workspace(),
+                        workspace.getBackground().getFills().getFirst().getRadii().getTopLeftHorizontalRadius());
+                assertEquals(theme.density().microphoneButton(), mic.minWidth(-1));
+            });
+        } finally {
+            Locale.setDefault(Locale.Category.FORMAT, original);
+        }
     }
 
     @Test
@@ -1263,6 +1873,10 @@ class RealtimeVoiceLabAppTest {
         socket.text("""
                 {"type":"response.created","response":{"id":"reply-%1$d","metadata":{"rvl_turn":"rvl-%1$d"}}}
                 """.formatted(turn), true);
+        sendVoiceChunk(socket, turn, pcm);
+    }
+
+    private void sendVoiceChunk(FakeTransport.Socket socket, int turn, byte[] pcm) {
         socket.text("""
                 {"type":"response.output_audio.delta","response_id":"reply-%d","item_id":"assistant-%d",
                  "output_index":0,"content_index":0,"delta":"%s"}
