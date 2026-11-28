@@ -18,6 +18,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
+import io.github.stevdrey.realtimevoicelab.ui.theme.WorkspaceAppearance;
+import io.github.stevdrey.realtimevoicelab.ui.theme.WorkspaceAppearance.BuiltIn;
 
 /** Declares and executes only the functions in the operator's selected preset. */
 final class LocalTools {
@@ -26,6 +28,12 @@ final class LocalTools {
 
     private static final Parameter CURRENT = new Parameter("current", 0, MAX_COUNTER);
     private static final Parameter DELTA = new Parameter("delta", -MAX_DELTA, MAX_DELTA);
+    private static final List<String> THEME_IDS = Arrays.stream(BuiltIn.values()).map(BuiltIn::id).toList();
+    private static final Parameter APPEARANCE_THEME = new Parameter("theme", THEME_IDS);
+    private static final String QUERY_THEME = "queryWorkspaceTheme";
+    private static final String PREVIEW_THEME = "previewWorkspaceTheme";
+    private static final String APPLY_THEME = "applyWorkspaceTheme";
+    private static final String UNDO_THEME = "undoWorkspaceTheme";
     private static final List<Tool> DEMO_TOOLS = List.of(new Tool("calculate_workspace_counter",
             "Calculate a demo counter's next value without changing the workspace.", List.of(CURRENT, DELTA)));
     private static final List<Tool> WORKSPACE_TOOLS = List.of(
@@ -37,7 +45,15 @@ final class LocalTools {
                             .map(ToyWorkspace.Theme::id).toList()))),
             new Tool("incrementCounter", "Change the toy workspace counter by delta. The result must be 0 to 100.",
                     List.of(DELTA)),
-            new Tool("resetWorkspace", "Restore the toy workspace's default color, theme, and counter.", List.of()));
+            new Tool("resetWorkspace", "Restore the toy workspace's default color, theme, and counter.", List.of()),
+            new Tool(QUERY_THEME, "Report the app's current theme, temporary preview, and available built-in themes.",
+                    List.of()),
+            new Tool(PREVIEW_THEME, "Temporarily show a built-in app theme for the operator to review.",
+                    List.of(APPEARANCE_THEME)),
+            new Tool(APPLY_THEME, "Apply a built-in app theme for this app launch. Use when asked to keep or apply it.",
+                    List.of(APPEARANCE_THEME)),
+            new Tool(UNDO_THEME, "Discard a temporary app theme preview or undo the last app theme change made by these tools.",
+                    List.of()));
 
     private final ObjectMapper arguments = new ObjectMapper(JsonFactory.builder()
             .streamReadConstraints(StreamReadConstraints.builder().maxNestingDepth(4).maxNumberLength(16).build())
@@ -93,33 +109,38 @@ final class LocalTools {
         return value != null && value.length() <= 32 && CALL_ID.matcher(value).matches();
     }
 
-    Result execute(ToolPreset preset, JsonNode call, ToyWorkspace workspace) {
+    Result execute(ToolPreset preset, JsonNode call, ToyWorkspace workspace, WorkspaceAppearance appearance) {
         if (call.has("status") && !"completed".equals(call.path("status").textValue())) {
-            return error("incomplete_call", workspace);
+            return error("incomplete_call", workspace, appearance);
         }
         var name = call.path("name").textValue();
         var tool = toolsFor(preset).stream().filter(spec -> spec.name().equals(name)).findFirst().orElse(null);
         if (tool == null) {
-            return error("unknown_tool", workspace);
+            return error("unknown_tool", workspace, appearance);
         }
         var raw = call.path("arguments").textValue();
         if (raw == null || raw.length() > MAX_ARGUMENT_CHARS) {
-            return error("invalid_arguments", workspace);
+            return error("invalid_arguments", workspace, appearance);
         }
         try {
             var values = arguments.readTree(raw);
             if (values == null || !values.isObject() || values.size() != tool.parameters().size()
                     || !tool.parameters().stream().allMatch(parameter -> parameter.accepts(values.path(parameter.name())))) {
-                return error("invalid_arguments", workspace);
+                return error("invalid_arguments", workspace, appearance);
+            }
+            switch (name) {
+                case QUERY_THEME, PREVIEW_THEME, APPLY_THEME, UNDO_THEME -> {
+                    return executeTheme(name, values, workspace, appearance);
+                }
             }
             int delta = values.path("delta").intValue();
             int nextCounter = (preset == ToolPreset.DEMO_COUNTER ? values.path("current").intValue() : workspace.counter())
                     + delta;
             if (nextCounter < 0 || nextCounter > MAX_COUNTER) {
-                return error("counter_out_of_range", workspace);
+                return error("counter_out_of_range", workspace, appearance);
             }
             if (preset == ToolPreset.DEMO_COUNTER) {
-                return new Result(success().put("value", nextCounter), workspace);
+                return new Result(success().put("value", nextCounter), workspace, appearance);
             }
             var next = switch (name) {
                 case "changeColor" -> new ToyWorkspace(
@@ -133,21 +154,47 @@ final class LocalTools {
                 default -> throw new IllegalStateException("Missing workspace tool implementation");
             };
             return new Result(success().put("color", next.color().id()).put("theme", next.theme().id())
-                    .put("counter", next.counter()), next);
+                    .put("counter", next.counter()), next, appearance);
         } catch (IOException invalidJson) {
-            return error("invalid_arguments", workspace);
+            return error("invalid_arguments", workspace, appearance);
         }
+    }
+
+    private Result executeTheme(String name, JsonNode values, ToyWorkspace workspace, WorkspaceAppearance appearance) {
+        var next = switch (name) {
+            case QUERY_THEME -> appearance;
+            case PREVIEW_THEME -> appearance.preview(builtIn(values));
+            case APPLY_THEME -> appearance.apply(builtIn(values));
+            case UNDO_THEME -> appearance.undo();
+            default -> throw new IllegalStateException("Missing theme tool implementation");
+        };
+        if (UNDO_THEME.equals(name) && next == appearance) {
+            return error("nothing_to_undo", workspace, appearance);
+        }
+        var output = success().put("theme", next.committedId())
+                .put("preview", next.preview() == null ? null : next.preview().id())
+                .put("canUndo", next.previous() != null || next.preview() != null);
+        if (QUERY_THEME.equals(name)) {
+            var available = output.putArray("availableThemes");
+            THEME_IDS.forEach(available::add);
+        }
+        return new Result(output, workspace, next);
+    }
+
+    private BuiltIn builtIn(JsonNode values) {
+        return BuiltIn.valueOf(values.path("theme").textValue().toUpperCase(Locale.ROOT));
     }
 
     private ObjectNode success() {
         return JsonNodeFactory.instance.objectNode().put("ok", true);
     }
 
-    private Result error(String code, ToyWorkspace workspace) {
-        return new Result(JsonNodeFactory.instance.objectNode().put("ok", false).put("error", code), workspace);
+    private Result error(String code, ToyWorkspace workspace, WorkspaceAppearance appearance) {
+        return new Result(JsonNodeFactory.instance.objectNode().put("ok", false).put("error", code),
+                workspace, appearance);
     }
 
-    record Result(ObjectNode output, ToyWorkspace workspace) {
+    record Result(ObjectNode output, ToyWorkspace workspace, WorkspaceAppearance appearance) {
     }
 
     private record Tool(String name, String description, List<Parameter> parameters) {

@@ -12,13 +12,15 @@ In Audio mode, **Turn detection** offers **Push to talk**, **Server VAD** and **
 
 The default **Demo counter** tool preset offers a local calculation in text and audio turns. Ask it to use the demo counter with a current value of 40 and a change of 2. It calculates the next value without changing the workspace. See [RVL-009](../../issues/15).
 
-To try voice control, select **Toy workspace** under **Settings → Tool preset** before connecting. Ask to change the swatch to green, switch the toy panel to midnight, and add 3 to the counter. The panel shows each setting and supports a reset to indigo, slate, and 0. See [RVL-010](../../issues/16).
+To try voice control, select **Toy workspace and themes** under **Settings → Tool preset** before connecting. Ask to change the swatch to green, switch the toy panel to midnight, and add 3 to the counter. The panel shows each setting and supports a reset to indigo, slate, and 0. See [RVL-010](../../issues/16).
 
 The footer shows the latest voice response latency, elapsed session time and estimated Realtime response cost in USD. Hover over **Est. cost** for usage, pricing date, rate limits and exclusions. Input transcription is billed separately. A local pricing file and an optional estimated spend cutoff are documented in [Security and cost](docs/wiki/Security-and-Cost.md). See [RVL-012](../../issues/18).
 
 Select **Restricted Interviewer** under **Settings → Preset** while disconnected to practice a software engineering interview in text with tools disabled. After connecting, type `start`, then use `answer:` or `clarify:` followed by your message. The app redirects messages outside those forms locally. See [RVL-013 and its test scenarios](docs/wiki/Testing.md#rvl-013-restricted-interviewer-verification).
 
 Open **Theme** in the app header to apply **Ocean**, save the current appearance under a name, or load a saved profile. Dismiss the dialog with **Close** or **Esc**. **Reset to default** restores the built-in indigo theme and keeps your saved profiles. Saving an existing name updates that profile. Profiles are case-insensitive and stored as versioned JSON under `~/.realtime-voice-lab/themes/`. The app starts with the default theme and you can load any saved profile after restart. Theme changes work during an active session. While VAD is capturing, the dialog offers **Stop listening**.
+
+With **Toy workspace and themes** selected, ask for the current app theme or ask to preview **Ocean**. The app shows the preview and the header button changes to **Theme preview**. Open it to **Keep preview** or **Discard preview**. Closing the dialog also discards the preview. You can ask to apply a built-in theme directly, and **Undo theme change** restores the prior appearance after you apply or keep a tool-suggested theme. Save through the Theme dialog to retain an applied appearance as a profile. See [RVL-018](../../issues/51).
 
 ## Goals
 - Inspect GA WebSocket events and learn the session lifecycle.

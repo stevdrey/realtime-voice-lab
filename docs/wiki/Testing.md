@@ -145,3 +145,17 @@ The capture and playback journey used a fake socket and synthetic PCM. Applying 
 The Stop listening action works by mouse with Server VAD and by keyboard with Semantic VAD while a profile save is pending. The test verifies that capture stops, buffered input is cleared, the recording indicator goes away and the existing socket remains connected.
 
 A separate smoke test of the installed application on the module path exercised save, reset, reload and close against a temporary profile directory. Disconnected screenshots at 1100 × 720 and 760 × 520 showed the centered dialog. This verification used the headless JavaFX backend. Native display scaling, screen readers, physical audio and the live Realtime service were outside these checks.
+
+## RVL-018 workspace theme tool verification
+
+```sh
+env -u OPENAI_API_KEY -u RVL_PRICING_FILE -u RVL_ESTIMATED_SPEND_LIMIT_USD \
+  ./gradlew --offline test --tests '*RealtimeToolCallingTest' \
+  --tests '*RealtimeVoiceLabAppTest.previewsAndRevertsThemeToolsWithKeyboardFocusIntact'
+env -u OPENAI_API_KEY -u RVL_PRICING_FILE -u RVL_ESTIMATED_SPEND_LIMIT_USD \
+  ./gradlew --offline clean build
+```
+
+The focused run passed 69 cases and the clean build passed all 342 tests on Fedora 45 with Temurin 27.0.1.1+4, headless JavaFX 27.0.1, fake transport and synthetic devices. The tool tests cover the declared schemas, preset authorization, invalid arguments, ordered results, restoration of a custom theme through a single undo entry, and cancellation before execution or while an output is pending. Reconnects, observed deadlines, provider rejection and disconnect exercise cleanup of queued work or previews.
+
+At 760 × 520, a synthetic theme call applied Ocean colors without moving the focus away from the composer. Space opened Theme. The journey checked that Save used the committed theme while the preview was visible. Escape discarded the preview and returned focus to the header. Shift+Tab reached the preview actions and Undo. The test checked the visible focus ring and used Space to keep and undo the change. Native display scaling, screen readers, physical audio and live Realtime behavior remain unverified for this change.

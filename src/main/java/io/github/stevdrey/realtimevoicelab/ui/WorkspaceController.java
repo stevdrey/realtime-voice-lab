@@ -194,7 +194,7 @@ public final class WorkspaceController {
 
     @FXML
     private void initialize() {
-        themeProfilesController.attach(themeButton, root, themeProfiles, theme, this::stopListeningFromTheme);
+        themeProfilesController.attach(themeButton, root, themeProfiles, theme, session, this::stopListeningFromTheme);
         sceneRoot.heightProperty().addListener((observable, previous, height) ->
                 root.pseudoClassStateChanged(COMPACT_HEIGHT, height.doubleValue() < COMPACT_WORKSPACE_HEIGHT));
         elapsedTimer.setCycleCount(Timeline.INDEFINITE);
@@ -483,6 +483,7 @@ public final class WorkspaceController {
 
     private void renderSession() {
         var workspace = session.workspace();
+        themeProfilesController.renderTheme(workspace.appearance());
         var status = workspace.status();
         var state = status.state();
         var settings = workspace.settings();

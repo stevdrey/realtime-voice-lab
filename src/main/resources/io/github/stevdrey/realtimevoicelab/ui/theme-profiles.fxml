@@ -28,6 +28,14 @@
         </VBox>
         <Label fx:id="status" id="theme-status" text="Default theme applied." styleClass="caption"
                wrapText="true" minHeight="-Infinity"/>
+        <HBox fx:id="appearanceActions" visible="false" styleClass="theme-actions">
+            <Button fx:id="keepPreviewButton" id="theme-keep-preview" text="Keep preview" onAction="#keepPreview"
+                    visible="false" styleClass="text-action"/>
+            <Button fx:id="discardPreviewButton" id="theme-discard-preview" text="Discard preview" onAction="#discardPreview"
+                    visible="false" styleClass="text-action"/>
+            <Button fx:id="undoButton" id="theme-undo" text="Undo theme change" onAction="#undoTheme"
+                    visible="false" styleClass="text-action"/>
+        </HBox>
         <HBox alignment="CENTER_LEFT" styleClass="theme-actions">
             <HBox fx:id="recordingIndicator" id="theme-recording" alignment="CENTER_LEFT"
                   styleClass="theme-actions" visible="false">

@@ -6,9 +6,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
+import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore.InvalidProfileException;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens;
+import io.github.stevdrey.realtimevoicelab.ui.theme.WorkspaceAppearance;
+import io.github.stevdrey.realtimevoicelab.ui.theme.WorkspaceAppearance.BuiltIn;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
@@ -27,6 +30,8 @@ public final class ThemeProfilesController {
             Executors.newSingleThreadExecutor(Thread.ofVirtual().name("rvl-theme-profiles").factory());
     private ThemeProfileStore store;
     private WorkspaceTheme theme;
+    private RealtimeSession session;
+    private WorkspaceAppearance renderedAppearance;
     private Button opener;
     private VBox workspace;
     private Task<?> pending;
@@ -36,6 +41,10 @@ public final class ThemeProfilesController {
     @FXML private VBox actions;
     @FXML private ComboBox<String> profile;
     @FXML private Label status;
+    @FXML private HBox appearanceActions;
+    @FXML private Button keepPreviewButton;
+    @FXML private Button discardPreviewButton;
+    @FXML private Button undoButton;
     @FXML private Button closeButton;
     @FXML private HBox recordingIndicator;
     @FXML private Label recordingLabel;
@@ -43,12 +52,17 @@ public final class ThemeProfilesController {
     @FXML private Button stopListeningButton;
 
     void attach(Button opener, VBox workspace, ThemeProfileStore store, WorkspaceTheme theme,
-                Runnable stopListening) {
+                RealtimeSession session, Runnable stopListening) {
         this.opener = opener;
         this.workspace = workspace;
         this.store = store;
         this.theme = theme;
+        this.session = session;
         overlay.managedProperty().bind(overlay.visibleProperty());
+        appearanceActions.managedProperty().bind(appearanceActions.visibleProperty());
+        keepPreviewButton.managedProperty().bind(keepPreviewButton.visibleProperty());
+        discardPreviewButton.managedProperty().bind(discardPreviewButton.visibleProperty());
+        undoButton.managedProperty().bind(undoButton.visibleProperty());
         recordingIndicator.managedProperty().bind(recordingIndicator.visibleProperty());
         recordingRing.managedProperty().bind(recordingRing.visibleProperty());
         stopListeningButton.managedProperty().bind(stopListeningButton.visibleProperty());
@@ -67,6 +81,33 @@ public final class ThemeProfilesController {
         });
     }
 
+    void renderTheme(WorkspaceAppearance appearance) {
+        if (renderedAppearance == appearance) {
+            return;
+        }
+        renderedAppearance = appearance;
+        if (overlay.getScene() != null) {
+            theme.apply(overlay.getScene(), appearance.displayed());
+        }
+        var preview = appearance.preview();
+        boolean previewing = preview != null;
+        boolean showUndo = !previewing && appearance.previous() != null;
+        if ((!previewing && (keepPreviewButton.isFocused() || discardPreviewButton.isFocused()))
+                || (!showUndo && undoButton.isFocused())) {
+            closeButton.requestFocus();
+        }
+        keepPreviewButton.setVisible(previewing);
+        discardPreviewButton.setVisible(previewing);
+        undoButton.setVisible(showUndo);
+        appearanceActions.setVisible(previewing || showUndo);
+        opener.setText(previewing ? "Theme preview" : "Theme");
+        status.setText(previewing ? "Previewing " + preview.label() + "." : switch (appearance.committedId()) {
+            case "default" -> "Default theme applied.";
+            case "ocean" -> "Ocean theme applied.";
+            default -> "Custom theme applied.";
+        });
+    }
+
     void renderRecording(boolean recording, boolean listening, String status) {
         boolean showCaptureState = recording || listening;
         recordingLabel.setText(showCaptureState ? status : "");
@@ -80,6 +121,7 @@ public final class ThemeProfilesController {
 
     private void open() {
         // Stay in the same window so the session's focus-loss handler does not stop capture.
+        renderTheme(session.appearance());
         overlay.setVisible(true);
         workspace.setDisable(true);
         closeButton.requestFocus();
@@ -94,6 +136,8 @@ public final class ThemeProfilesController {
 
     @FXML
     private void close() {
+        session.discardWorkspaceThemePreview();
+        renderTheme(session.appearance());
         overlay.setVisible(false);
         workspace.setDisable(false);
         opener.requestFocus();
@@ -101,7 +145,7 @@ public final class ThemeProfilesController {
 
     @FXML
     private void useOcean() {
-        apply(WorkspaceTheme.OCEAN, "Ocean theme applied.");
+        apply(BuiltIn.OCEAN.tokens(), "Ocean theme applied.");
     }
 
     @FXML
@@ -110,9 +154,27 @@ public final class ThemeProfilesController {
     }
 
     @FXML
+    private void keepPreview() {
+        session.keepWorkspaceThemePreview(renderedAppearance);
+        renderTheme(session.appearance());
+    }
+
+    @FXML
+    private void discardPreview() {
+        session.discardWorkspaceThemePreview();
+        renderTheme(session.appearance());
+    }
+
+    @FXML
+    private void undoTheme() {
+        session.undoWorkspaceTheme(renderedAppearance);
+        renderTheme(session.appearance());
+    }
+
+    @FXML
     private void save() {
         withName(name -> {
-            var snapshot = theme.current();
+            var snapshot = session.appearance().committed();
             runIo(() -> {
                 store.save(name, snapshot);
                 return name;
@@ -160,7 +222,8 @@ public final class ThemeProfilesController {
     }
 
     private void apply(ThemeTokens tokens, String message) {
-        boolean applied = theme.apply(overlay.getScene(), tokens);
+        boolean applied = session.selectWorkspaceTheme(tokens);
+        renderTheme(session.appearance());
         status.setText(applied ? message : "Theme is invalid. Default theme applied.");
     }
 

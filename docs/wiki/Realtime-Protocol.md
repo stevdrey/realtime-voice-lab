@@ -26,7 +26,7 @@ Input transcription is opt-in per connection through `audio.input.transcription.
 
 RVL-009 declares `calculate_workspace_counter` in `session.tools` and checks the effective configuration. The function takes integers `current` (0–100) and `delta` (−10 to 10) and returns the resulting value if it stays between 0 and 100. It is a pure local calculation.
 
-RVL-010 adds the **Toy workspace** tool preset. The operator selects it before connecting, and the client verifies the effective preset in `session.updated`. Each session advertises the functions for its selected preset.
+The operator selects **Toy workspace and themes** before connecting. The client verifies the effective preset in `session.updated`. Each session advertises the functions for its selected preset.
 
 | Function | Arguments |
 |---|---|
@@ -35,7 +35,18 @@ RVL-010 adds the **Toy workspace** tool preset. The operator selects it before c
 | `incrementCounter` | Integer `delta` from −10 to 10. The result must stay between 0 and 100. |
 | `resetWorkspace` | An empty object. Restores indigo, slate, and 0. |
 
-Each successful workspace call returns `ok: true` and a `color`, `theme`, and `counter` snapshot after that call. An invalid call returns `ok: false` and a fixed `error` code. A batch applies valid calls in response order. The desktop app dispatches each batch to the JavaFX Application Thread. The client checks the session, turn, and deadline again before applying the batch. Toy state stays in memory while the application is open, including across reconnects.
+Each successful toy panel call returns `ok: true` and a `color`, `theme`, and `counter` snapshot after that call. An invalid call returns `ok: false` and a fixed `error` code. A batch applies valid calls in response order. The desktop app dispatches each batch to the JavaFX Application Thread. The client checks the session, turn, and deadlines before committing the batch. Toy state stays in memory while the application is open, including across reconnects.
+
+RVL-018 adds four app appearance tools to the same preset.
+
+| Function | Arguments and effect |
+|---|---|
+| `queryWorkspaceTheme` | Empty object. Reports the committed appearance, pending preview and available built-ins. |
+| `previewWorkspaceTheme` | `theme` is `default` or `ocean`. Shows a temporary preview in the current workspace. |
+| `applyWorkspaceTheme` | `theme` is `default` or `ocean`. Commits the selection in memory and dismisses the preview. |
+| `undoWorkspaceTheme` | Empty object. Dismisses a pending preview, or restores one previous committed appearance. With neither, returns `nothing_to_undo`. |
+
+Successful theme calls report `theme` (`default`, `ocean`, or `custom`), nullable `preview`, and `canUndo`. Query also includes `availableThemes`. Profile names and appearance tokens stay local. Applying the same theme preserves existing undo history. A manual reset, built-in selection or profile load replaces the appearance and clears the preview and undo history. Saving from the dialog captures the committed appearance. A session close, cancelled or interrupted response, or failed turn discards the preview. Committed changes and the single undo entry stay available for the current launch.
 
 The app reads the complete argument strings from the `function_call` items in a successful, correlated `response.done`. Argument deltas and early completion signals never trigger execution. Call IDs are deduplicated for the connection. Each accepted call receives one `conversation.item.create` with a `function_call_output` item that echoes its `call_id`. Errors contain a fixed code and omit the supplied name and arguments. Invalid IDs end the session because a result cannot be correlated safely.
 

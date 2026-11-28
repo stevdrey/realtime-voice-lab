@@ -168,7 +168,7 @@ public record SessionSettings(Model model, Voice voice, Mode mode, String instru
     }
 
     public enum ToolPreset {
-        DEMO_COUNTER("Demo counter"), TOY_WORKSPACE("Toy workspace"), NONE("No tools");
+        DEMO_COUNTER("Demo counter"), TOY_WORKSPACE("Toy workspace and themes"), NONE("No tools");
 
         private final String label;
 
