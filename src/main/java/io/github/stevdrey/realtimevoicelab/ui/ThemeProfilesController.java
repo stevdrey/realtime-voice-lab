@@ -1,14 +1,18 @@
 package io.github.stevdrey.realtimevoicelab.ui;
 
 import java.nio.file.NoSuchFileException;
+import java.util.EnumMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
+import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore.InvalidProfileException;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens;
+import io.github.stevdrey.realtimevoicelab.ui.theme.WorkspaceAppearance;
+import io.github.stevdrey.realtimevoicelab.ui.theme.WorkspaceAppearance.BuiltIn;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
@@ -17,44 +21,68 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
 public final class ThemeProfilesController {
+    private enum ThemeKeyScope {
+        WORKSPACE, THEME_ACTIONS_ONLY
+    }
+
     private final ExecutorService executor =
             Executors.newSingleThreadExecutor(Thread.ofVirtual().name("rvl-theme-profiles").factory());
+    private final EnumMap<KeyCode, ThemeKeyScope> heldThemeActionKeys = new EnumMap<>(KeyCode.class);
     private ThemeProfileStore store;
     private WorkspaceTheme theme;
+    private RealtimeSession session;
+    private WorkspaceAppearance renderedAppearance;
     private Button opener;
     private VBox workspace;
     private Task<?> pending;
     private Node restoreFocus;
+    private KeyCode themeActionKey;
+    private Button mousePressedThemeButton;
 
     @FXML private StackPane overlay;
     @FXML private VBox actions;
     @FXML private ComboBox<String> profile;
     @FXML private Label status;
+    @FXML private HBox appearanceActions;
+    @FXML private Button keepPreviewButton;
+    @FXML private Button discardPreviewButton;
+    @FXML private Button undoButton;
     @FXML private Button closeButton;
     @FXML private HBox recordingIndicator;
     @FXML private Label recordingLabel;
     @FXML private Region recordingRing;
     @FXML private Button stopListeningButton;
 
-    void attach(Button opener, VBox workspace, ThemeProfileStore store, WorkspaceTheme theme,
-                Runnable stopListening) {
+    void attach(Button opener, VBox workspace, StackPane sceneRoot, ThemeProfileStore store, WorkspaceTheme theme,
+                RealtimeSession session, Runnable stopListening) {
         this.opener = opener;
         this.workspace = workspace;
         this.store = store;
         this.theme = theme;
+        this.session = session;
         overlay.managedProperty().bind(overlay.visibleProperty());
+        appearanceActions.managedProperty().bind(appearanceActions.visibleProperty());
+        keepPreviewButton.managedProperty().bind(keepPreviewButton.visibleProperty());
+        discardPreviewButton.managedProperty().bind(discardPreviewButton.visibleProperty());
+        undoButton.managedProperty().bind(undoButton.visibleProperty());
         recordingIndicator.managedProperty().bind(recordingIndicator.visibleProperty());
         recordingRing.managedProperty().bind(recordingRing.visibleProperty());
         stopListeningButton.managedProperty().bind(stopListeningButton.visibleProperty());
         stopListeningButton.setOnAction(event -> stopListening.run());
         profile.getEditor().setTextFormatter(TextInputLimit.formatter(ThemeProfileStore.MAX_NAME_LENGTH));
         opener.setOnAction(event -> open());
+        sceneRoot.addEventFilter(KeyEvent.KEY_PRESSED, this::pressThemeActionKey);
+        sceneRoot.addEventFilter(KeyEvent.KEY_RELEASED, this::releaseThemeActionKey);
+        guardThemeMouseAction(keepPreviewButton);
+        guardThemeMouseAction(undoButton);
         overlay.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (event.getCode() == KeyCode.ESCAPE) {
                 if (profile.isShowing()) {
@@ -64,6 +92,100 @@ public final class ThemeProfilesController {
                 }
                 event.consume();
             }
+        });
+    }
+
+    private void guardThemeMouseAction(Button button) {
+        button.addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
+            if (event.getButton() == MouseButton.PRIMARY) {
+                mousePressedThemeButton = button;
+            }
+        });
+        button.addEventFilter(MouseEvent.MOUSE_RELEASED, event -> {
+            boolean primaryRelease = event.getButton() == MouseButton.PRIMARY;
+            // JavaFX can rearm a pressed button when the pointer comes back inside.
+            if ((primaryRelease || event.isPrimaryButtonDown()) && mousePressedThemeButton != button) {
+                button.disarm();
+            }
+            if (primaryRelease) {
+                mousePressedThemeButton = null;
+            }
+        });
+    }
+
+    private void pressThemeActionKey(KeyEvent event) {
+        var key = event.getCode();
+        var scope = heldThemeActionKeys.get(key);
+        boolean onThemeAction = targetsThemeAction(event);
+        if (scope == ThemeKeyScope.WORKSPACE || scope == ThemeKeyScope.THEME_ACTIONS_ONLY && onThemeAction) {
+            // A repeat must not rearm the button after a theme update or focus change.
+            event.consume();
+        } else if ((key == KeyCode.SPACE || key == KeyCode.ENTER) && onThemeAction) {
+            heldThemeActionKeys.put(key, ThemeKeyScope.WORKSPACE);
+            if (themeActionKey == null) {
+                themeActionKey = key;
+            } else {
+                event.consume();
+            }
+        }
+    }
+
+    private void releaseThemeActionKey(KeyEvent event) {
+        var key = event.getCode();
+        var scope = heldThemeActionKeys.remove(key);
+        if (key == themeActionKey) {
+            // The button still receives the matching release and resets its keyboard state.
+            themeActionKey = null;
+        } else if (scope == ThemeKeyScope.WORKSPACE
+                || scope == ThemeKeyScope.THEME_ACTIONS_ONLY && targetsThemeAction(event)) {
+            event.consume();
+        }
+    }
+
+    private boolean targetsThemeAction(KeyEvent event) {
+        return event.getTarget() == keepPreviewButton || event.getTarget() == undoButton;
+    }
+
+    void cancelThemeActions() {
+        disarmThemeActions();
+        // A release may occur outside the window. Retain protection for these actions until a release is observed.
+        heldThemeActionKeys.replaceAll((key, scope) -> ThemeKeyScope.THEME_ACTIONS_ONLY);
+        themeActionKey = null;
+    }
+
+    private void disarmThemeActions() {
+        mousePressedThemeButton = null;
+        keepPreviewButton.disarm();
+        undoButton.disarm();
+    }
+
+    void renderTheme(WorkspaceAppearance appearance) {
+        if (renderedAppearance == appearance) {
+            return;
+        }
+        if (!appearance.equals(renderedAppearance)) {
+            disarmThemeActions();
+        }
+        renderedAppearance = appearance;
+        if (overlay.getScene() != null) {
+            theme.apply(overlay.getScene(), appearance.displayed());
+        }
+        var preview = appearance.preview();
+        boolean previewing = preview != null;
+        boolean showUndo = !previewing && appearance.previous() != null;
+        if ((!previewing && (keepPreviewButton.isFocused() || discardPreviewButton.isFocused()))
+                || (!showUndo && undoButton.isFocused())) {
+            closeButton.requestFocus();
+        }
+        keepPreviewButton.setVisible(previewing);
+        discardPreviewButton.setVisible(previewing);
+        undoButton.setVisible(showUndo);
+        appearanceActions.setVisible(previewing || showUndo);
+        opener.setText(previewing ? "Theme preview" : "Theme");
+        status.setText(previewing ? "Previewing " + preview.label() + "." : switch (appearance.committedId()) {
+            case "default" -> "Default theme applied.";
+            case "ocean" -> "Ocean theme applied.";
+            default -> "Custom theme applied.";
         });
     }
 
@@ -80,6 +202,7 @@ public final class ThemeProfilesController {
 
     private void open() {
         // Stay in the same window so the session's focus-loss handler does not stop capture.
+        renderTheme(session.appearance());
         overlay.setVisible(true);
         workspace.setDisable(true);
         closeButton.requestFocus();
@@ -94,6 +217,8 @@ public final class ThemeProfilesController {
 
     @FXML
     private void close() {
+        session.discardWorkspaceThemePreview();
+        renderTheme(session.appearance());
         overlay.setVisible(false);
         workspace.setDisable(false);
         opener.requestFocus();
@@ -101,7 +226,7 @@ public final class ThemeProfilesController {
 
     @FXML
     private void useOcean() {
-        apply(WorkspaceTheme.OCEAN, "Ocean theme applied.");
+        apply(BuiltIn.OCEAN.tokens(), "Ocean theme applied.");
     }
 
     @FXML
@@ -110,9 +235,27 @@ public final class ThemeProfilesController {
     }
 
     @FXML
+    private void keepPreview() {
+        session.keepWorkspaceThemePreview(renderedAppearance);
+        renderTheme(session.appearance());
+    }
+
+    @FXML
+    private void discardPreview() {
+        session.discardWorkspaceThemePreview();
+        renderTheme(session.appearance());
+    }
+
+    @FXML
+    private void undoTheme() {
+        session.undoWorkspaceTheme(renderedAppearance);
+        renderTheme(session.appearance());
+    }
+
+    @FXML
     private void save() {
         withName(name -> {
-            var snapshot = theme.current();
+            var snapshot = session.appearance().committed();
             runIo(() -> {
                 store.save(name, snapshot);
                 return name;
@@ -160,7 +303,8 @@ public final class ThemeProfilesController {
     }
 
     private void apply(ThemeTokens tokens, String message) {
-        boolean applied = theme.apply(overlay.getScene(), tokens);
+        boolean applied = session.selectWorkspaceTheme(tokens);
+        renderTheme(session.appearance());
         status.setText(applied ? message : "Theme is invalid. Default theme applied.");
     }
 

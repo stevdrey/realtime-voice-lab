@@ -31,6 +31,9 @@ import io.github.stevdrey.realtimevoicelab.audio.SpeakerPlayback;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Mode;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
+import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens;
+import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeValidator;
+import io.github.stevdrey.realtimevoicelab.ui.theme.WorkspaceAppearance;
 
 public final class RealtimeSession implements AutoCloseable {
     public static final String DEFAULT_MODEL = Model.MINI.id();
@@ -124,7 +127,7 @@ public final class RealtimeSession implements AutoCloseable {
 
     public record Workspace(Status status, List<TurnView> turns, boolean canSend, boolean canCancel,
                             MicrophoneView microphone, SpeakerView speaker, SettingsView settings,
-                            ToyWorkspace toy, UsageView usage, Duration audioLatency) {
+                            ToyWorkspace toy, WorkspaceAppearance appearance, UsageView usage, Duration audioLatency) {
     }
 
     private final RealtimeTransport transport;
@@ -147,6 +150,7 @@ public final class RealtimeSession implements AutoCloseable {
     private Status status = new Status(State.DISCONNECTED, null);
     private SessionSettings settings = SessionSettings.DEFAULT;
     private ToyWorkspace toyWorkspace = ToyWorkspace.DEFAULT;
+    private WorkspaceAppearance appearance = WorkspaceAppearance.DEFAULT;
     private final ArrayDeque<ConversationTurn> history = new ArrayDeque<>();
     private long turnNumber;
     private ConversationTurn localRedirect;
@@ -267,7 +271,39 @@ public final class RealtimeSession implements AutoCloseable {
                 new SpeakerView(speakerState, output == null ? 0 : output.level),
                 new SettingsView(settings, active == null || ready && canStartTurn(active),
                         ready && active.settingUpdate != null, ready && active.voiceLocked), toyWorkspace,
-                active == null ? closedUsage : active.usage.view(), audioLatency);
+                appearance, active == null ? closedUsage : active.usage.view(), audioLatency);
+    }
+
+    public synchronized WorkspaceAppearance appearance() {
+        return appearance;
+    }
+
+    public synchronized boolean selectWorkspaceTheme(ThemeTokens tokens) {
+        var resolved = ThemeValidator.resolve(tokens);
+        appearance = new WorkspaceAppearance(resolved.theme(), null, null);
+        statusChanged.run();
+        return !resolved.usesFallback();
+    }
+
+    public synchronized void keepWorkspaceThemePreview(WorkspaceAppearance expected) {
+        if (appearance == expected && appearance.preview() != null) {
+            appearance = appearance.apply(appearance.preview());
+            statusChanged.run();
+        }
+    }
+
+    public synchronized void discardWorkspaceThemePreview() {
+        if (appearance.preview() != null) {
+            appearance = appearance.discardPreview();
+            statusChanged.run();
+        }
+    }
+
+    public synchronized void undoWorkspaceTheme(WorkspaceAppearance expected) {
+        if (appearance == expected && appearance.preview() == null && appearance.previous() != null) {
+            appearance = appearance.undo();
+            statusChanged.run();
+        }
     }
 
     private SpeakerState speakerState(Attempt attempt) {
@@ -377,6 +413,7 @@ public final class RealtimeSession implements AutoCloseable {
             interruptVoice(attempt);
             return;
         }
+        appearance = appearance.discardPreview();
         attempt.turn.state = TurnState.CANCELLING;
         attempt.turn.playbackStopped = true;
         stopPlayback(attempt);
@@ -850,6 +887,7 @@ public final class RealtimeSession implements AutoCloseable {
             finish(attempt, limit, true);
             return;
         }
+        appearance = appearance.discardPreview();
         attempt.sessionDeadline.complete(null);
         attempt.closeFailure = limit;
         closedElapsed = elapsedTime();
@@ -1021,6 +1059,7 @@ public final class RealtimeSession implements AutoCloseable {
     }
 
     private void finish(Attempt attempt, Failure failure, boolean abort) {
+        appearance = appearance.discardPreview();
         closedElapsed = elapsedTime();
         attempt.usage.close();
         closedUsage = attempt.usage.view();
@@ -1465,6 +1504,7 @@ public final class RealtimeSession implements AutoCloseable {
         if (attempt.interruption != null) {
             return;
         }
+        appearance = appearance.discardPreview();
         var output = attempt.output;
         var turn = attempt.turn == null ? output.turn : attempt.turn;
         boolean turnPending = attempt.turn != null;
@@ -1894,9 +1934,11 @@ public final class RealtimeSession implements AutoCloseable {
         var outputs = new ArrayList<ToolExchange.Output>();
         var preset = settings.toolPreset();
         var workspace = toyWorkspace;
+        var nextAppearance = appearance;
         for (var call : calls) {
-            var result = localTools.execute(preset, call, workspace);
+            var result = localTools.execute(preset, call, workspace, nextAppearance);
             workspace = result.workspace();
+            nextAppearance = result.appearance();
             outputs.add(new ToolExchange.Output(call.path("call_id").textValue(), result.output().toString()));
         }
         if (preset == ToolPreset.TOY_WORKSPACE) {
@@ -1906,6 +1948,7 @@ public final class RealtimeSession implements AutoCloseable {
                 return;
             }
             toyWorkspace = workspace;
+            appearance = nextAppearance;
         }
         exchange.completeExecution(outputs);
         advanceTurn(attempt);
@@ -2004,6 +2047,9 @@ public final class RealtimeSession implements AutoCloseable {
 
     private void finishTurn(Attempt attempt, TurnState outcome) {
         if (attempt.turn != null) {
+            if (outcome != TurnState.COMPLETED) {
+                appearance = appearance.discardPreview();
+            }
             // A terminal event can arrive before the write completes. Keep that write bounded.
             if (!attempt.writing && attempt.interruption == null) {
                 clearPhaseDeadline(attempt);

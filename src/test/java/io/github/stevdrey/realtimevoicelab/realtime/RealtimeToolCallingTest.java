@@ -17,6 +17,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.stevdrey.realtimevoicelab.audio.MicrophoneCapture;
 import io.github.stevdrey.realtimevoicelab.audio.SpeakerPlayback;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
+import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens;
+import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens.Density;
+import io.github.stevdrey.realtimevoicelab.ui.theme.WorkspaceAppearance;
+import io.github.stevdrey.realtimevoicelab.ui.theme.WorkspaceAppearance.BuiltIn;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -107,20 +111,102 @@ class RealtimeToolCallingTest {
     void requiresExplicitWorkspacePresetAndChecksTheEcho() throws Exception {
         assertFalse(session.configure(workspaceSettings(), State.READY));
         assertCallError(call("disabled", "resetWorkspace", "{}"), "disabled", "unknown_tool");
+        assertCallError(call("theme_disabled", "applyWorkspaceTheme", "{\"theme\":\"ocean\"}"),
+                "theme_disabled", "unknown_tool");
         assertTrue(workspaceTasks.isEmpty());
         assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
 
         openWorkspaceSession();
         var configured = json.readTree(socket.writes.getFirst()).path("session");
         assertEquals("auto", configured.path("tool_choice").textValue());
-        assertEquals(List.of("changeColor", "setTheme", "incrementCounter", "resetWorkspace"),
+        assertEquals(List.of("changeColor", "setTheme", "incrementCounter", "resetWorkspace",
+                        "queryWorkspaceTheme", "previewWorkspaceTheme", "applyWorkspaceTheme", "undoWorkspaceTheme"),
                 configured.path("tools").valueStream().map(tool -> tool.path("name").textValue()).toList());
         assertEquals(List.of("indigo", "blue", "green", "amber"),
                 configured.at("/tools/0/parameters/properties/color/enum").valueStream()
                         .map(JsonNode::textValue).toList());
+        for (int index : List.of(5, 6)) {
+            assertEquals(json.readTree("""
+                    {"type":"object","additionalProperties":false,"required":["theme"],
+                     "properties":{"theme":{"type":"string","enum":["default","ocean"]}}}
+                    """), configured.at("/tools/" + index + "/parameters"));
+        }
+        ObjectNode changed = configured.deepCopy();
+        ((ObjectNode) changed.at("/tools/5/parameters/properties/theme")).putArray("enum").add("default").add("custom");
+        assertNull(new LocalTools().confirmedPreset(changed));
         socket.updated(); // The provider echoed the demo preset instead of the requested workspace.
         assertFailure(Failure.SETTINGS_MISMATCH);
         assertTrue(workspaceTasks.isEmpty());
+    }
+
+    @Test
+    void queriesPreviewsAppliesAndUndoesBuiltInsWhileKeepingCustomTokensLocal() throws Exception {
+        connectWorkspace();
+        var defaults = ThemeTokens.defaults();
+        var custom = new ThemeTokens(defaults.colors(), defaults.typography(), defaults.spacing(), defaults.radii(),
+                new Density(42, 62));
+        assertTrue(session.selectWorkspaceTheme(custom));
+
+        var key = startTurn("preview");
+        socket.text(done("preview", "completed", key,
+                call("preview_ocean", "previewWorkspaceTheme", "{\"theme\":\"ocean\"}"),
+                call("query", "queryWorkspaceTheme", "{}")), true);
+        assertSame(custom, session.appearance().displayed());
+        workspaceTasks.removeFirst().run();
+        assertSame(custom, session.appearance().committed());
+        assertSame(BuiltIn.OCEAN.tokens(), session.appearance().displayed());
+        assertOutput(lastWrite(), "preview_ocean", """
+                {"ok":true,"theme":"custom","preview":"ocean","canUndo":true}
+                """);
+        acknowledge(lastWrite());
+        assertOutput(lastWrite(), "query", """
+                {"ok":true,"theme":"custom","preview":"ocean","canUndo":true,"availableThemes":["default","ocean"]}
+                """);
+        acknowledge(lastWrite());
+        assertEquals("none", lastWrite().at("/response/tool_choice").textValue());
+        socket.text(done("preview_follow_up", "completed", requestKey(lastWrite())), true);
+        assertSame(BuiltIn.OCEAN, session.appearance().preview());
+
+        key = startTurn("apply");
+        socket.text(done("apply", "completed", key,
+                call("apply_ocean", "applyWorkspaceTheme", "{\"theme\":\"ocean\"}"),
+                call("apply_same", "applyWorkspaceTheme", "{\"theme\":\"ocean\"}")), true);
+        workspaceTasks.removeFirst().run();
+        assertSame(BuiltIn.OCEAN.tokens(), session.appearance().committed());
+        assertSame(custom, session.appearance().previous());
+        assertNull(session.appearance().preview());
+        for (var id : List.of("apply_ocean", "apply_same")) {
+            assertOutput(lastWrite(), id, """
+                    {"ok":true,"theme":"ocean","preview":null,"canUndo":true}
+                    """);
+            acknowledge(lastWrite());
+        }
+        socket.text(done("apply_follow_up", "completed", requestKey(lastWrite())), true);
+
+        key = startTurn("undo");
+        socket.text(done("undo", "completed", key,
+                call("preview_default", "previewWorkspaceTheme", "{\"theme\":\"default\"}"),
+                call("undo_preview", "undoWorkspaceTheme", "{}"),
+                call("undo_apply", "undoWorkspaceTheme", "{}"),
+                call("no_undo", "undoWorkspaceTheme", "{}")), true);
+        workspaceTasks.removeFirst().run();
+        assertSame(custom, session.appearance().displayed());
+        assertNull(session.appearance().previous());
+        assertOutput(lastWrite(), "preview_default", """
+                {"ok":true,"theme":"ocean","preview":"default","canUndo":true}
+                """);
+        acknowledge(lastWrite());
+        assertOutput(lastWrite(), "undo_preview", """
+                {"ok":true,"theme":"ocean","preview":null,"canUndo":true}
+                """);
+        acknowledge(lastWrite());
+        assertOutput(lastWrite(), "undo_apply", """
+                {"ok":true,"theme":"custom","preview":null,"canUndo":false}
+                """);
+        acknowledge(lastWrite());
+        assertOutput(lastWrite(), "no_undo", """
+                {"ok":false,"error":"nothing_to_undo"}
+                """);
     }
 
     @Test
@@ -185,6 +271,13 @@ class RealtimeToolCallingTest {
             incrementCounter            | {"delta":-1}                             | counter_out_of_range
             resetWorkspace              | {"extra":true}                           | invalid_arguments
             calculate_workspace_counter | {"current":40,"delta":2}                 | unknown_tool
+            queryWorkspaceTheme          | {"includeProfiles":true}                | invalid_arguments
+            previewWorkspaceTheme        | {"theme":"file:///theme.css"}           | invalid_arguments
+            previewWorkspaceTheme        | {"theme":"ocean","theme":"default"}     | invalid_arguments
+            applyWorkspaceTheme          | {"theme":"custom"}                      | invalid_arguments
+            applyWorkspaceTheme          | {"theme":2}                             | invalid_arguments
+            applyWorkspaceTheme          | {"theme":"ocean"} {}                    | invalid_arguments
+            undoWorkspaceTheme           | {"steps":2}                             | invalid_arguments
             """)
     void invalidWorkspaceCallsReturnFixedErrorsAndKeepState(String name, String arguments, String error)
             throws Exception {
@@ -194,6 +287,7 @@ class RealtimeToolCallingTest {
         workspaceTasks.removeFirst().run();
         assertOutput(lastWrite(), "invalid", "{\"ok\":false,\"error\":\"" + error + "\"}");
         assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+        assertSame(WorkspaceAppearance.DEFAULT, session.appearance());
     }
 
     @ParameterizedTest
@@ -201,7 +295,8 @@ class RealtimeToolCallingTest {
     void queuedWorkspaceBatchCannotMutateAfterItLosesItsTurn(String ending) throws Exception {
         connectWorkspace();
         var key = startTurn("old");
-        socket.text(done("old", "completed", key, call("queued", "incrementCounter", "{\"delta\":5}")), true);
+        socket.text(done("old", "completed", key, call("queued", "incrementCounter", "{\"delta\":5}"),
+                call("queued_theme", "applyWorkspaceTheme", "{\"theme\":\"ocean\"}")), true);
         assertEquals(1, workspaceTasks.size());
         switch (ending) {
             case "cancel" -> session.cancelTurn();
@@ -213,6 +308,7 @@ class RealtimeToolCallingTest {
         workspaceTasks.removeFirst().run();
         assertEquals(writes, socket.writes.size());
         assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+        assertSame(WorkspaceAppearance.DEFAULT, session.appearance());
         if ("timeout".equals(ending)) {
             assertFailure(Failure.ITEM_ACK_TIMEOUT);
         } else {
@@ -228,7 +324,8 @@ class RealtimeToolCallingTest {
             now.addAndGet(RealtimeSession.MAX_SESSION_TIME.toNanos() - 1);
         }
         var key = startTurn("expiring");
-        socket.text(done("expiring", "completed", key, call("count", "incrementCounter", "{\"delta\":5}")), true);
+        socket.text(done("expiring", "completed", key, call("count", "incrementCounter", "{\"delta\":5}"),
+                call("late_preview", "previewWorkspaceTheme", "{\"theme\":\"ocean\"}")), true);
         if (failure == Failure.ITEM_ACK_TIMEOUT) {
             now.addAndGet(RealtimeSession.TOOL_OUTPUT_TIMEOUT.toNanos() - 1);
         }
@@ -246,6 +343,7 @@ class RealtimeToolCallingTest {
         workspaceTasks.removeFirst().run();
 
         assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+        assertSame(WorkspaceAppearance.DEFAULT, session.appearance());
         assertFalse(socket.writes.stream().skip(writes).anyMatch(write -> write.contains("\"function_call_output\"")));
         if (failure == Failure.SESSION_LIMIT) {
             assertEquals(State.CLOSING, session.status().state());
@@ -253,6 +351,34 @@ class RealtimeToolCallingTest {
             assertEquals(new RealtimeSession.Status(State.ERROR, failure), session.status());
         } else {
             assertFailure(failure);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"cancel", "disconnect", "rejection", "timeout"})
+    void dropsTransientPreviewButKeepsCommittedThemeWhenTheToolExchangeEndsEarly(String ending) throws Exception {
+        connectWorkspace();
+        var key = startTurn("preview");
+        socket.text(done("preview", "completed", key,
+                call("apply", "applyWorkspaceTheme", "{\"theme\":\"ocean\"}"),
+                call("preview", "previewWorkspaceTheme", "{\"theme\":\"default\"}")), true);
+        workspaceTasks.removeFirst().run();
+        assertSame(BuiltIn.DEFAULT, session.appearance().preview());
+        var output = lastWrite();
+        switch (ending) {
+            case "cancel" -> session.cancelTurn();
+            case "disconnect" -> session.disconnect();
+            case "rejection" -> rejectOutput(output);
+            case "timeout" -> latestDeadline.completeExceptionally(new TimeoutException());
+            default -> throw new AssertionError(ending);
+        }
+        assertNull(session.appearance().preview());
+        assertSame(BuiltIn.OCEAN.tokens(), session.appearance().displayed());
+        if ("cancel".equals(ending)) {
+            int writes = socket.writes.size();
+            acknowledge(output);
+            assertEquals(writes, socket.writes.size());
+            assertTrue(session.workspace().canSend());
         }
     }
 

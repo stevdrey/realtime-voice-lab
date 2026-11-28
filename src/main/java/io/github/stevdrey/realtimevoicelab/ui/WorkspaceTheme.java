@@ -2,19 +2,15 @@ package io.github.stevdrey.realtimevoicelab.ui;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.EnumMap;
 import java.util.Locale;
 
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens.ColorRole;
-import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens.Rgb;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeValidator;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 
 final class WorkspaceTheme {
-    static final ThemeTokens OCEAN = ocean();
-
     private ThemeTokens current = ThemeTokens.defaults();
     private String overlay;
 
@@ -117,16 +113,5 @@ final class WorkspaceTheme {
                 }
                 """, density.secondaryButton(), density.microphoneButton());
         return "data:text/css;base64," + Base64.getEncoder().encodeToString(css.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private static ThemeTokens ocean() {
-        var defaults = ThemeTokens.defaults();
-        var colors = new EnumMap<>(defaults.colors());
-        colors.put(ColorRole.ACCENT, new Rgb(0x5eead4));
-        colors.put(ColorRole.FOCUS, new Rgb(0xccfbf1));
-        colors.put(ColorRole.HEADING, new Rgb(0x99f6e4));
-        colors.put(ColorRole.PRIMARY, new Rgb(0x0f766e));
-        colors.put(ColorRole.PRIMARY_HOVER, new Rgb(0x0d514b));
-        return new ThemeTokens(colors, defaults.typography(), defaults.spacing(), defaults.radii(), defaults.density());
     }
 }

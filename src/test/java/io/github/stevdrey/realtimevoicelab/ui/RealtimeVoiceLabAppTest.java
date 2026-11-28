@@ -34,11 +34,14 @@ import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Voice;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens;
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens.ColorRole;
+import io.github.stevdrey.realtimevoicelab.ui.theme.WorkspaceAppearance.BuiltIn;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.value.ObservableBooleanValue;
 import javafx.collections.ListChangeListener;
 import javafx.css.PseudoClass;
 import javafx.event.Event;
+import javafx.event.EventType;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -67,6 +70,7 @@ import javafx.stage.Window;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
@@ -81,6 +85,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 class RealtimeVoiceLabAppTest {
     @BeforeAll
@@ -540,7 +545,7 @@ class RealtimeVoiceLabAppTest {
                         ((Region) scene.lookup(".waveform-baseline")).getBackground().getFills().getFirst().getFill());
                 assertTrue(stage.isFocused());
                 assertTrue(micStatus(stage).startsWith("Listening"));
-                assertThemeRecordingIndicator(stage, WorkspaceTheme.OCEAN);
+                assertThemeRecordingIndicator(stage, BuiltIn.OCEAN.tokens());
                 themeProfile(stage).getEditor().setText("During audio");
                 themeButton(stage, "#theme-save").fire();
                 return null;
@@ -1128,6 +1133,398 @@ class RealtimeVoiceLabAppTest {
                 return null;
             });
         }
+    }
+
+    @Test
+    void previewsAndRevertsThemeToolsWithKeyboardFocusIntact(@TempDir Path directory) throws Exception {
+        var stage = onFxThread(Stage::new);
+        var store = new ThemeProfileStore(directory);
+        try {
+            var socket = connectTextThemeTools(stage, store);
+            requestOceanPreview(stage, socket, "first");
+            onFxThread(() -> {
+                var scene = stage.getScene();
+                assertSame(scene.lookup("#text-composer"), scene.getFocusOwner(), "Preview stole keyboard focus");
+                assertFalse(scene.lookup("#theme-overlay").isVisible(), "Preview opened a dialog");
+                assertThemeHeadingColor(stage, "#99f6e4");
+                themeButton(stage, "#theme-button").requestFocus();
+                new Robot().keyType(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, "#theme-close").isFocused(), "Theme dialog did not open from Space");
+            awaitOnFxThread(() -> !themeButton(stage, "#theme-save").isDisabled(), "Theme profiles did not load");
+            onFxThread(() -> {
+                assertEquals("Previewing Ocean.", themeStatus(stage));
+                themeProfile(stage).getEditor().setText("preview-check");
+                themeButton(stage, "#theme-save").fire();
+                return null;
+            });
+            awaitOnFxThread(() -> themeStatus(stage).startsWith("Saved"), "Saving the committed theme failed");
+            assertEquals(ThemeTokens.defaults(), store.load("preview-check"));
+            onFxThread(() -> {
+                new Robot().keyType(KeyCode.ESCAPE);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, "#theme-button").isFocused()
+                    && !stage.getScene().lookup("#theme-overlay").isVisible(), "Escape did not close and restore focus");
+            onFxThread(() -> {
+                assertThemeHeadingColor(stage, "#a5b4fc");
+                return null;
+            });
+
+            requestOceanPreview(stage, socket, "second");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-button").requestFocus();
+                new Robot().keyType(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, "#theme-close").isFocused(), "Theme dialog did not regain focus");
+            reverseTab();
+            awaitOnFxThread(() -> themeButton(stage, "#theme-discard-preview").isFocused(),
+                    "Shift+Tab did not reach Discard preview");
+            reverseTab();
+            awaitOnFxThread(() -> themeButton(stage, "#theme-keep-preview").isFocused(),
+                    "Shift+Tab did not reach Keep preview");
+            onFxThread(() -> {
+                var keep = themeButton(stage, "#theme-keep-preview");
+                var scene = stage.getScene();
+                var focusVisible = PseudoClass.getPseudoClass("focus-visible");
+                scene.getRoot().applyCss();
+                assertTrue(keep.getPseudoClassStates().contains(focusVisible));
+                assertEquals(Color.web("#ccfbf1"), keep.getBorder().getStrokes().getFirst().getTopStroke());
+                var bounds = keep.localToScene(keep.getBoundsInLocal());
+                assertTrue(bounds.getMinX() >= 0 && bounds.getMaxX() <= scene.getWidth());
+                assertTrue(bounds.getMinY() >= 0 && bounds.getMaxY() <= scene.getHeight());
+                new Robot().keyType(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, "#theme-undo").isVisible()
+                    && themeButton(stage, "#theme-close").isFocused(), "Keeping the preview did not expose Undo");
+            reverseTab();
+            awaitOnFxThread(() -> themeButton(stage, "#theme-undo").isFocused(), "Shift+Tab did not reach Undo");
+            onFxThread(() -> {
+                assertThemeHeadingColor(stage, "#99f6e4");
+                new Robot().keyType(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> !themeButton(stage, "#theme-undo").isVisible()
+                    && themeButton(stage, "#theme-close").isFocused(), "Undo did not finish and restore focus");
+            onFxThread(() -> {
+                assertThemeHeadingColor(stage, "#a5b4fc");
+                return null;
+            });
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    @ParameterizedTest(name = "{0} held during theme replacement, undo={1}, window refocused={2}")
+    @CsvSource(textBlock = """
+            SPACE, false, false
+            ENTER, false, false
+            SPACE, true,  false
+            ENTER, true,  false
+            SPACE, false, true
+            ENTER, false, true
+            SPACE, true,  true
+            ENTER, true,  true
+            """)
+    void cancelsHeldThemeActionWhenItsTargetChanges(KeyCode key, boolean undo, boolean refocusWindow,
+                                                    @TempDir Path directory) throws Exception {
+        assumeFalse(key == KeyCode.ENTER && OS.MAC.isCurrentOs(), "JavaFX reserves Enter for default buttons on macOS");
+        var stage = onFxThread(Stage::new);
+        var buttonId = undo ? "#theme-undo" : "#theme-keep-preview";
+        var mapper = new ObjectMapper();
+        var windowFocus = new SimpleBooleanProperty(true);
+        try {
+            var socket = connectTextThemeTools(stage, new ThemeProfileStore(directory), windowFocus);
+            prepareOceanThemeAction(stage, socket, undo);
+
+            var turn = startThemeTurn(stage, socket, mapper, "Show the default theme");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-button").fire();
+                themeButton(stage, buttonId).requestFocus();
+                return null;
+            });
+            var initialStatus = undo ? "Ocean theme applied." : "Previewing Ocean.";
+            awaitOnFxThread(() -> themeButton(stage, buttonId).isFocused() && initialStatus.equals(themeStatus(stage)),
+                    "Theme action did not receive focus on the initial appearance");
+            onFxThread(() -> {
+                new Robot().keyPress(key);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, buttonId).isArmed(), "Press did not arm the theme action");
+
+            completeThemeToolCall(socket, mapper, "replacement", turn,
+                    undo ? "applyWorkspaceTheme" : "previewWorkspaceTheme", "default");
+            var replacementStatus = undo ? "Default theme applied." : "Previewing Default.";
+            awaitOnFxThread(() -> replacementStatus.equals(themeStatus(stage)), "Replacement theme did not render");
+            var released = new CountDownLatch(1);
+            onFxThread(() -> {
+                var button = themeButton(stage, buttonId);
+                assertTrue(button.isFocused(), "Replacement theme moved focus away from the action");
+                if (refocusWindow) {
+                    refocusThemeWindow(stage, windowFocus);
+                    button.requestFocus();
+                    assertTrue(button.isFocused(), "Focus did not return to the action");
+                }
+                Event.fireEvent(button, new KeyEvent(KeyEvent.KEY_PRESSED, "", "", key, false, false, false, false));
+                stage.getScene().addEventFilter(KeyEvent.KEY_RELEASED, event -> {
+                    if (event.getCode() == key) {
+                        Platform.runLater(released::countDown);
+                    }
+                });
+                new Robot().keyRelease(key);
+                return null;
+            });
+            assertTrue(released.await(5, TimeUnit.SECONDS), "The key release did not arrive");
+            onFxThread(() -> {
+                assertEquals(replacementStatus, themeStatus(stage), "The held key acted on the replacement theme");
+                assertTrue(themeButton(stage, buttonId).isFocused());
+                new Robot().keyType(key);
+                return null;
+            });
+            var confirmedStatus = undo ? "Ocean theme applied." : "Default theme applied.";
+            awaitOnFxThread(() -> confirmedStatus.equals(themeStatus(stage)), "A fresh press did not activate the action");
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    @ParameterizedTest(name = "Mouse held during theme replacement, undo={0}, pointer reentered={1}")
+    @CsvSource({"false, false", "true, false", "false, true", "true, true"})
+    void cancelsHeldThemeMouseActionWhenItsTargetChanges(boolean undo, boolean reenter, @TempDir Path directory)
+            throws Exception {
+        var stage = onFxThread(Stage::new);
+        var robot = onFxThread(Robot::new);
+        var buttonId = undo ? "#theme-undo" : "#theme-keep-preview";
+        var mapper = new ObjectMapper();
+        try {
+            var socket = connectTextThemeTools(stage, new ThemeProfileStore(directory));
+            prepareOceanThemeAction(stage, socket, undo);
+            var turn = startThemeTurn(stage, socket, mapper, "Show the default theme");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-button").fire();
+                return null;
+            });
+            var initialStatus = undo ? "Ocean theme applied." : "Previewing Ocean.";
+            awaitOnFxThread(() -> themeButton(stage, buttonId).isVisible() && initialStatus.equals(themeStatus(stage)),
+                    "The theme action did not appear for the original theme");
+            onFxThread(() -> {
+                moveMouseToThemeButton(stage, robot, buttonId);
+                robot.mousePress(MouseButton.PRIMARY);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, buttonId).isArmed() && themeButton(stage, buttonId).isPressed(),
+                    "Mouse press did not arm the theme action");
+
+            completeThemeToolCall(socket, mapper, "replacement", turn,
+                    undo ? "applyWorkspaceTheme" : "previewWorkspaceTheme", "default");
+            var replacementStatus = undo ? "Default theme applied." : "Previewing Default.";
+            awaitOnFxThread(() -> replacementStatus.equals(themeStatus(stage)), "Replacement theme did not render");
+            if (reenter) {
+                onFxThread(() -> {
+                    moveMouseToThemeButton(stage, robot, "#theme-close");
+                    return null;
+                });
+                awaitOnFxThread(() -> !themeButton(stage, buttonId).isHover(), "Pointer did not leave the theme action");
+                onFxThread(() -> {
+                    moveMouseToThemeButton(stage, robot, buttonId);
+                    return null;
+                });
+                awaitOnFxThread(() -> themeButton(stage, buttonId).isHover(), "Pointer did not reenter the theme action");
+            }
+
+            onFxThread(() -> {
+                var button = themeButton(stage, buttonId);
+                fireThemeButtonMouseEvent(button, MouseEvent.MOUSE_RELEASED);
+                assertEquals(replacementStatus, themeStatus(stage), "The held click acted on the replacement theme");
+                fireThemeButtonMouseEvent(button, MouseEvent.MOUSE_PRESSED);
+                fireThemeButtonMouseEvent(button, MouseEvent.MOUSE_RELEASED);
+                return null;
+            });
+            var confirmedStatus = undo ? "Ocean theme applied." : "Default theme applied.";
+            awaitOnFxThread(() -> confirmedStatus.equals(themeStatus(stage)), "A fresh click did not activate the action");
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    private void fireThemeButtonMouseEvent(Button button, EventType<MouseEvent> type) {
+        Event.fireEvent(button, new MouseEvent(type, 0, 0, 0, 0, MouseButton.PRIMARY, 1,
+                false, false, false, false, type == MouseEvent.MOUSE_PRESSED, false, false, false, false, true, null));
+    }
+
+    private void prepareOceanThemeAction(Stage stage, FakeTransport.Socket socket, boolean undo) throws Exception {
+        requestOceanPreview(stage, socket, "initial");
+        if (undo) {
+            onFxThread(() -> {
+                themeButton(stage, "#theme-button").fire();
+                themeButton(stage, "#theme-keep-preview").fire();
+                assertTrue(themeButton(stage, "#theme-undo").isVisible());
+                themeButton(stage, "#theme-close").fire();
+                return null;
+            });
+        }
+    }
+
+    private void moveMouseToThemeButton(Stage stage, Robot robot, String buttonId) {
+        var sceneRoot = stage.getScene().getRoot();
+        sceneRoot.applyCss();
+        sceneRoot.layout();
+        var button = themeButton(stage, buttonId);
+        var bounds = button.localToScreen(button.getBoundsInLocal());
+        robot.mouseMove(bounds.getCenterX(), bounds.getCenterY());
+    }
+
+    @Test
+    void closeAcceptsItsFirstPressAfterThemeActionKeyWasReleasedOutsideTheWindow(@TempDir Path directory)
+            throws Exception {
+        var stage = onFxThread(Stage::new);
+        var windowFocus = new SimpleBooleanProperty(true);
+        try {
+            var socket = connectTextThemeTools(stage, new ThemeProfileStore(directory), windowFocus);
+            requestOceanPreview(stage, socket, "initial");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-button").fire();
+                themeButton(stage, "#theme-keep-preview").requestFocus();
+                new Robot().keyPress(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, "#theme-keep-preview").isArmed(), "Space did not arm Keep preview");
+            onFxThread(() -> {
+                // The workspace never sees the release that occurs while another window has focus.
+                refocusThemeWindow(stage, windowFocus);
+                var close = themeButton(stage, "#theme-close");
+                Event.fireEvent(close, new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.SPACE,
+                        false, false, false, false));
+                new Robot().keyRelease(KeyCode.SPACE);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, "#theme-button").isFocused()
+                    && !stage.getScene().lookup("#theme-overlay").isVisible(),
+                    "The theme key guard blocked Space on Close");
+        } finally {
+            onFxThread(() -> {
+                stage.close();
+                return null;
+            });
+        }
+    }
+
+    private void refocusThemeWindow(Stage stage, SimpleBooleanProperty windowFocus) {
+        windowFocus.set(false);
+        var close = themeButton(stage, "#theme-close");
+        close.requestFocus();
+        assertTrue(close.isFocused(), "Focus did not leave the theme action");
+        windowFocus.set(true);
+    }
+
+    private FakeTransport.Socket connectTextThemeTools(Stage stage, ThemeProfileStore store) throws Exception {
+        return connectTextThemeTools(stage, store, stage.focusedProperty());
+    }
+
+    private FakeTransport.Socket connectTextThemeTools(Stage stage, ThemeProfileStore store,
+                                                       ObservableBooleanValue windowFocus) throws Exception {
+        var transport = new FakeTransport();
+        var defaults = SessionSettings.DEFAULT;
+        var settings = new SessionSettings(defaults.model(), defaults.voice(), Mode.TEXT, defaults.instructions(),
+                defaults.turnDetection(), ToolPreset.TOY_WORKSPACE);
+        onFxThread(() -> {
+            new RealtimeVoiceLabApp().start(stage, transport, new FakeMicrophone().microphone(),
+                    new FakeSpeaker().playback(), windowFocus, store);
+            var dialog = openSettings(stage);
+            this.<Mode>combo(dialog, "#settings-mode").setValue(Mode.TEXT);
+            this.<ToolPreset>combo(dialog, "#settings-tool-preset").setValue(ToolPreset.TOY_WORKSPACE);
+            ((Button) dialog.getScene().lookup("#apply-settings")).fire();
+            stage.setWidth(stage.getMinWidth());
+            stage.setHeight(stage.getMinHeight());
+            connectButton(stage).fire();
+            stage.requestFocus();
+            return null;
+        });
+        var socket = transport.attempts.getFirst();
+        socket.opened();
+        socket.created();
+        socket.textWrite.complete(socket);
+        socket.updated(settings, null);
+        awaitOnFxThread(stage::isFocused, "Workspace never received window focus");
+        awaitOnFxThread(() -> !stage.getScene().lookup("#text-composer").isDisabled(), "Text mode did not connect");
+        return socket;
+    }
+
+    private void requestOceanPreview(Stage stage, FakeTransport.Socket socket, String id) throws Exception {
+        var mapper = new ObjectMapper();
+        var turn = startThemeTurn(stage, socket, mapper, "Preview Ocean");
+        completeThemeToolCall(socket, mapper, id, turn, "previewWorkspaceTheme", "ocean");
+        awaitOnFxThread(() -> "Theme preview".equals(themeButton(stage, "#theme-button").getText()),
+                "Theme preview did not render");
+        var output = mapper.readTree(socket.writes.getLast()).path("item");
+        assertEquals("function_call_output", output.path("type").textValue());
+        socket.text(mapper.createObjectNode().put("type", "conversation.item.added")
+                .set("item", output).toString(), true);
+        var followUp = mapper.readTree(socket.writes.getLast());
+        assertEquals("none", followUp.at("/response/tool_choice").textValue());
+        socket.text("""
+                {"type":"response.done","response":{"id":"%s-follow-up","status":"completed",
+                 "metadata":{"rvl_turn":"%s"},"output":[]}}
+                """.formatted(id, followUp.at("/response/metadata/rvl_turn").textValue()), true);
+    }
+
+    private String startThemeTurn(Stage stage, FakeTransport.Socket socket, ObjectMapper mapper, String prompt)
+            throws Exception {
+        onFxThread(() -> {
+            var composer = (TextField) stage.getScene().lookup("#text-composer");
+            composer.setText(prompt);
+            ((Button) stage.getScene().lookup("#send-text")).fire();
+            composer.requestFocus();
+            return null;
+        });
+        var input = mapper.readTree(socket.writes.getLast()).path("item");
+        assertEquals("message", input.path("type").textValue());
+        socket.text(mapper.createObjectNode().put("type", "conversation.item.added")
+                .set("item", input).toString(), true);
+        var request = mapper.readTree(socket.writes.getLast());
+        assertEquals("response.create", request.path("type").textValue());
+        return request.at("/response/metadata/rvl_turn").textValue();
+    }
+
+    private void completeThemeToolCall(FakeTransport.Socket socket, ObjectMapper mapper, String id, String turn,
+                                       String tool, String theme) {
+        var event = mapper.createObjectNode().put("type", "response.done");
+        var response = event.putObject("response").put("id", id).put("status", "completed");
+        response.putObject("metadata").put("rvl_turn", turn);
+        response.putArray("output").addObject().put("type", "function_call").put("status", "completed")
+                .put("call_id", id + "-tool").put("name", tool)
+                .put("arguments", mapper.createObjectNode().put("theme", theme).toString());
+        socket.text(event.toString(), true);
+    }
+
+    private void assertThemeHeadingColor(Stage stage, String color) {
+        var scene = stage.getScene();
+        scene.getRoot().applyCss();
+        var heading = (Label) scene.lookup(".panel-title");
+        assertEquals(Color.web(color), heading.getTextFill());
+        assertEquals(2, scene.getStylesheets().size());
+    }
+
+    private void reverseTab() throws Exception {
+        onFxThread(() -> {
+            var robot = new Robot();
+            robot.keyPress(KeyCode.SHIFT);
+            robot.keyType(KeyCode.TAB);
+            robot.keyRelease(KeyCode.SHIFT);
+            return null;
+        });
     }
 
     @Test
