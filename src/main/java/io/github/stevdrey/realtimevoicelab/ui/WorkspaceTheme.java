@@ -37,7 +37,12 @@ final class WorkspaceTheme {
         if (overlay == null) {
             stylesheets.add(nextOverlay);
         } else {
-            stylesheets.set(stylesheets.indexOf(overlay), nextOverlay);
+            int index = stylesheets.indexOf(overlay);
+            if (index < 0) {
+                stylesheets.add(nextOverlay);
+            } else {
+                stylesheets.set(index, nextOverlay);
+            }
         }
         overlay = nextOverlay;
         current = next;
@@ -86,6 +91,8 @@ final class WorkspaceTheme {
                 .conversation-turn { -fx-spacing: %1$dpx; -fx-padding: %2$dpx; }
                 .audio-controls, .workspace-footer { -fx-spacing: %4$dpx; }
                 .workspace-footer { -fx-padding: %2$dpx 0 0 0; }
+                .metrics { -fx-spacing: %4$dpx; }
+                .metrics:compact-metrics { -fx-spacing: %2$dpx; }
                 """, spacing.tight(), spacing.small(), spacing.medium(), spacing.large())
                 + String.format(Locale.ROOT, """
                 .combo-box, .text-field, .text-action, .settings-dialog .text-area,

@@ -81,6 +81,21 @@ class ThemeProfileStoreTest {
         }
     }
 
+    @Test
+    void capsNewProfilesAndListsTheFirstNamesInOrder() throws Exception {
+        var store = new ThemeProfileStore(directory);
+        for (int i = ThemeProfileStore.MAX_PROFILES; i > 0; i--) {
+            store.save("p%03d".formatted(i), ThemeTokens.defaults());
+        }
+        var names = store.names();
+        assertEquals(ThemeProfileStore.MAX_PROFILES, names.size());
+        assertEquals("p001", names.getFirst());
+        assertEquals("p100", names.getLast());
+        assertThrows(InvalidProfileException.class, () -> store.save("p101", ThemeTokens.defaults()));
+        store.save("P050", ThemeTokens.defaults());
+        assertEquals(names, store.names());
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"", " ", "../outside", "..\\outside", "nested/file", "/absolute", "a.css", "Kelvin"})
     void rejectsNamesOutsideTheLocalProfileNamespace(String name) {

@@ -11,6 +11,7 @@ import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore.InvalidPro
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -28,6 +29,7 @@ public final class ThemeProfilesController {
     private Button opener;
     private VBox workspace;
     private Task<?> pending;
+    private Node restoreFocus;
 
     @FXML private StackPane overlay;
     @FXML private VBox actions;
@@ -157,6 +159,15 @@ public final class ThemeProfilesController {
             }
         };
         pending = task;
+        // Disabling the actions moves focus away from the control that started the operation.
+        restoreFocus = null;
+        for (Node node = overlay.getScene() == null ? null : overlay.getScene().getFocusOwner();
+                node != null; node = node.getParent()) {
+            if (node == actions) {
+                restoreFocus = overlay.getScene().getFocusOwner();
+                break;
+            }
+        }
         actions.setDisable(true);
         task.setOnSucceeded(event -> {
             if (pending == task) {
@@ -180,5 +191,9 @@ public final class ThemeProfilesController {
     private void finishIo() {
         pending = null;
         actions.setDisable(false);
+        if (restoreFocus != null && overlay.isVisible()) {
+            restoreFocus.requestFocus();
+        }
+        restoreFocus = null;
     }
 }

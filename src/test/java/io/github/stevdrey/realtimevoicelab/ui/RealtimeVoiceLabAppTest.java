@@ -435,7 +435,7 @@ class RealtimeVoiceLabAppTest {
                 ((Label) scene.lookup("#elapsed-value")).setText("01:00");
                 ((Label) scene.lookup("#cost-value")).setText("$0.000148");
                 var costState = (Label) scene.lookup("#cost-state");
-                costState.setText("Pending usage");
+                costState.setText("Pricing unavailable");
                 costState.setVisible(true);
                 scene.lookup("#transcription-cost").setVisible(true);
                 return null;

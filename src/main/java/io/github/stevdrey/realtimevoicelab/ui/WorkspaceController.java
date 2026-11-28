@@ -53,8 +53,6 @@ import javafx.util.Duration;
 import javafx.util.StringConverter;
 
 public final class WorkspaceController {
-    private static final double METRIC_GAP = 16;
-    private static final double COMPACT_METRIC_GAP = 8;
     private static final double MIN_EQUAL_METRIC_WIDTH = 100;
     private static final double NARROW_METRICS_WIDTH = 280;
     private static final double COMPACT_WORKSPACE_HEIGHT = 620;
@@ -73,6 +71,7 @@ public final class WorkspaceController {
     private static final PseudoClass RECORDING = PseudoClass.getPseudoClass("recording");
     private static final PseudoClass WAITING_FOR_SPEAKER = PseudoClass.getPseudoClass("waiting-for-speaker");
     private static final PseudoClass NARROW = PseudoClass.getPseudoClass("narrow");
+    private static final PseudoClass COMPACT_METRICS = PseudoClass.getPseudoClass("compact-metrics");
     private static final PseudoClass COMPACT_HEIGHT = PseudoClass.getPseudoClass("compact-height");
     private static final PseudoClass MIDNIGHT = PseudoClass.getPseudoClass("midnight");
     private static final PseudoClass BLUE = PseudoClass.getPseudoClass("blue");
@@ -208,6 +207,7 @@ public final class WorkspaceController {
         modelSelector.getItems().setAll(Model.values());
         toyPanel.managedProperty().bind(toyPanel.visibleProperty());
         metrics.widthProperty().addListener((observable, previous, width) -> layoutMetrics());
+        metrics.spacingProperty().addListener((observable, previous, spacing) -> layoutMetrics());
         for (var column : List.of(latencyMetric, elapsedMetric, costMetric)) {
             for (var child : column.getChildren()) {
                 if (child instanceof Label label) {
@@ -560,17 +560,25 @@ public final class WorkspaceController {
         double elapsedWidth = metricColumnWidth(elapsedMetric);
         double costWidth = metricColumnWidth(costMetric);
         double widestColumn = Math.max(costWidth, Math.max(latencyWidth, elapsedWidth));
-        double equalColumnsWidth = 3 * Math.max(MIN_EQUAL_METRIC_WIDTH, widestColumn) + 2 * METRIC_GAP;
+        var spacing = theme.current().spacing();
+        double equalColumnsWidth = 3 * Math.max(MIN_EQUAL_METRIC_WIDTH, widestColumn) + 2 * spacing.large();
         boolean compact = metrics.getWidth() < equalColumnsWidth;
-        metrics.setSpacing(compact ? COMPACT_METRIC_GAP : METRIC_GAP);
+        // The theme overlay sets the gap for each state.
+        metrics.pseudoClassStateChanged(COMPACT_METRICS, compact);
         latencyMetric.setMinWidth(compact ? latencyWidth : Region.USE_COMPUTED_SIZE);
         elapsedMetric.setMinWidth(compact ? elapsedWidth : Region.USE_COMPUTED_SIZE);
-        costMetric.setMinWidth(compact ? costWidth : Region.USE_COMPUTED_SIZE);
+        if (compact) {
+            double available = metrics.getWidth() - latencyWidth - elapsedWidth - 2 * spacing.small();
+            costMetric.setMinWidth(Math.min(costWidth, Math.max(0, available)));
+        } else {
+            costMetric.setMinWidth(Region.USE_COMPUTED_SIZE);
+        }
         // Reserve space for complete labels before the adjacent toy pane takes its share.
-        metrics.setMinWidth(latencyWidth + elapsedWidth + costWidth + 2 * COMPACT_METRIC_GAP);
+        metrics.setMinWidth(latencyWidth + elapsedWidth + costWidth + 2 * spacing.small());
     }
 
     private double metricColumnWidth(VBox column) {
+        // The footer keeps one line per caption at short heights, so wrapped captions would be elided.
         return Math.ceil(column.getChildren().stream()
                 .filter(Node::isManaged).mapToDouble(child -> child.prefWidth(-1)).max().orElse(0));
     }

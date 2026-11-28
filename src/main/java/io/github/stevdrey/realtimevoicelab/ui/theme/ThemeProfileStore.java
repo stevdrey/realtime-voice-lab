@@ -1,6 +1,7 @@
 package io.github.stevdrey.realtimevoicelab.ui.theme;
 
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
@@ -19,6 +20,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 /** Local storage for appearance tokens. Call file operations off the FX thread. */
 public final class ThemeProfileStore {
     public static final int MAX_NAME_LENGTH = 40;
+    public static final int MAX_PROFILES = 100;
     private static final int VERSION = 1;
     private static final int MAX_PROFILE_BYTES = 8192;
     private static final String PREFIX = "profile-";
@@ -56,8 +58,8 @@ public final class ThemeProfileStore {
                     .map(file -> file.substring(PREFIX.length(), file.length() - SUFFIX.length()))
                     .filter(name -> NAME.matcher(name).matches() && name.equals(name.strip())
                             && name.equals(name.toLowerCase(Locale.ROOT)))
-                    .limit(100)
                     .sorted()
+                    .limit(MAX_PROFILES)
                     .toList();
         } catch (NoSuchFileException missingDirectory) {
             return List.of();
@@ -93,11 +95,19 @@ public final class ThemeProfileStore {
         var path = profilePath(name);
         var profile = new StoredProfile(VERSION, validTokens(tokens));
         Files.createDirectories(directory);
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS) && names().size() >= MAX_PROFILES) {
+            throw new InvalidProfileException("Up to " + MAX_PROFILES
+                    + " theme profiles can be saved. Use an existing name to replace one.");
+        }
         var temp = Files.createTempFile(directory, ".profile-", ".tmp");
         try {
             var bytes = JSON.writerWithDefaultPrettyPrinter().writeValueAsBytes(profile);
             Files.write(temp, bytes);
-            Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            try {
+                Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING);
+            }
         } finally {
             Files.deleteIfExists(temp);
         }
@@ -119,7 +129,11 @@ public final class ThemeProfileStore {
 
     public static final class InvalidProfileException extends IOException {
         private InvalidProfileException() {
-            super("Theme profile is invalid.");
+            this("Theme profile is invalid.");
+        }
+
+        private InvalidProfileException(String message) {
+            super(message);
         }
     }
 }
