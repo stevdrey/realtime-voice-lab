@@ -3,6 +3,7 @@ package io.github.stevdrey.realtimevoicelab.ui.theme;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -124,6 +125,37 @@ class ThemeValidatorTest {
         assertTrue(resolved.usesFallback());
         assertSame(defaults, resolved.theme());
         assertEquals(List.of("DANGER / PRIMARY_HOVER contrast must be at least 3.0:1"), resolved.violations());
+    }
+
+    @Test
+    void fallsBackWhenMidnightSwatchesMatchTheAppBackground() {
+        var colors = new EnumMap<>(defaults.colors());
+        var blue = new Rgb(0x60a5fa);
+        colors.put(ColorRole.APP, blue);
+        colors.put(ColorRole.SUCCESS, blue);
+        colors.put(ColorRole.OUTGOING, blue);
+        var candidate = new ThemeTokens(colors, defaults.typography(), defaults.spacing(), defaults.radii(),
+                defaults.density());
+
+        var resolved = ThemeValidator.resolve(candidate);
+
+        assertSame(defaults, resolved.theme());
+        assertTrue(resolved.violations().contains("SUCCESS / APP contrast must be at least 3.0:1"));
+        assertTrue(resolved.violations().contains("OUTGOING / APP contrast must be at least 3.0:1"));
+    }
+
+    @Test
+    void treatsNullColorEntriesAsMissingAndFallsBack() {
+        var colors = new HashMap<ColorRole, Rgb>(defaults.colors());
+        colors.put(ColorRole.FOCUS, null);
+        colors.put(null, new Rgb(0xffffff));
+        var candidate = new ThemeTokens(colors, defaults.typography(), defaults.spacing(), defaults.radii(),
+                defaults.density());
+
+        var resolved = ThemeValidator.resolve(candidate);
+
+        assertSame(defaults, resolved.theme());
+        assertEquals(List.of("Missing color FOCUS"), resolved.violations());
     }
 
     @Test

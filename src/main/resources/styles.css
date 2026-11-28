@@ -45,9 +45,9 @@
 
 .toy-workspace {
     -fx-background-color: -rv-panel;
-    -fx-background-radius: 8;
+    -fx-background-radius: 9;
     -fx-border-color: -rv-divider;
-    -fx-border-radius: 8;
+    -fx-border-radius: 9;
     -fx-padding: 8 12;
 }
 
@@ -108,7 +108,7 @@
 
 .combo-box {
     -fx-background-color: -rv-control;
-    -fx-background-radius: 8;
+    -fx-background-radius: 6;
     -fx-font-size: 12px;
 }
 

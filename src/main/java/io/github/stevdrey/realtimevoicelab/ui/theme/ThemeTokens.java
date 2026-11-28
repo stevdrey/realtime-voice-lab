@@ -1,5 +1,6 @@
 package io.github.stevdrey.realtimevoicelab.ui.theme;
 
+import java.util.EnumMap;
 import java.util.Map;
 
 /** Immutable candidate theme. Resolve it with {@link ThemeValidator} before use. */
@@ -36,7 +37,16 @@ public record ThemeTokens(
             new Density(40, 60));
 
     public ThemeTokens {
-        colors = colors == null ? Map.of() : Map.copyOf(colors);
+        // Null roles or values count as missing so ThemeValidator can report them and fall back.
+        var present = new EnumMap<ColorRole, Rgb>(ColorRole.class);
+        if (colors != null) {
+            colors.forEach((role, color) -> {
+                if (role != null && color != null) {
+                    present.put(role, color);
+                }
+            });
+        }
+        colors = Map.copyOf(present);
     }
 
     public static ThemeTokens defaults() {

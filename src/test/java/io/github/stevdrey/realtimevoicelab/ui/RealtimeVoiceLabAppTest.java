@@ -254,6 +254,9 @@ class RealtimeVoiceLabAppTest {
                         workspace.getBackground().getFills().getFirst().getRadii().getTopLeftHorizontalRadius());
                 assertEquals(theme.radii().panel(),
                         panel.getBackground().getFills().getFirst().getRadii().getTopLeftHorizontalRadius());
+                var modelSelector = (Region) scene.lookup("#model-selector");
+                assertEquals(theme.radii().control(),
+                        modelSelector.getBackground().getFills().getFirst().getRadii().getTopLeftHorizontalRadius());
                 assertEquals(theme.typography().title(), title.getFont().getSize());
                 assertEquals(theme.typography().body(), composer.getFont().getSize());
                 assertEquals(theme.density().secondaryButton(), settings.getMinWidth());

@@ -63,7 +63,10 @@ public final class ThemeValidator {
                 APP, WORKSPACE, PANEL, CONTROL, DIVIDER, PRIMARY, PRIMARY_HOVER);
         requireContrast(colors, violations, CONTROL_CONTRAST, ON_PRIMARY, PRIMARY, PRIMARY_HOVER);
         requireContrast(colors, violations, CONTROL_CONTRAST, DANGER, CONTROL, DIVIDER, PRIMARY_HOVER);
+        // Toy swatches sit on PANEL, or on APP in the Midnight state.
         requireContrast(colors, violations, CONTROL_CONTRAST, WARNING, APP, PANEL);
+        requireContrast(colors, violations, CONTROL_CONTRAST, SUCCESS, APP);
+        requireContrast(colors, violations, CONTROL_CONTRAST, OUTGOING, APP);
         requireContrast(colors, violations, CONTROL_CONTRAST, MUTED, DIVIDER);
     }
 
