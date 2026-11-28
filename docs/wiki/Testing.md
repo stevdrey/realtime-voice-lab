@@ -77,7 +77,7 @@ Run `./gradlew --offline test --tests '*RealtimeToolCallingTest' --tests '*Realt
 env -u OPENAI_API_KEY ./gradlew --offline test --tests '*RestrictedInterviewerTest' --tests '*RealtimeVoiceLabAppTest'
 ```
 
-The fake socket checks the effective settings, zero provider writes for local redirects, allowed interview turns, rejection of unauthorized function calls, and the shared quota for early signals and terminal calls. The headless JavaFX journey checks preset selection, disabled controls, and the visible local redirect.
+The fake socket checks the effective settings, zero provider writes for local redirects, allowed interview turns, rejection of unauthorized function calls, immediate closure on any early function-call signal (including one without a response ID), and the session quota for terminal calls. The headless JavaFX journey checks preset selection, disabled controls, the visible local redirect, and restoration of the transcription, mode and tool choices after leaving the preset.
 
 ### Optional paid manual smoke
 
