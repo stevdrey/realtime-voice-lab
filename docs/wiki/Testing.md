@@ -14,7 +14,7 @@ The tests cover a two-turn exchange, replacement of streamed text by the termina
 
 ### RVL-003 manual text smoke
 
-After giving explicit opt-in for a paid test, use a dedicated restricted key in the local process environment. Launch `./gradlew --offline run` and use one connection with the default `gpt-realtime-2.1-mini` model. Budget at most three text requests and 60 seconds of connection time for this smoke. The app also enforces the 512-token response cap and 5-minute session limit.
+Follow the [MVP guide's live-test prerequisites and request budget](MVP-Learning-Guide.md#optional-paid-manual-smoke) for the text and cancellation row. The three planned text turns can each trigger one automatic tool follow-up.
 
 1. Verify Send and Cancel are disabled while disconnected. Connect and wait for the Connected status.
 2. Send `Remember this fictional code word: cobalt. Reply OK.` Then send `What was the code word?` Verify that the reply refers to the first turn, that each reply appears in a single entry, and that Send becomes available after each response.
@@ -93,13 +93,18 @@ After explicit opt-in, use a dedicated restricted key from the process environme
 
 Report the model, OS/JDK, scenario outcomes and event counts. Keep transcripts, credentials and personal data out of the evidence. Prompts cannot guarantee scope adherence.
 
-## Opt-in manual smoke across MVP features
-Use a dedicated restricted API key, headphones and own adult or synthetic speech.
-- Connect mini; verify session acknowledgment and text two-turn exchange.
-- Push-to-talk a short question; confirm incremental audio and transcript.
-- Exercise safe workspace tools and invalid arguments.
-- Interrupt active generation and queued playback; verify truncation.
-- Exercise timeout and disconnect; ensure mic/speaker/socket resources close.
-- Check redacted inspector and reported usage vs provider dashboard where available.
+## RVL-014 MVP verification
 
-Never publish transcripts, audio, tokens/keys or personal evidence. Report model/version, transport, OS/JDK, session length, event counts, observed errors, first-audio latency and estimated usage; label unmeasured fields. Define first-audio latency as local monotonic interval from response request (or VAD turn end) to first audio delta; playback start is separate. Compare identical short scenarios, repeated trials, p50/p95 only if sample size documented. No vendor-wide benchmark conclusions from small local experiments.
+Use the [MVP learning and verification guide](MVP-Learning-Guide.md) for the offline build, focused suite, bounded manual smoke checklist, metric definitions and sanitized evidence format.
+
+The RVL-014 focused suite passed 227 cases on Fedora 45 with Temurin 27.0.1.1+4, headless JavaFX, fake transport and synthetic audio devices. The results below describe fixture behavior.
+
+| Journey | Offline evidence |
+| --- | --- |
+| Text and settings | `RealtimeVoiceLabAppTest` exercised streaming and cancellation from the composer, ready gating, and acknowledgment before applying session changes. |
+| Audio and timing | `RealtimeVoiceLabAppTest` exercised capture, progressive playback, and assistant and approximate input transcripts. `RealtimeAudioOutputTest` verified that only the first matching, nonempty playable PCM chunk sets the latency and that a tool follow-up uses its own request time. |
+| Tools and interview | The headless toy panel changed color, theme, and counter after a synthetic voice tool call. `RealtimeToolCallingTest` rejected invalid arguments without changing the workspace. `RestrictedInterviewerTest` exercised local redirects and shutdown on a provider function call. |
+| Interrupt and close | `RealtimeBargeInTest` verified one cancellation during generation, no extra cancellation after completion, and truncation acknowledgment before the next response. The headless journeys verified window-close cleanup for recording and playback. `RealtimeSafetyTest` exercised session and close deadlines with synthetic time. |
+| Inspector and usage | `EventInspectorTest` checked redaction, PCM byte counts, and eviction. `RealtimeUsageTest` checked synthetic token pricing, quotas and cutoff behavior. |
+
+Live text, physical audio, provider behavior and billing were unmeasured for RVL-014.

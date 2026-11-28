@@ -8,6 +8,7 @@ This is a local, single-user learning application, not a production assistant. A
 - [Roadmap and backlog](Roadmap.md)
 - [Realtime protocol](Realtime-Protocol.md)
 - [Security, privacy and cost](Security-and-Cost.md)
+- [MVP learning and verification guide](MVP-Learning-Guide.md)
 - [Testing and evaluation](Testing.md)
 - [Architecture decisions](Architecture-Decisions.md)
 - [Contributing and agent workflow](Contributing.md)
