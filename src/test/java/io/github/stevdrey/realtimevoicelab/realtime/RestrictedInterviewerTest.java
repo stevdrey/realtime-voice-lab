@@ -1,6 +1,9 @@
 package io.github.stevdrey.realtimevoicelab.realtime;
 
 import java.net.http.WebSocket;
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -9,11 +12,13 @@ import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.State;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TranscriptionModel;
 import io.github.stevdrey.realtimevoicelab.realtime.RealtimeSession.TurnState;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Model;
+import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.ToolPreset;
 import io.github.stevdrey.realtimevoicelab.realtime.SessionSettings.Voice;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -23,7 +28,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RestrictedInterviewerTest {
     private static final SessionSettings INTERVIEW = SessionSettings.restrictedInterviewer(Model.MINI, Voice.MARIN);
     private final FakeTransport transport = new FakeTransport();
-    private final RealtimeSession session = new RealtimeSession(transport, () -> {});
+    private CompletableFuture<Void> phaseDeadline;
+    private final RealtimeSession session = new RealtimeSession(transport, () -> {},
+            Duration.ofSeconds(15), Duration.ofSeconds(3), () -> 0, delay -> phaseDeadline = new CompletableFuture<>());
     private final ObjectMapper json = new ObjectMapper();
 
     @AfterEach
@@ -157,6 +164,90 @@ class RestrictedInterviewerTest {
         assertEquals(new RealtimeSession.Status(State.ERROR, Failure.RESTRICTED_TOOL_CALL), session.status());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"response.function_call_arguments.delta", "response.output_item.added",
+            "response.output_item.done"})
+    void closesOnEarlyFunctionCallEvidenceAndSettlesUsageDuringShutdown(String type) throws Exception {
+        var socket = connectInterview();
+        requestResponse(socket, "start", "reply");
+        socket.cancelWrite = new CompletableFuture<>();
+        var signal = earlyFunctionCall(type);
+        socket.text(signal.toString(), true);
+
+        assertEquals(State.CLOSING, session.status().state());
+        var blocked = session.workspace().turns().getLast();
+        assertEquals(TurnState.BLOCKED, blocked.state());
+        assertTrue(blocked.output().contains("Return to the interview"));
+        assertFalse(session.sendText("start"));
+        assertEquals(4, socket.writes.size());
+        assertEquals(SessionProtocol.CANCEL_RESPONSE.message(), socket.writes.getLast());
+        assertTrue(session.workspace().usage().pending());
+        var deadline = phaseDeadline;
+
+        socket.text(signal.toString(), true);
+        signal(socket, "call-1", "reply");
+        var done = completed("reply");
+        var response = (ObjectNode) done.path("response");
+        response.put("status", "cancelled").putObject("usage").put("input_tokens", 0).put("output_tokens", 1)
+                .putObject("output_token_details").put("text_tokens", 1);
+        socket.text(done.toString(), true);
+
+        assertEquals(State.CLOSING, session.status().state());
+        assertFalse(session.workspace().usage().pending());
+        assertEquals(1, session.workspace().usage().reportedOutputTokens());
+        assertEquals(blocked, session.workspace().turns().getLast());
+        assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+        assertEquals(4, socket.writes.size());
+        assertEquals(0, socket.closeWrites);
+
+        assertTrue(deadline.completeExceptionally(new TimeoutException()));
+        assertTrue(socket.aborted);
+        assertEquals(new RealtimeSession.Status(State.ERROR, Failure.RESTRICTED_TOOL_CALL), session.status());
+    }
+
+    @Test
+    void allowsOrdinaryResponseItemsInRestrictedMode() throws Exception {
+        var socket = connectInterview();
+        requestResponse(socket, "start", "reply");
+        var done = completed("reply");
+        for (var type : new String[]{"response.output_item.added", "response.output_item.done"}) {
+            var event = json.createObjectNode().put("type", type).put("response_id", "reply").put("output_index", 0);
+            event.set("item", done.at("/response/output/0"));
+            socket.text(event.toString(), true);
+        }
+        socket.text(done.toString(), true);
+
+        assertEquals(State.READY, session.status().state());
+        assertEquals(TurnState.COMPLETED, session.workspace().turns().getLast().state());
+        assertTrue(session.workspace().canSend());
+        assertEquals(3, socket.writes.size());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ToolPreset.class, names = {"DEMO_COUNTER", "TOY_WORKSPACE"})
+    void chargesOnlyCompletionSignalsToTheQuotaInOtherPresets(ToolPreset tools) {
+        var settings = new SessionSettings(Model.MINI, Voice.MARIN, SessionSettings.Mode.TEXT,
+                SessionSettings.DEFAULT.instructions(), SessionSettings.TurnDetection.MANUAL, tools);
+        assertTrue(session.configure(settings, State.DISCONNECTED));
+        session.connectSelected(TranscriptionModel.OFF);
+        var socket = openSocket();
+        socket.updated(settings, null);
+
+        for (int index = 0; index < RealtimeSession.MAX_TOOL_CALLS; index++) {
+            socket.text(earlyFunctionCall("response.output_item.added").toString(), true);
+            socket.text(earlyFunctionCall("response.function_call_arguments.delta").toString(), true);
+            socket.text(earlyFunctionCall("response.output_item.done").toString(), true);
+            signal(socket, "call-" + index, "reply");
+        }
+        assertEquals(State.READY, session.status().state());
+        assertEquals(1, socket.writes.size());
+        assertEquals(ToyWorkspace.DEFAULT, session.workspace().toy());
+
+        signal(socket, "over-quota", "reply");
+        socket.peerClose(WebSocket.NORMAL_CLOSURE, "");
+        assertEquals(new RealtimeSession.Status(State.ERROR, Failure.TOOL_LIMIT), session.status());
+    }
+
     @Test
     void reportsTheBlockedCallBeforeAConcurrentOutputLimit() throws Exception {
         var socket = connectInterview();
@@ -255,6 +346,16 @@ class RestrictedInterviewerTest {
     private void addCall(ObjectNode event, String callId, String tool) {
         event.withArray("/response/output").addObject().put("type", "function_call").put("status", "completed")
                 .put("call_id", callId).put("name", tool).put("arguments", "{\"theme\":\"midnight\"}");
+    }
+
+    private ObjectNode earlyFunctionCall(String type) {
+        var event = json.createObjectNode().put("type", type).put("response_id", "reply").put("output_index", 0);
+        if ("response.function_call_arguments.delta".equals(type)) {
+            event.put("item_id", "tool-1").put("call_id", "call-1").put("delta", "{}");
+        } else {
+            event.putObject("item").put("type", "function_call").put("id", "tool-1").put("call_id", "call-1");
+        }
+        return event;
     }
 
     private void signal(FakeTransport.Socket socket, String callId, String responseId) {

@@ -1191,22 +1191,28 @@ public final class RealtimeSession implements AutoCloseable {
                     statusChanged.run();
                 }
             }
-            case "response.function_call_arguments.done" -> {
+            case "response.function_call_arguments.delta", "response.function_call_arguments.done" -> {
                 if (status.state() == State.READY) {
-                    var signal = protocol.textEvent(message);
-                    var responseId = signal.path("response_id").textValue();
-                    var callId = signal.path("call_id").textValue();
-                    // These signals may also come from cancelled responses. Count them without dispatching.
-                    if (!attempt.toolCalls.recordSignal(
-                            responseId != null && responseId.length() <= SessionProtocol.MAX_ID_CHARS
-                                    ? responseId : null,
-                            localTools.validCallId(callId) ? callId : null)) {
-                        stopAtLimit(attempt, Failure.TOOL_LIMIT);
-                    } else if (settings.restrictedInterviewer()) {
-                        // Any signal proves a call, even when it cannot be correlated with a response.
-                        blockRestrictedTurn(attempt);
-                        stopAtLimit(attempt, Failure.RESTRICTED_TOOL_CALL);
+                    if (settings.restrictedInterviewer()) {
+                        closeOnRestrictedToolSignal(attempt);
+                    } else if ("response.function_call_arguments.done".equals(event.type())) {
+                        var signal = protocol.textEvent(message);
+                        var responseId = signal.path("response_id").textValue();
+                        var callId = signal.path("call_id").textValue();
+                        // Completion signals may also come from cancelled responses. Count them without dispatching.
+                        if (!attempt.toolCalls.recordSignal(
+                                responseId != null && responseId.length() <= SessionProtocol.MAX_ID_CHARS
+                                        ? responseId : null,
+                                localTools.validCallId(callId) ? callId : null)) {
+                            stopAtLimit(attempt, Failure.TOOL_LIMIT);
+                        }
                     }
+                }
+            }
+            case "response.output_item.added", "response.output_item.done" -> {
+                if (status.state() == State.READY && settings.restrictedInterviewer()
+                        && "function_call".equals(protocol.textEvent(message).path("item").path("type").textValue())) {
+                    closeOnRestrictedToolSignal(attempt);
                 }
             }
             case "response.output_audio.done", "response.output_audio_transcript.delta",
@@ -1778,6 +1784,16 @@ public final class RealtimeSession implements AutoCloseable {
             return Failure.SPEND_ESTIMATE_UNAVAILABLE;
         }
         return attempt.usage.reachedCutoff(pricing.cutoff()) ? Failure.SPEND_LIMIT : null;
+    }
+
+    private void closeOnRestrictedToolSignal(Attempt attempt) {
+        // Charge the first signal. Closing prevents subsequent fragments from being counted.
+        if (!attempt.toolCalls.recordSignal(null, null)) {
+            stopAtLimit(attempt, Failure.TOOL_LIMIT);
+            return;
+        }
+        blockRestrictedTurn(attempt);
+        stopAtLimit(attempt, Failure.RESTRICTED_TOOL_CALL);
     }
 
     private void blockRestrictedTurn(Attempt attempt) {
