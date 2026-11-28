@@ -38,6 +38,36 @@ class RealtimeAudioOutputTest {
     }
 
     @Test
+    void measuresLatencyFromTheVoiceRequestToItsFirstPlayablePcm() throws Exception {
+        var clock = new AtomicLong();
+        try (var session = session(clock)) {
+            var socket = ready(session, TranscriptionModel.OFF);
+            int writesBeforeRecording = socket.writes.size();
+            record(session);
+            await(() -> socket.writes.size() == writesBeforeRecording + 2);
+            assertEquals("input_audio_buffer.commit", json.readTree(socket.writes.getLast()).path("type").textValue());
+
+            clock.set(Duration.ofMillis(750).toNanos());
+            committed(socket, "input-1");
+            bindVoiceResponse(socket, "reply-1");
+
+            var pcm = microphone.block(1);
+            clock.set(Duration.ofMillis(800).toNanos());
+            socket.text(audio("unrelated", pcm), true);
+            socket.text(audio("reply-1", new byte[0]), true);
+            assertNull(session.workspace().audioLatency());
+
+            clock.set(Duration.ofMillis(875).toNanos());
+            socket.text(audio("reply-1", pcm), true);
+            assertEquals(Duration.ofMillis(125), session.workspace().audioLatency());
+
+            clock.set(Duration.ofMillis(950).toNanos());
+            socket.text(audio("reply-1", pcm), true);
+            assertEquals(Duration.ofMillis(125), session.workspace().audioLatency());
+        }
+    }
+
+    @Test
     void playsFragmentedPcmProgressivelyInOrderAndFinishesAfterDeviceDrains() throws Exception {
         try (var session = session(speaker.playback())) {
             var socket = ready(session, TranscriptionModel.OFF);
@@ -122,12 +152,15 @@ class RealtimeAudioOutputTest {
 
     @Test
     void playsBothVoiceResponsesAndKeepsTheirTranscriptsInOneTurnAfterAToolCall() throws Exception {
-        try (var session = session(speaker.playback())) {
+        var clock = new AtomicLong();
+        try (var session = session(clock)) {
             var socket = ready(session, TranscriptionModel.OFF);
             startVoice(session, socket, "input-1", "initial");
             var first = microphone.block(0);
             var second = microphone.block(1);
+            clock.set(Duration.ofMillis(110).toNanos());
             socket.text(audio("initial", first), true);
+            assertEquals(Duration.ofMillis(110), session.workspace().audioLatency());
             transcript(socket, "done", 0, "First.", "initial");
             socket.text(output("response.output_audio.done", "initial", 0, ""), true);
             var toolItem = toolOutput(socket);
@@ -136,10 +169,14 @@ class RealtimeAudioOutputTest {
             assertEquals(7, json.readTree(toolItem.path("output").textValue()).path("value").intValue());
             assertFalse(session.workspace().canSend());
             int writesBeforeFollowUp = socket.writes.size();
+            clock.set(Duration.ofMillis(350).toNanos());
             acknowledgeToolOutput(socket, toolItem);
             await(() -> socket.writes.size() > writesBeforeFollowUp);
             bindVoiceFollowUp(socket);
+            assertEquals(Duration.ofMillis(110), session.workspace().audioLatency());
+            clock.set(Duration.ofMillis(390).toNanos());
             socket.text(audio("follow_up", second).replace("assistant-item", "second-assistant-item"), true);
+            assertEquals(Duration.ofMillis(40), session.workspace().audioLatency());
             transcript(socket, "done", 0, "Seven.", "follow_up");
             responseDone(socket, "follow_up", "completed");
 
@@ -810,6 +847,11 @@ class RealtimeAudioOutputTest {
         return new RealtimeSession(transport, () -> {}, microphone.microphone(), playback);
     }
 
+    private RealtimeSession session(AtomicLong clock) {
+        return new RealtimeSession(transport, () -> {}, Duration.ofSeconds(15), Duration.ofSeconds(3),
+                clock::get, nanos -> new CompletableFuture<>(), microphone.microphone(), speaker.playback());
+    }
+
     private RealtimeSession session(SpeakerPlayback playback, Runnable changed, List<Deadline> deadlines) {
         return new RealtimeSession(transport, changed, Duration.ofSeconds(15), Duration.ofSeconds(3),
                 System::nanoTime, nanos -> {
@@ -833,6 +875,10 @@ class RealtimeAudioOutputTest {
         record(session);
         await(() -> socket.writes.size() == previousWrites + 2);
         committed(socket, itemId);
+        bindVoiceResponse(socket, responseId);
+    }
+
+    private void bindVoiceResponse(FakeTransport.Socket socket, String responseId) throws Exception {
         var response = json.readTree(socket.writes.getLast()).path("response");
         assertEquals("audio", response.at("/output_modalities/0").asText());
         socket.text("""
