@@ -50,7 +50,8 @@ public final class ThemeValidator {
         requireContrast(colors, violations, TEXT_CONTRAST, TEXT, APP, WORKSPACE, PANEL, CONTROL, DIVIDER);
         requireContrast(colors, violations, TEXT_CONTRAST, SECONDARY, WORKSPACE, PANEL, CONTROL, DIVIDER);
         requireContrast(colors, violations, TEXT_CONTRAST, MUTED, APP, WORKSPACE, PANEL, CONTROL);
-        requireContrast(colors, violations, TEXT_CONTRAST, HEADING, PANEL);
+        // The toy workspace's Midnight state uses the APP background.
+        requireContrast(colors, violations, TEXT_CONTRAST, HEADING, PANEL, APP);
         requireContrast(colors, violations, TEXT_CONTRAST, SUCCESS, WORKSPACE, PANEL, CONTROL);
         requireContrast(colors, violations, TEXT_CONTRAST, OUTGOING, PANEL, CONTROL);
         requireContrast(colors, violations, TEXT_CONTRAST, DANGER, WORKSPACE);

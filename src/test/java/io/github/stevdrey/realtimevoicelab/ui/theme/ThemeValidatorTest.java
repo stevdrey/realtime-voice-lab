@@ -3,6 +3,7 @@ package io.github.stevdrey.realtimevoicelab.ui.theme;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
@@ -90,6 +91,22 @@ class ThemeValidatorTest {
         assertTrue(resolved.violations().contains("TEXT / PANEL contrast must be at least 4.5:1"));
         assertTrue(resolved.violations().contains("FOCUS / PRIMARY contrast must be at least 3.0:1"));
         assertTrue(resolved.violations().contains("ON_PRIMARY / PRIMARY_HOVER contrast must be at least 3.0:1"));
+    }
+
+    @Test
+    void fallsBackWhenHeadingContrastPassesOnSlateButFailsOnMidnight() {
+        var colors = new EnumMap<>(defaults.colors());
+        colors.put(ColorRole.APP, new Rgb(0x383838));
+        colors.put(ColorRole.ACCENT, new Rgb(0xa0a0ff));
+        colors.put(ColorRole.HEADING, new Rgb(0x909090));
+        var candidate = new ThemeTokens(colors, defaults.typography(), defaults.spacing(), defaults.radii(),
+                defaults.density());
+
+        var resolved = ThemeValidator.resolve(candidate);
+
+        assertTrue(resolved.usesFallback());
+        assertSame(defaults, resolved.theme());
+        assertEquals(List.of("HEADING / APP contrast must be at least 4.5:1"), resolved.violations());
     }
 
     @Test
