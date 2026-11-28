@@ -64,7 +64,7 @@ final class WorkspaceTheme {
                 %s    -fx-font-family: "%s";
                     -fx-font-size: %dpx;
                 }
-                .app-title { -fx-font-size: %dpx; }
+                .app-title, .dialog-title { -fx-font-size: %dpx; }
                 .caption, .session-status, .combo-box, .panel-title, .event-inspector .list-cell,
                 .event-inspector .titled-pane { -fx-font-size: %dpx; }
                 .metric-value { -fx-font-size: %dpx; }
@@ -74,9 +74,11 @@ final class WorkspaceTheme {
                 + String.format(Locale.ROOT, """
                 .app-shell, .workspace { -fx-padding: %4$dpx; -fx-spacing: %3$dpx; }
                 .app-header { -fx-padding: 0 %1$dpx; }
-                .lab-panel, .theme-panel { -fx-padding: %3$dpx; }
-                .lab-panel, .session-toolbar, .composer-actions, .theme-panel { -fx-spacing: %2$dpx; }
-                .theme-actions { -fx-hgap: %2$dpx; -fx-vgap: %1$dpx; }
+                .lab-panel { -fx-padding: %3$dpx; }
+                .theme-dialog { -fx-padding: %4$dpx; -fx-spacing: %3$dpx; }
+                .lab-panel, .session-toolbar, .composer-actions, .theme-fields, .theme-actions {
+                    -fx-spacing: %2$dpx;
+                }
                 .toy-workspace { -fx-padding: %2$dpx %3$dpx; }
                 .conversation-turn { -fx-spacing: %1$dpx; -fx-padding: %2$dpx; }
                 .audio-controls, .workspace-footer { -fx-spacing: %4$dpx; }
@@ -88,8 +90,8 @@ final class WorkspaceTheme {
                     -fx-background-radius: %1$dpx;
                     -fx-border-radius: %1$dpx;
                 }
-                .theme-panel .combo-box > .arrow-button { -fx-background-radius: 0 %1$dpx %1$dpx 0; }
-                .lab-panel, .theme-panel, .toy-workspace {
+                .theme-dialog .combo-box > .arrow-button { -fx-background-radius: 0 %1$dpx %1$dpx 0; }
+                .lab-panel, .theme-dialog, .toy-workspace {
                     -fx-background-radius: %2$dpx; -fx-border-radius: %2$dpx;
                 }
                 .workspace { -fx-background-radius: %3$dpx; }

@@ -37,7 +37,6 @@ import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
-import javafx.scene.control.ToggleButton;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -99,7 +98,7 @@ public final class WorkspaceController {
     @FXML
     private VBox root;
 
-    @FXML private ToggleButton themeToggle;
+    @FXML private Button themeButton;
     @FXML private ThemeProfilesController themeProfilesController;
 
     @FXML
@@ -191,7 +190,7 @@ public final class WorkspaceController {
 
     @FXML
     private void initialize() {
-        themeProfilesController.attach(themeToggle, themeProfiles, theme);
+        themeProfilesController.attach(themeButton, root, themeProfiles, theme);
         elapsedTimer.setCycleCount(Timeline.INDEFINITE);
         costState.managedProperty().bind(costState.visibleProperty());
         transcriptionCost.managedProperty().bind(transcriptionCost.visibleProperty());

@@ -59,7 +59,7 @@
     -fx-text-fill: -rv-text;
 }
 
-.app-title {
+.app-title, .dialog-title {
     -fx-font-weight: 600;
 }
 
@@ -101,12 +101,12 @@
     -fx-background-color: -rv-secondary;
 }
 
-.theme-panel .combo-box > .arrow-button {
+.theme-dialog .combo-box > .arrow-button {
     -fx-background-color: -rv-control;
     -fx-background-insets: 0;
 }
 
-.theme-panel .combo-box > .arrow-button:hover {
+.theme-dialog .combo-box > .arrow-button:hover {
     -fx-background-color: -rv-divider;
 }
 
@@ -134,7 +134,11 @@
     -fx-padding: 0 6 0 6;
 }
 
-.lab-panel, .theme-panel {
+.theme-overlay {
+    -fx-background-color: rgba(0, 0, 0, 0.48);
+}
+
+.lab-panel, .theme-dialog {
     -fx-background-color: -rv-panel;
     -fx-border-color: -rv-divider;
 }
@@ -178,7 +182,7 @@
     -fx-highlight-text-fill: -rv-app;
 }
 
-.text-action:hover, .text-action:pressed, .text-action:selected {
+.text-action:hover, .text-action:pressed {
     -fx-background-color: -rv-divider;
 }
 

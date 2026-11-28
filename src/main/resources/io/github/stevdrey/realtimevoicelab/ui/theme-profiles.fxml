@@ -3,20 +3,32 @@
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
-<?import javafx.scene.layout.FlowPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
 
-<VBox fx:id="panel" xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1"
+<StackPane fx:id="overlay" id="theme-overlay" xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="io.github.stevdrey.realtimevoicelab.ui.ThemeProfilesController"
-      styleClass="theme-panel" maxWidth="640" maxHeight="-Infinity">
-    <FlowPane fx:id="actions" alignment="CENTER_LEFT" styleClass="theme-actions">
-        <Button id="theme-ocean" text="Use Ocean" onAction="#useOcean" styleClass="text-action"/>
-        <Button id="theme-reset" text="Reset to default" onAction="#reset" styleClass="text-action"/>
-        <ComboBox fx:id="profile" id="theme-profile" editable="true" prefWidth="180"
-                  promptText="Profile name" accessibleText="Theme profile name"/>
-        <Button id="theme-load" text="Load" onAction="#load" styleClass="text-action"/>
-        <Button id="theme-save" text="Save" onAction="#save" styleClass="text-action"/>
-    </FlowPane>
-    <Label fx:id="status" id="theme-status" text="Default theme applied." styleClass="caption"
-           wrapText="true" minHeight="-Infinity"/>
-</VBox>
+      styleClass="theme-overlay" visible="false" managed="false">
+    <VBox id="theme-dialog" styleClass="theme-dialog" maxWidth="480" maxHeight="-Infinity">
+        <Label text="Theme" styleClass="dialog-title"/>
+        <VBox fx:id="actions" styleClass="theme-fields">
+            <HBox styleClass="theme-actions">
+                <Button id="theme-ocean" text="Use Ocean" onAction="#useOcean" styleClass="text-action"/>
+                <Button id="theme-reset" text="Reset to default" onAction="#reset" styleClass="text-action"/>
+            </HBox>
+            <Label text="Profile name" labelFor="${profile}"/>
+            <HBox alignment="CENTER_LEFT" styleClass="theme-actions">
+                <ComboBox fx:id="profile" id="theme-profile" editable="true" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                          accessibleText="Theme profile name"/>
+                <Button id="theme-load" text="Load" onAction="#load" styleClass="text-action"/>
+                <Button id="theme-save" text="Save" onAction="#save" styleClass="text-action"/>
+            </HBox>
+        </VBox>
+        <Label fx:id="status" id="theme-status" text="Default theme applied." styleClass="caption"
+               wrapText="true" minHeight="-Infinity"/>
+        <HBox alignment="CENTER_RIGHT">
+            <Button fx:id="closeButton" id="theme-close" text="Close" onAction="#close" styleClass="text-action"/>
+        </HBox>
+    </VBox>
+</StackPane>

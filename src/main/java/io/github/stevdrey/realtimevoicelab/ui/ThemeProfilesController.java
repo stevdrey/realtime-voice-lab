@@ -11,10 +11,12 @@ import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeProfileStore.InvalidPro
 import io.github.stevdrey.realtimevoicelab.ui.theme.ThemeTokens;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
+import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
-import javafx.scene.control.ToggleButton;
-import javafx.scene.layout.FlowPane;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
 public final class ThemeProfilesController {
@@ -22,28 +24,55 @@ public final class ThemeProfilesController {
             Executors.newSingleThreadExecutor(Thread.ofVirtual().name("rvl-theme-profiles").factory());
     private ThemeProfileStore store;
     private WorkspaceTheme theme;
+    private Button opener;
+    private VBox workspace;
     private Task<?> pending;
 
-    @FXML private VBox panel;
-    @FXML private FlowPane actions;
+    @FXML private StackPane overlay;
+    @FXML private VBox actions;
     @FXML private ComboBox<String> profile;
     @FXML private Label status;
+    @FXML private Button closeButton;
 
-    void attach(ToggleButton toggle, ThemeProfileStore store, WorkspaceTheme theme) {
+    void attach(Button opener, VBox workspace, ThemeProfileStore store, WorkspaceTheme theme) {
+        this.opener = opener;
+        this.workspace = workspace;
         this.store = store;
         this.theme = theme;
-        panel.visibleProperty().bind(toggle.selectedProperty());
-        panel.managedProperty().bind(panel.visibleProperty());
+        overlay.managedProperty().bind(overlay.visibleProperty());
         profile.getEditor().setTextFormatter(TextInputLimit.formatter(ThemeProfileStore.MAX_NAME_LENGTH));
-        toggle.selectedProperty().addListener((observable, previous, open) -> {
-            if (open && pending == null) {
-                runIo(store::names, names -> {
-                    var typedName = profile.getEditor().getText();
-                    profile.getItems().setAll(names);
-                    profile.getEditor().setText(typedName);
-                });
+        opener.setOnAction(event -> open());
+        overlay.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.ESCAPE) {
+                if (profile.isShowing()) {
+                    profile.hide();
+                } else {
+                    close();
+                }
+                event.consume();
             }
         });
+    }
+
+    private void open() {
+        // Stay in the same window so the session's focus-loss handler does not stop capture.
+        overlay.setVisible(true);
+        workspace.setDisable(true);
+        closeButton.requestFocus();
+        if (pending == null) {
+            runIo(store::names, names -> {
+                var typedName = profile.getEditor().getText();
+                profile.getItems().setAll(names);
+                profile.getEditor().setText(typedName);
+            });
+        }
+    }
+
+    @FXML
+    private void close() {
+        overlay.setVisible(false);
+        workspace.setDisable(false);
+        opener.requestFocus();
     }
 
     @FXML
@@ -107,7 +136,7 @@ public final class ThemeProfilesController {
     }
 
     private void apply(ThemeTokens tokens, String message) {
-        boolean applied = theme.apply(panel.getScene(), tokens);
+        boolean applied = theme.apply(overlay.getScene(), tokens);
         status.setText(applied ? message : "Theme is invalid. Default theme applied.");
     }
 

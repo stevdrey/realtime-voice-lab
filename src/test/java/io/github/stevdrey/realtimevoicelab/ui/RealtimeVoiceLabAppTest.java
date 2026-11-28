@@ -50,7 +50,6 @@ import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TitledPane;
-import javafx.scene.control.ToggleButton;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -237,11 +236,21 @@ class RealtimeVoiceLabAppTest {
             onFxThread(() -> {
                 new RealtimeVoiceLabApp().start(stage, new FakeTransport(), new FakeMicrophone().microphone(),
                         new FakeSpeaker().playback(), stage.focusedProperty(), store);
-                ((ToggleButton) stage.getScene().lookup("#theme-toggle")).fire();
+                themeButton(stage, "#theme-button").fire();
+                stage.requestFocus();
                 return null;
             });
             awaitOnFxThread(() -> themeProfile(stage).getItems().equals(List.of("broken", "custom")),
                     "Saved profiles were not discovered on startup");
+            awaitOnFxThread(stage::isFocused, "Workspace never received focus");
+            onFxThread(() -> {
+                assertTrue(connectButton(stage).isDisabled(), "The underlying workspace accepted input");
+                assertSame(themeButton(stage, "#theme-close"), stage.getScene().getFocusOwner());
+                new Robot().keyType(KeyCode.TAB);
+                return null;
+            });
+            awaitOnFxThread(() -> themeButton(stage, "#theme-ocean").isFocused(),
+                    "Tab from Close did not wrap inside the modal");
             onFxThread(() -> {
                 themeProfile(stage).setValue("custom");
                 themeButton(stage, "#theme-load").fire();
@@ -286,12 +295,12 @@ class RealtimeVoiceLabAppTest {
                     assertTrue(bounds.getMinY() >= 0 && bounds.getMaxY() <= scene.getHeight(),
                             () -> selector + " extends outside the scene: " + bounds);
                 }
-                var themePanel = scene.lookup(".theme-panel");
-                var toolbar = scene.lookup(".session-toolbar");
-                var waveform = scene.lookup(".waveform");
-                var themeBounds = themePanel.localToScene(themePanel.getBoundsInLocal());
-                assertTrue(themeBounds.getMinY() >= toolbar.localToScene(toolbar.getBoundsInLocal()).getMaxY());
-                assertTrue(themeBounds.getMaxY() <= waveform.localToScene(waveform.getBoundsInLocal()).getMinY());
+                var dialog = scene.lookup("#theme-dialog");
+                var themeBounds = dialog.localToScene(dialog.getBoundsInLocal());
+                assertEquals(scene.getWidth() / 2, themeBounds.getCenterX(), 1);
+                assertEquals(scene.getHeight() / 2, themeBounds.getCenterY(), 1);
+                assertTrue(themeBounds.getWidth() < scene.getWidth());
+                assertTrue(themeBounds.getHeight() < scene.getHeight());
                 themeProfile(stage).setValue("broken");
                 themeButton(stage, "#theme-load").fire();
                 return null;
@@ -308,6 +317,26 @@ class RealtimeVoiceLabAppTest {
                 assertEquals("Default theme applied.", themeStatus(stage));
                 assertEquals(60, ((Button) scene.lookup("#mic-button")).getMinWidth());
                 assertEquals(2, scene.getStylesheets().size());
+                themeProfile(stage).requestFocus();
+                themeProfile(stage).show();
+                return null;
+            });
+            awaitOnFxThread(() -> themeProfile(stage).isShowing(), "Profile choices did not open");
+            onFxThread(() -> {
+                new Robot().keyType(KeyCode.ESCAPE);
+                return null;
+            });
+            awaitOnFxThread(() -> !themeProfile(stage).isShowing(), "Escape did not dismiss the profile choices");
+            onFxThread(() -> {
+                assertTrue(stage.getScene().lookup("#theme-overlay").isVisible());
+                new Robot().keyType(KeyCode.ESCAPE);
+                return null;
+            });
+            awaitOnFxThread(() -> !stage.getScene().lookup("#theme-overlay").isVisible(),
+                    "Escape did not close the theme modal");
+            onFxThread(() -> {
+                assertSame(themeButton(stage, "#theme-button"), stage.getScene().getFocusOwner());
+                assertFalse(connectButton(stage).isDisabled());
                 return null;
             });
             assertEquals(custom, new ThemeProfileStore(directory).load("custom"));
@@ -353,7 +382,7 @@ class RealtimeVoiceLabAppTest {
             awaitOnFxThread(stage::isFocused, "Workspace never received focus");
             onFxThread(() -> {
                 ((Button) stage.getScene().lookup("#mic-button")).fire();
-                ((ToggleButton) stage.getScene().lookup("#theme-toggle")).fire();
+                themeButton(stage, "#theme-button").fire();
                 return null;
             });
             microphone.queueBlocks(5);
@@ -378,8 +407,19 @@ class RealtimeVoiceLabAppTest {
                 return null;
             });
             awaitOnFxThread(() -> themeStatus(stage).startsWith("Saved"), "Profile was not saved");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-close").requestFocus();
+                new Robot().keyType(KeyCode.ESCAPE);
+                return null;
+            });
+            awaitOnFxThread(() -> !stage.getScene().lookup("#theme-overlay").isVisible(),
+                    "Escape did not dismiss the modal during VAD capture");
+            onFxThread(() -> {
+                assertSame(themeButton(stage, "#theme-button"), stage.getScene().getFocusOwner());
+                return null;
+            });
             microphone.queueBlocks(5);
-            awaitOnFxThread(() -> socket.writes.size() == 3, "VAD did not continue sending audio after theme apply");
+            awaitOnFxThread(() -> socket.writes.size() == 3, "VAD did not continue after applying a theme and closing the modal");
             assertEquals(0, microphone.closes.get());
 
             for (var type : List.of("speech_started", "speech_stopped", "committed")) {
@@ -397,11 +437,21 @@ class RealtimeVoiceLabAppTest {
             var device = speaker.devices.getFirst();
             var writes = List.copyOf(socket.writes);
             onFxThread(() -> {
+                themeButton(stage, "#theme-button").fire();
+                return null;
+            });
+            awaitOnFxThread(() -> !themeButton(stage, "#theme-load").isDisabled(), "Theme controls did not reopen");
+            onFxThread(() -> {
                 themeButton(stage, "#theme-reset").fire();
                 themeButton(stage, "#theme-load").fire();
                 return null;
             });
             awaitOnFxThread(() -> themeStatus(stage).startsWith("Loaded"), "Profile did not reload during playback");
+            onFxThread(() -> {
+                themeButton(stage, "#theme-close").fire();
+                assertFalse(stage.getScene().lookup("#theme-overlay").isVisible());
+                return null;
+            });
             assertFalse(device.closed || device.stopped || device.flushed);
             device.playBufferedFrames();
             sendVoiceChunk(socket, 1, pcm);
