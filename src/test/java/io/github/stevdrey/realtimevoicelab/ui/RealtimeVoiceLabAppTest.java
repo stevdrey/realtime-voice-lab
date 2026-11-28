@@ -7,6 +7,7 @@ import java.util.ArrayDeque;
 import java.util.Base64;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -67,6 +68,8 @@ import javafx.stage.Window;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -434,6 +437,30 @@ class RealtimeVoiceLabAppTest {
     @SuppressWarnings("unchecked")
     private ComboBox<String> themeProfile(Stage stage) {
         return (ComboBox<String>) stage.getScene().lookup("#theme-profile");
+    }
+
+    @Test
+    @ResourceLock(Resources.LOCALE)
+    void rendersThemeDimensionsWithAnArabicFormatLocale() throws Exception {
+        var original = Locale.getDefault(Locale.Category.FORMAT);
+        try {
+            Locale.setDefault(Locale.Category.FORMAT, Locale.forLanguageTag("ar-EG"));
+            withWindow(stage -> {
+                var scene = stage.getScene();
+                scene.getRoot().applyCss();
+                var theme = ThemeTokens.defaults();
+                var title = (Label) scene.lookup(".app-title");
+                var workspace = (Region) scene.lookup(".workspace");
+                var mic = (Button) scene.lookup("#mic-button");
+                assertEquals(theme.typography().title(), title.getFont().getSize());
+                assertEquals(theme.spacing().large(), workspace.getPadding().getTop());
+                assertEquals(theme.radii().workspace(),
+                        workspace.getBackground().getFills().getFirst().getRadii().getTopLeftHorizontalRadius());
+                assertEquals(theme.density().microphoneButton(), mic.minWidth(-1));
+            });
+        } finally {
+            Locale.setDefault(Locale.Category.FORMAT, original);
+        }
     }
 
     @Test

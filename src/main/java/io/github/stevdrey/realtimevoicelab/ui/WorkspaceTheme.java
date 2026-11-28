@@ -58,8 +58,8 @@ final class WorkspaceTheme {
             case SYSTEM -> "System";
             case SANS_SERIF -> "SansSerif";
         };
-        // JavaFX's converters for fonts, insets and radii need literal sizes here.
-        var css = """
+        // JavaFX needs literal sizes with ASCII digits, regardless of the JVM's format locale.
+        var css = String.format(Locale.ROOT, """
                 .root {
                 %s    -fx-font-family: "%s";
                     -fx-font-size: %dpx;
@@ -69,9 +69,9 @@ final class WorkspaceTheme {
                 .event-inspector .titled-pane { -fx-font-size: %dpx; }
                 .metric-value { -fx-font-size: %dpx; }
                 .metrics:narrow .metric-value { -fx-font-size: %dpx; }
-                """.formatted(colors, font, typography.body(), typography.title(),
+                """, colors, font, typography.body(), typography.title(),
                 typography.caption(), typography.metric(), typography.narrowMetric())
-                + """
+                + String.format(Locale.ROOT, """
                 .app-shell, .workspace { -fx-padding: %4$dpx; -fx-spacing: %3$dpx; }
                 .app-header { -fx-padding: 0 %1$dpx; }
                 .lab-panel, .theme-panel { -fx-padding: %3$dpx; }
@@ -81,8 +81,8 @@ final class WorkspaceTheme {
                 .conversation-turn { -fx-spacing: %1$dpx; -fx-padding: %2$dpx; }
                 .audio-controls, .workspace-footer { -fx-spacing: %4$dpx; }
                 .workspace-footer { -fx-padding: %2$dpx 0 0 0; }
-                """.formatted(spacing.tight(), spacing.small(), spacing.medium(), spacing.large())
-                + """
+                """, spacing.tight(), spacing.small(), spacing.medium(), spacing.large())
+                + String.format(Locale.ROOT, """
                 .combo-box, .text-field, .text-action, .settings-dialog .text-area,
                 .settings-dialog .text-area .content, .event-inspector .titled-pane > .title {
                     -fx-background-radius: %1$dpx;
@@ -93,8 +93,8 @@ final class WorkspaceTheme {
                     -fx-background-radius: %2$dpx; -fx-border-radius: %2$dpx;
                 }
                 .workspace { -fx-background-radius: %3$dpx; }
-                """.formatted(radii.control(), radii.panel(), radii.workspace())
-                + """
+                """, radii.control(), radii.panel(), radii.workspace())
+                + String.format(Locale.ROOT, """
                 .round-control {
                     -fx-min-width: %1$dpx; -fx-min-height: %1$dpx;
                     -fx-pref-width: %1$dpx; -fx-pref-height: %1$dpx;
@@ -103,7 +103,7 @@ final class WorkspaceTheme {
                     -fx-min-width: %2$dpx; -fx-min-height: %2$dpx;
                     -fx-pref-width: %2$dpx; -fx-pref-height: %2$dpx;
                 }
-                """.formatted(density.secondaryButton(), density.microphoneButton());
+                """, density.secondaryButton(), density.microphoneButton());
         return "data:text/css;base64," + Base64.getEncoder().encodeToString(css.getBytes(StandardCharsets.UTF_8));
     }
 

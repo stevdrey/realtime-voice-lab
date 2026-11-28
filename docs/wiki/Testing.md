@@ -134,7 +134,7 @@ env -u OPENAI_API_KEY ./gradlew --offline test \
 env -u OPENAI_API_KEY ./gradlew --offline clean build installDist
 ```
 
-The 24 focused checks and all 321 tests in the clean build passed on Fedora 45 with Temurin 27.0.1.1+4 and headless JavaFX 27.0.1. Profile tests cover named round trips, replacement, corrupt or unsupported definitions, and invalid names. The JavaFX tests cover loaded colors, typography, spacing, radii and control sizes, reset behavior and preservation of the current appearance after a malformed load. The theme panel fits between the session toolbar and waveform at 760 × 520 with the largest supported tokens.
+The 25 focused checks and all 322 tests in the clean build passed on Fedora 45 with Temurin 27.0.1.1+4 and headless JavaFX 27.0.1. Profile tests cover named round trips, replacement, corrupt or unsupported definitions, and invalid names. The JavaFX tests cover loaded colors, typography, spacing, radii and control sizes, reset behavior and preservation of the current appearance after a malformed load. With `ar-EG` as the JVM format locale, the default font size, workspace padding and radius, and microphone target size still match the theme tokens. The theme panel fits between the session toolbar and waveform at 760 × 520 with the largest supported tokens.
 
 The capture and playback journey used a fake socket and synthetic PCM. Applying Ocean from the keyboard and saving a profile preserved the active VAD input. Resetting and loading during a reply preserved playback on the same speaker. The socket saw no theme-triggered writes, and disconnect released both devices.
 
