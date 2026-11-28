@@ -8,13 +8,14 @@
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.SplitPane?>
 <?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.FlowPane?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
 <?import javafx.scene.shape.SVGPath?>
 
-<StackPane xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1">
+<StackPane fx:id="sceneRoot" xmlns="http://javafx.com/javafx/27" xmlns:fx="http://javafx.com/fxml/1">
     <VBox fx:id="root" styleClass="app-shell">
         <HBox spacing="10" styleClass="app-header">
             <SVGPath content="M1 12h3l3-7 4 14 4-16 4 9h4" styleClass="icon"/>
@@ -101,14 +102,15 @@
             </VBox>
 
             <HBox alignment="CENTER_LEFT" styleClass="workspace-footer">
-                <HBox fx:id="toyPanel" id="toy-workspace" alignment="CENTER_LEFT" spacing="12"
+                <FlowPane fx:id="toyPanel" id="toy-workspace" alignment="CENTER_LEFT"
+                      prefWrapLength="440" maxWidth="-Infinity"
                       visible="false" styleClass="toy-workspace">
                     <Label text="TOY WORKSPACE" styleClass="panel-title"/>
                     <Region fx:id="toySwatch" id="toy-swatch" styleClass="toy-swatch"/>
                     <Label fx:id="toyColor" id="toy-color"/>
                     <Label fx:id="toyTheme" id="toy-theme"/>
                     <Label fx:id="toyCounter" id="toy-counter"/>
-                </HBox>
+                </FlowPane>
                 <HBox fx:id="metrics" id="metrics" spacing="16" HBox.hgrow="ALWAYS" styleClass="metrics">
                     <VBox fx:id="latencyMetric" spacing="4" prefWidth="0" HBox.hgrow="ALWAYS">
                         <Label text="Latency" styleClass="caption"/>

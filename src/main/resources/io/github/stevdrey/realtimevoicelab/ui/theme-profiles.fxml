@@ -4,6 +4,7 @@
 <?import javafx.scene.control.ComboBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
 
@@ -27,7 +28,13 @@
         </VBox>
         <Label fx:id="status" id="theme-status" text="Default theme applied." styleClass="caption"
                wrapText="true" minHeight="-Infinity"/>
-        <HBox alignment="CENTER_RIGHT">
+        <HBox alignment="CENTER_LEFT" styleClass="theme-actions">
+            <HBox fx:id="recordingIndicator" id="theme-recording" alignment="CENTER_LEFT"
+                  styleClass="theme-actions" visible="false">
+                <Region id="theme-recording-ring" styleClass="theme-recording-ring"/>
+                <Label fx:id="recordingLabel" id="theme-recording-label" wrapText="true"/>
+            </HBox>
+            <Region HBox.hgrow="ALWAYS"/>
             <Button fx:id="closeButton" id="theme-close" text="Close" onAction="#close" styleClass="text-action"/>
         </HBox>
     </VBox>

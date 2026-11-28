@@ -138,6 +138,17 @@
     -fx-background-color: rgba(0, 0, 0, 0.48);
 }
 
+.theme-recording-ring {
+    -fx-min-width: 14;
+    -fx-min-height: 14;
+    -fx-max-height: 14;
+    -fx-background-color: -rv-primary-hover;
+    -fx-background-radius: 999;
+    -fx-border-color: -rv-danger;
+    -fx-border-width: 2;
+    -fx-border-radius: 999;
+}
+
 .lab-panel, .theme-dialog {
     -fx-background-color: -rv-panel;
     -fx-border-color: -rv-divider;
@@ -275,7 +286,8 @@
 }
 
 .waveform {
-    -fx-min-height: 52;
+    /* Let the waveform yield vertical space to the controls and metrics at short heights. */
+    -fx-min-height: 16;
     -fx-pref-height: 52;
     -fx-padding: 0 12 0 12;
 }

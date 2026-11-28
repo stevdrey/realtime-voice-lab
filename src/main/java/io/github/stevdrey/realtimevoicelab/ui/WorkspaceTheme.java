@@ -73,13 +73,16 @@ final class WorkspaceTheme {
                 typography.caption(), typography.metric(), typography.narrowMetric())
                 + String.format(Locale.ROOT, """
                 .app-shell, .workspace { -fx-padding: %4$dpx; -fx-spacing: %3$dpx; }
+                .app-shell:compact-height { -fx-padding: %2$dpx %4$dpx; -fx-spacing: %1$dpx; }
+                .app-shell:compact-height .workspace { -fx-padding: %1$dpx %4$dpx; -fx-spacing: %1$dpx; }
                 .app-header { -fx-padding: 0 %1$dpx; }
                 .lab-panel { -fx-padding: %3$dpx; }
                 .theme-dialog { -fx-padding: %4$dpx; -fx-spacing: %3$dpx; }
                 .lab-panel, .session-toolbar, .composer-actions, .theme-fields, .theme-actions {
                     -fx-spacing: %2$dpx;
                 }
-                .toy-workspace { -fx-padding: %2$dpx %3$dpx; }
+                .app-shell:compact-height .lab-panel { -fx-padding: %1$dpx %3$dpx; -fx-spacing: %1$dpx; }
+                .toy-workspace { -fx-padding: %2$dpx %3$dpx; -fx-hgap: %3$dpx; -fx-vgap: %1$dpx; }
                 .conversation-turn { -fx-spacing: %1$dpx; -fx-padding: %2$dpx; }
                 .audio-controls, .workspace-footer { -fx-spacing: %4$dpx; }
                 .workspace-footer { -fx-padding: %2$dpx 0 0 0; }

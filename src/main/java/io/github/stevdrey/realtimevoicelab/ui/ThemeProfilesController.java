@@ -16,6 +16,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
@@ -33,6 +34,8 @@ public final class ThemeProfilesController {
     @FXML private ComboBox<String> profile;
     @FXML private Label status;
     @FXML private Button closeButton;
+    @FXML private HBox recordingIndicator;
+    @FXML private Label recordingLabel;
 
     void attach(Button opener, VBox workspace, ThemeProfileStore store, WorkspaceTheme theme) {
         this.opener = opener;
@@ -40,6 +43,7 @@ public final class ThemeProfilesController {
         this.store = store;
         this.theme = theme;
         overlay.managedProperty().bind(overlay.visibleProperty());
+        recordingIndicator.managedProperty().bind(recordingIndicator.visibleProperty());
         profile.getEditor().setTextFormatter(TextInputLimit.formatter(ThemeProfileStore.MAX_NAME_LENGTH));
         opener.setOnAction(event -> open());
         overlay.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
@@ -52,6 +56,11 @@ public final class ThemeProfilesController {
                 event.consume();
             }
         });
+    }
+
+    void renderRecording(boolean recording, String status) {
+        recordingLabel.setText(recording ? status : "");
+        recordingIndicator.setVisible(recording);
     }
 
     private void open() {
