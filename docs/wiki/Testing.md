@@ -14,7 +14,7 @@ The tests cover a two-turn exchange, replacement of streamed text by the termina
 
 ### RVL-003 manual text smoke
 
-After giving explicit opt-in for a paid test, use a dedicated restricted key in the local process environment. Launch `./gradlew --offline run` and use one connection with the default `gpt-realtime-2.1-mini` model. Budget at most three text requests and 60 seconds of connection time for this smoke. The app also enforces the 512-token response cap and 5-minute session limit.
+Follow the [MVP guide's live-test prerequisites and request budget](MVP-Learning-Guide.md#optional-paid-manual-smoke) for the text and cancellation row. The three planned text turns can each trigger one automatic tool follow-up.
 
 1. Verify Send and Cancel are disabled while disconnected. Connect and wait for the Connected status.
 2. Send `Remember this fictional code word: cobalt. Reply OK.` Then send `What was the code word?` Verify that the reply refers to the first turn, that each reply appears in a single entry, and that Send becomes available after each response.
